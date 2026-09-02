@@ -239,14 +239,12 @@ fn reserved_kvm_x86_region() -> GuestMemoryRegion {
 fn validate_guest_memory_registration(region: GuestMemoryRegion) -> Result<(), Error> {
     let reserved = reserved_kvm_x86_region();
     if region.overlaps(reserved) {
-        return Err(Error::GuestMemory(
-            GuestMemoryError::ReservedRangeOverlap {
-                region_base: region.base().get(),
-                region_size: region.size(),
-                reserved_base: reserved.base().get(),
-                reserved_size: reserved.size(),
-            },
-        ));
+        return Err(Error::GuestMemory(GuestMemoryError::ReservedRangeOverlap {
+            region_base: region.base().get(),
+            region_size: region.size(),
+            reserved_base: reserved.base().get(),
+            reserved_size: reserved.size(),
+        }));
     }
     Ok(())
 }
