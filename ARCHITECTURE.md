@@ -22,8 +22,11 @@ KvmBackend
              Vcpu
               ├─ explicit real-mode register setup
               ├─ kvm_run mapping
-              ├─ KVM_RUN
-              └─ VcpuExit classification + register readback
+              └─ KVM_RUN → VcpuExit
+                         ↓
+                 vmexit::dispatch_vcpu_exit
+                  ├─ HLT → VmExitReport
+                  └─ other → VmExitError
 ```
 
 The KVM UAPI details live in `src/kvm/sys.rs`. Higher layers call typed Rust methods and do not issue raw `ioctl` operations directly.
@@ -56,7 +59,15 @@ The current fixture uses KVM's newly-created x86 vCPU architectural reset state 
 
 The current CS=0 fixture deliberately limits its real-mode RIP to `0xffff`. Broader real-mode segment addressing and protected/long-mode setup belong to later guest boot work.
 
-`Vcpu::run_once` retries an interrupted host syscall, performs exactly one completed `KVM_RUN`, reads the exit reason from the tested prefix of `kvm_run`, and returns `VcpuExit::Hlt` or an explicit `Unhandled { reason }`. This is classification, not yet a centralized exit dispatcher.
+`Vcpu::run_once` retries an interrupted host syscall, performs exactly one completed `KVM_RUN`, reads the exit reason from the tested prefix of `kvm_run`, and returns a typed `VcpuExit`. It does not decide whether that exit is acceptable VMM policy.
+
+## VM-exit dispatch
+
+`vmexit::dispatch_vcpu_exit` is the single policy boundary for completed vCPU exits in the current architecture. It snapshots RIP/RFLAGS through the typed vCPU API before making a decision.
+
+A HLT exit becomes a `VmExitReport` containing vCPU id, the typed exit, RIP, and RFLAGS. Any unsupported exit becomes `VmExitError::Unhandled` carrying the same vCPU id/register context plus the exact raw KVM exit reason. Higher-level execution code therefore does not silently accept or discard an unfamiliar exit.
+
+The dispatcher deliberately has no device bus yet. This keeps exit policy explicit before port-I/O or MMIO handling introduces guest-controlled payload parsing and device routing.
 
 ## Ownership and lifetime
 
@@ -70,9 +81,10 @@ Errors are categorized as:
 - `KvmCapability`: incompatible API version, absent required extension, or invalid kernel-reported mapping size;
 - `Configuration`: unsupported VMM configuration or current real-mode entry limits;
 - `GuestMemory`: invalid guest ranges, reserved-range overlap, mapping failures, bounds violations, or KVM RAM-registration failures;
-- `GuestImage`: malformed or overflowing flat-image descriptions.
+- `GuestImage`: malformed or overflowing flat-image descriptions;
+- `VmExit`: unsupported completed VM exits with vCPU and register diagnostics.
 
-Future centralized VM-exit, device, snapshot, and invariant categories will be added only when those responsibilities exist.
+Future device, snapshot, and invariant categories will be added only when those responsibilities exist.
 
 ## Deliberate non-abstractions
 
@@ -80,6 +92,8 @@ There is no generic hypervisor backend trait yet. KVM is the only implementation
 
 There is also no multi-region memory map yet. `GuestMemoryRegion::overlaps` exists to make range semantics explicit and tested, but the VM intentionally supports only slot 0 in this milestone.
 
+The VM-exit boundary is a module-level dispatcher rather than a generic handler trait. HLT is the only handled exit today, so introducing trait machinery would be premature.
+
 ## Next architectural milestone
 
-The next bounded slice should centralize VM-exit handling and structured diagnostics around the now-proven execution path, without adding multiple device families. A deterministic test-port device should wait until that exit boundary is explicit and tested.
+The next bounded slice should exercise one deterministic port-I/O exit through a minimal bus boundary and one exact test/debug-port device. It should preserve width/direction/count metadata and reject unsupported ports without adding MMIO, interrupts, or multiple device families.

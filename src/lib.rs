@@ -6,25 +6,20 @@ pub mod kvm;
 pub mod loader;
 pub mod memory;
 pub mod vcpu;
+pub mod vmexit;
 
 use config::VmConfig;
 use error::Error;
 use kvm::KvmBackend;
 use loader::FlatGuestImage;
 use memory::{GuestMemory, GuestPhysAddr};
-use vcpu::{VcpuExit, VcpuId};
+use vcpu::VcpuId;
+use vmexit::{dispatch_vcpu_exit, VmExitReport};
 
 const LIFECYCLE_RAM_BASE: GuestPhysAddr = GuestPhysAddr::new(0);
 const LIFECYCLE_RAM_SIZE: u64 = 2 * 1024 * 1024;
 const HLT_GUEST_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1000);
 const HLT_GUEST_BYTES: [u8; 1] = [0xf4];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HltGuestResult {
-    pub exit: VcpuExit,
-    pub rip: u64,
-    pub rflags: u64,
-}
 
 pub fn verify_kvm_lifecycle(config: VmConfig) -> Result<(), Error> {
     let backend = KvmBackend::open()?;
@@ -39,7 +34,7 @@ pub fn verify_kvm_lifecycle(config: VmConfig) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn run_hlt_guest(config: VmConfig) -> Result<HltGuestResult, Error> {
+pub fn run_hlt_guest(config: VmConfig) -> Result<VmExitReport, Error> {
     let image = FlatGuestImage::new(HLT_GUEST_ENTRY, HLT_GUEST_ENTRY, &HLT_GUEST_BYTES)?;
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm()?;
@@ -51,11 +46,6 @@ pub fn run_hlt_guest(config: VmConfig) -> Result<HltGuestResult, Error> {
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
     vcpu.initialize_real_mode(image.entry())?;
     let exit = vcpu.run_once()?;
-    let registers = vcpu.registers()?;
 
-    Ok(HltGuestResult {
-        exit,
-        rip: registers.rip,
-        rflags: registers.rflags,
-    })
+    dispatch_vcpu_exit(&vcpu, exit)
 }

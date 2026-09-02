@@ -27,10 +27,8 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
         }
         Some("lifecycle") => verify_kvm_lifecycle(VmConfig::default()),
         Some("run-hlt") => {
-            let result = run_hlt_guest(VmConfig::default())?;
-            println!("exit: {:?}", result.exit);
-            println!("rip: {:#x}", result.rip);
-            println!("rflags: {:#x}", result.rflags);
+            let report = run_hlt_guest(VmConfig::default())?;
+            println!("{report}");
             Ok(())
         }
         Some(other) => {
