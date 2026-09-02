@@ -7,6 +7,8 @@ pub const KVM_CHECK_EXTENSION: libc::c_ulong = 0xAE03;
 pub const KVM_GET_VCPU_MMAP_SIZE: libc::c_ulong = 0xAE04;
 pub const KVM_CREATE_VCPU: libc::c_ulong = 0xAE41;
 pub const KVM_SET_USER_MEMORY_REGION: libc::c_ulong = 0x4020_AE46;
+pub const KVM_SET_TSS_ADDR: libc::c_ulong = 0xAE47;
+pub const KVM_SET_IDENTITY_MAP_ADDR: libc::c_ulong = 0x4008_AE48;
 pub const KVM_RUN: libc::c_ulong = 0xAE80;
 pub const KVM_GET_REGS: libc::c_ulong = 0x8090_AE81;
 pub const KVM_SET_REGS: libc::c_ulong = 0x4090_AE82;
@@ -149,6 +151,22 @@ pub fn set_user_memory_region(fd: RawFd, region: &KvmUserspaceMemoryRegion) -> i
     cvt_ioctl(result).map(|_| ())
 }
 
+pub fn set_tss_addr(fd: RawFd, address: u64) -> io::Result<()> {
+    let address = libc::c_ulong::try_from(address).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "KVM TSS address does not fit unsigned long",
+        )
+    })?;
+    ioctl_with_arg(fd, KVM_SET_TSS_ADDR, address).map(|_| ())
+}
+
+pub fn set_identity_map_addr(fd: RawFd, address: u64) -> io::Result<()> {
+    // SAFETY: `address` is a readable u64 for the duration of the x86 KVM VM ioctl.
+    let result = unsafe { libc::ioctl(fd, KVM_SET_IDENTITY_MAP_ADDR, &address) };
+    cvt_ioctl(result).map(|_| ())
+}
+
 pub fn get_regs(fd: RawFd) -> io::Result<KvmRegs> {
     let mut regs = KvmRegs::default();
     // SAFETY: `regs` is a writable x86-64 KVM register structure for the duration of the ioctl.
@@ -198,6 +216,12 @@ mod tests {
     fn userspace_memory_region_matches_x86_64_kvm_uapi_layout() {
         assert_eq!(std::mem::size_of::<KvmUserspaceMemoryRegion>(), 32);
         assert_eq!(KVM_SET_USER_MEMORY_REGION, 0x4020_AE46);
+    }
+
+    #[test]
+    fn x86_vm_setup_ioctls_match_kvm_uapi() {
+        assert_eq!(KVM_SET_TSS_ADDR, 0xAE47);
+        assert_eq!(KVM_SET_IDENTITY_MAP_ADDR, 0x4008_AE48);
     }
 
     #[test]

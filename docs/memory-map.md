@@ -2,14 +2,16 @@
 
 ## Current map
 
-The current VM model supports exactly one RAM region. The deterministic lifecycle and HLT fixtures use:
+The current VM model supports exactly one RAM region plus a fixed high x86 KVM-reserved range:
 
 | Range | Owner | Purpose |
 | --- | --- | --- |
 | `0x0000_0000..0x0020_0000` | RAM slot 0 | 2 MiB guest RAM |
 | `0x0000_1000..0x0000_1001` | flat guest bytes inside RAM | deterministic `HLT` fixture |
+| `0xfeff_c000..0xfeff_d000` | KVM x86 reserved | identity-map page |
+| `0xfeff_d000..0xff00_0000` | KVM x86 reserved | three-page TSS region |
 
-The second row is not a separate KVM memory slot; it documents the byte currently occupied by the test guest inside slot 0. No MMIO ranges exist yet.
+The flat-guest row is not a separate KVM memory slot; it documents the byte currently occupied by the test guest inside slot 0. The high reserved pages are configured through x86 VM ioctls rather than userspace RAM slots. No MMIO ranges exist yet.
 
 ## Address semantics
 
@@ -34,7 +36,7 @@ A zero-length access at the exclusive end is valid.
 
 ## Host mapping and KVM registration
 
-`GuestMemory` creates a private anonymous read/write host mapping. The VMM registers that mapping as KVM userspace memory slot 0 with no flags. Registration is performed only after all region validation succeeds.
+`GuestMemory` creates a private anonymous read/write host mapping. The VMM registers that mapping as KVM userspace memory slot 0 with no flags. Registration is performed only after all region validation succeeds and after rejecting overlap with `0xfeff_c000..0xff00_0000`.
 
 After successful registration, `Vm` owns the `GuestMemory`. `Vm::drop` first submits a zero-sized slot-0 `KVM_SET_USER_MEMORY_REGION` request to remove the registration. Only after confirmed removal is normal mapping destruction allowed. If slot removal fails, the mapping is intentionally leaked rather than leaving a still-live KVM memory slot pointing at unmapped userspace memory.
 

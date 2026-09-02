@@ -23,15 +23,12 @@ impl<'a> FlatGuestImage<'a> {
                 length: bytes.len(),
             })
         })?;
-        let image_end = load_address
-            .get()
-            .checked_add(length_u64)
-            .ok_or_else(|| {
-                Error::GuestImage(GuestImageError::ImageRangeOverflow {
-                    load_address: load_address.get(),
-                    length: bytes.len(),
-                })
-            })?;
+        let image_end = load_address.get().checked_add(length_u64).ok_or_else(|| {
+            Error::GuestImage(GuestImageError::ImageRangeOverflow {
+                load_address: load_address.get(),
+                length: bytes.len(),
+            })
+        })?;
 
         if entry.get() < load_address.get() || entry.get() >= image_end {
             return Err(Error::GuestImage(GuestImageError::EntryOutsideImage {
@@ -115,7 +112,9 @@ mod tests {
         let load_address = GuestPhysAddr::new(u64::MAX);
         assert!(matches!(
             FlatGuestImage::new(load_address, load_address, &bytes),
-            Err(Error::GuestImage(GuestImageError::ImageRangeOverflow { .. }))
+            Err(Error::GuestImage(
+                GuestImageError::ImageRangeOverflow { .. }
+            ))
         ));
     }
 

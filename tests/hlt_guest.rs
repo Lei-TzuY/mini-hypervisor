@@ -13,7 +13,9 @@ fn deterministic_hlt_guest_exits_and_advances_rip() {
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
-            eprintln!("skipping HLT guest integration assertion: /dev/kvm is unavailable to this runner");
+            eprintln!(
+                "skipping HLT guest integration assertion: /dev/kvm is unavailable to this runner"
+            );
         }
         Err(error) => panic!("HLT guest execution failed unexpectedly: {error}"),
     }

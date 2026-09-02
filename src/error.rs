@@ -21,6 +21,10 @@ pub enum HostEnvironmentError {
     VmCreation {
         source: io::Error,
     },
+    VmOperation {
+        operation: &'static str,
+        source: io::Error,
+    },
     VcpuCreation {
         id: u16,
         source: io::Error,
@@ -81,6 +85,12 @@ pub enum GuestMemoryError {
         region_base: u64,
         region_size: u64,
     },
+    ReservedRangeOverlap {
+        region_base: u64,
+        region_size: u64,
+        reserved_base: u64,
+        reserved_size: u64,
+    },
     Mapping {
         source: io::Error,
     },
@@ -135,6 +145,9 @@ impl fmt::Display for HostEnvironmentError {
             Self::KvmUnavailable { .. } => write!(f, "/dev/kvm is unavailable"),
             Self::PermissionDenied { .. } => write!(f, "permission denied while opening /dev/kvm"),
             Self::VmCreation { .. } => write!(f, "KVM failed to create a VM"),
+            Self::VmOperation { operation, .. } => {
+                write!(f, "KVM VM operation {operation} failed")
+            }
             Self::VcpuCreation { id, .. } => write!(f, "KVM failed to create vCPU {id}"),
             Self::VcpuRunMapping { id, .. } => {
                 write!(f, "failed to map the kvm_run structure for vCPU {id}")
@@ -153,6 +166,7 @@ impl std::error::Error for HostEnvironmentError {
             Self::KvmUnavailable { source }
             | Self::PermissionDenied { source }
             | Self::VmCreation { source }
+            | Self::VmOperation { source, .. }
             | Self::VcpuCreation { source, .. }
             | Self::VcpuRunMapping { source, .. }
             | Self::VcpuOperation { source, .. }
@@ -231,6 +245,15 @@ impl fmt::Display for GuestMemoryError {
                 f,
                 "guest-memory access is outside RAM: address={address:#x}, length={length}, region={region_base:#x}+{region_size:#x}"
             ),
+            Self::ReservedRangeOverlap {
+                region_base,
+                region_size,
+                reserved_base,
+                reserved_size,
+            } => write!(
+                f,
+                "guest RAM region {region_base:#x}+{region_size:#x} overlaps reserved KVM x86 range {reserved_base:#x}+{reserved_size:#x}"
+            ),
             Self::Mapping { .. } => write!(f, "failed to map guest RAM on the host"),
             Self::Registration { .. } => write!(f, "KVM failed to register guest RAM"),
             Self::AlreadyRegistered => write!(f, "this VM already owns its single guest RAM region"),
@@ -249,6 +272,7 @@ impl std::error::Error for GuestMemoryError {
             | Self::AccessLengthTooLarge { .. }
             | Self::AccessOverflow { .. }
             | Self::AccessOutOfBounds { .. }
+            | Self::ReservedRangeOverlap { .. }
             | Self::AlreadyRegistered => None,
         }
     }

@@ -8,11 +8,12 @@ The repository currently implements the KVM lifecycle foundation, one bounded gu
 
 - open `/dev/kvm` with structured environment errors;
 - require KVM API version 12;
-- check `KVM_CAP_USER_MEMORY`;
+- check `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, and `KVM_CAP_SET_IDENTITY_MAP_ADDR`;
 - obtain and validate the `kvm_run` mmap size;
-- create one VM and vCPU 0;
+- create one VM and configure the x86 KVM identity-map/TSS reserved pages before any vCPU exists;
+- create vCPU 0;
 - represent guest physical addresses with `GuestPhysAddr`;
-- validate, anonymously map, bounds-check, and register one RAM region in KVM slot 0;
+- validate, anonymously map, bounds-check, and register one RAM region in KVM slot 0 while rejecting overlap with the reserved x86 KVM pages;
 - validate a non-empty flat guest image, its load range, and its entry point before loading it;
 - initialize vCPU general registers explicitly for the current real-mode fixture;
 - normalize the six visible real-mode segment bases/selectors to zero and ensure paging/protected mode are disabled;
@@ -33,6 +34,9 @@ This is still only a single-vCPU flat-binary execution path. It does **not** yet
 - x86-64 target architecture
 - `/dev/kvm` available and accessible for KVM integration paths
 - KVM API version 12
+- `KVM_CAP_USER_MEMORY`
+- `KVM_CAP_SET_TSS_ADDR`
+- `KVM_CAP_SET_IDENTITY_MAP_ADDR`
 
 GitHub-hosted CI may run without usable `/dev/kvm`; pure tests remain mandatory there, and the environment-sensitive KVM tests report unavailable host capability without treating it as a VMM correctness failure.
 
@@ -47,7 +51,7 @@ cargo run -- lifecycle
 cargo run -- run-hlt
 ```
 
-`probe` validates host KVM capabilities. `lifecycle` creates a VM, registers the fixed RAM region, creates vCPU 0, maps `kvm_run`, then shuts down cleanly. `run-hlt` additionally loads the deterministic flat guest, initializes vCPU state, executes it once, and prints the classified exit plus RIP/RFLAGS.
+`probe` validates host KVM capabilities. `lifecycle` creates a VM, configures the reserved x86 KVM pages, registers the fixed RAM region, creates vCPU 0, maps `kvm_run`, then shuts down cleanly. `run-hlt` additionally loads the deterministic flat guest, initializes vCPU state, executes it once, and prints the classified exit plus RIP/RFLAGS.
 
 ## Safety boundary
 

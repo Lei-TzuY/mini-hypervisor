@@ -10,6 +10,7 @@ VmConfig
 KvmBackend
  ├─ host capability validation
  └─ VM creation
+       ├─ x86 identity-map/TSS setup before vCPUs
        ↓
       Vm
        ├─ owns one registered GuestMemory mapping
@@ -26,6 +27,12 @@ KvmBackend
 ```
 
 The KVM UAPI details live in `src/kvm/sys.rs`. Higher layers call typed Rust methods and do not issue raw `ioctl` operations directly.
+
+## x86 VM setup
+
+The backend requires `KVM_CAP_SET_TSS_ADDR` and `KVM_CAP_SET_IDENTITY_MAP_ADDR` in addition to user-memory support. Immediately after `KVM_CREATE_VM`, before any vCPU can exist, it places the one-page identity-map region at `0xfeff_c000` and the three-page TSS region at `0xfeff_d000`. Together these reserve `0xfeff_c000..0xff00_0000`.
+
+Those pages are intentionally outside the current low 2 MiB RAM fixture. Guest RAM registration rejects any region overlapping the reserved range so a future configurable RAM base cannot silently violate the x86 KVM requirement.
 
 ## Guest memory
 
@@ -59,10 +66,10 @@ The current CS=0 fixture deliberately limits its real-mode RIP to `0xffff`. Broa
 
 Errors are categorized as:
 
-- `HostEnvironment`: host file/device/I/O failures, including named vCPU ioctls;
+- `HostEnvironment`: host file/device/I/O failures, including named VM and vCPU ioctls;
 - `KvmCapability`: incompatible API version, absent required extension, or invalid kernel-reported mapping size;
 - `Configuration`: unsupported VMM configuration or current real-mode entry limits;
-- `GuestMemory`: invalid guest ranges, mapping failures, bounds violations, or KVM RAM-registration failures;
+- `GuestMemory`: invalid guest ranges, reserved-range overlap, mapping failures, bounds violations, or KVM RAM-registration failures;
 - `GuestImage`: malformed or overflowing flat-image descriptions.
 
 Future centralized VM-exit, device, snapshot, and invariant categories will be added only when those responsibilities exist.
