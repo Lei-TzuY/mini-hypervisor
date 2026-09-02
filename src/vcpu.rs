@@ -264,8 +264,8 @@ fn checked_io_data_range(
     let count = usize::try_from(io.count).map_err(|_| invalid_range())?;
     let length = usize::from(io.size)
         .checked_mul(count)
-        .ok_or_else(|| invalid_range())?;
-    let end = offset.checked_add(length).ok_or_else(|| invalid_range())?;
+        .ok_or_else(&invalid_range)?;
+    let end = offset.checked_add(length).ok_or_else(&invalid_range)?;
     if end > mapping_size {
         return Err(invalid_range());
     }
