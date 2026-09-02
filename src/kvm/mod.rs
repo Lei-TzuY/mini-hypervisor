@@ -1,6 +1,7 @@
 mod sys;
 
-use crate::error::{Error, HostEnvironmentError, KvmCapabilityError};
+use crate::error::{Error, GuestMemoryError, HostEnvironmentError, KvmCapabilityError};
+use crate::memory::GuestMemory;
 use crate::vcpu::{Vcpu, VcpuId};
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -113,6 +114,7 @@ impl KvmBackend {
 
         Ok(Vm {
             fd,
+            guest_memory: None,
             vcpu_mmap_size: usize::try_from(self.capabilities.vcpu_mmap_size)
                 .expect("validated positive i32 always fits usize"),
         })
@@ -122,10 +124,37 @@ impl KvmBackend {
 #[derive(Debug)]
 pub struct Vm {
     fd: OwnedFd,
+    guest_memory: Option<GuestMemory>,
     vcpu_mmap_size: usize,
 }
 
 impl Vm {
+    pub fn register_guest_memory(&mut self, memory: GuestMemory) -> Result<(), Error> {
+        if self.guest_memory.is_some() {
+            return Err(Error::GuestMemory(GuestMemoryError::AlreadyRegistered));
+        }
+
+        let region = memory.region();
+        let kvm_region = sys::KvmUserspaceMemoryRegion::ram_slot0(
+            region.base().get(),
+            region.size(),
+            memory.userspace_addr(),
+        );
+        sys::set_user_memory_region(self.fd.as_raw_fd(), &kvm_region)
+            .map_err(|source| Error::GuestMemory(GuestMemoryError::Registration { source }))?;
+        self.guest_memory = Some(memory);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn guest_memory(&self) -> Option<&GuestMemory> {
+        self.guest_memory.as_ref()
+    }
+
+    pub fn guest_memory_mut(&mut self) -> Option<&mut GuestMemory> {
+        self.guest_memory.as_mut()
+    }
+
     pub fn create_vcpu(&self, id: VcpuId) -> Result<Vcpu, Error> {
         let raw_fd = sys::ioctl_with_arg(
             self.fd.as_raw_fd(),
@@ -140,6 +169,28 @@ impl Vm {
         })?;
         let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
         Vcpu::from_kvm_fd(id, fd, self.vcpu_mmap_size)
+    }
+
+    fn unregister_guest_memory(&self) -> io::Result<()> {
+        let region = sys::KvmUserspaceMemoryRegion::unregister_slot0();
+        sys::set_user_memory_region(self.fd.as_raw_fd(), &region)
+    }
+}
+
+impl Drop for Vm {
+    fn drop(&mut self) {
+        if self.guest_memory.is_none() {
+            return;
+        }
+
+        if self.unregister_guest_memory().is_err() {
+            // A vCPU fd can keep the kernel VM alive after this userspace VM handle is dropped.
+            // If slot removal cannot be confirmed, leaking the mapping is safer than leaving KVM
+            // with a userspace address that has already been unmapped.
+            if let Some(memory) = self.guest_memory.take() {
+                std::mem::forget(memory);
+            }
+        }
     }
 }
 
