@@ -81,9 +81,8 @@ impl GuestMemoryRegion {
     }
 
     fn checked_offset(self, address: GuestPhysAddr, length: usize) -> Result<usize, Error> {
-        let length_u64 = u64::try_from(length).map_err(|_| {
-            Error::GuestMemory(GuestMemoryError::AccessLengthTooLarge { length })
-        })?;
+        let length_u64 = u64::try_from(length)
+            .map_err(|_| Error::GuestMemory(GuestMemoryError::AccessLengthTooLarge { length }))?;
         let access_end = address.get().checked_add(length_u64).ok_or_else(|| {
             Error::GuestMemory(GuestMemoryError::AccessOverflow {
                 address: address.get(),
@@ -108,9 +107,8 @@ impl GuestMemoryRegion {
             .get()
             .checked_sub(self.base.get())
             .expect("lower bound was checked above");
-        usize::try_from(offset).map_err(|_| {
-            Error::GuestMemory(GuestMemoryError::HostSizeOverflow { size: offset })
-        })
+        usize::try_from(offset)
+            .map_err(|_| Error::GuestMemory(GuestMemoryError::HostSizeOverflow { size: offset }))
     }
 }
 
@@ -123,12 +121,10 @@ pub struct GuestMemory {
 impl GuestMemory {
     pub fn new(base: GuestPhysAddr, size: u64) -> Result<Self, Error> {
         let region = GuestMemoryRegion::new(base, size)?;
-        let host_size = usize::try_from(size).map_err(|_| {
-            Error::GuestMemory(GuestMemoryError::HostSizeOverflow { size })
-        })?;
-        let mapping = RamMapping::new(host_size).map_err(|source| {
-            Error::GuestMemory(GuestMemoryError::Mapping { source })
-        })?;
+        let host_size = usize::try_from(size)
+            .map_err(|_| Error::GuestMemory(GuestMemoryError::HostSizeOverflow { size }))?;
+        let mapping = RamMapping::new(host_size)
+            .map_err(|source| Error::GuestMemory(GuestMemoryError::Mapping { source }))?;
 
         Ok(Self { region, mapping })
     }
@@ -203,7 +199,9 @@ impl RamMapping {
         let Some(ptr) = NonNull::new(raw.cast::<u8>()) else {
             // SAFETY: `raw` is a successful mapping of exactly `len` bytes.
             let _ = unsafe { libc::munmap(raw, len) };
-            return Err(io::Error::other("mmap unexpectedly returned a null address"));
+            return Err(io::Error::other(
+                "mmap unexpectedly returned a null address",
+            ));
         };
         Ok(Self { ptr, len })
     }
@@ -241,14 +239,21 @@ mod tests {
 
     #[test]
     fn accepts_zero_length_at_exact_end() {
-        assert_eq!(region().checked_offset(GuestPhysAddr::new(BASE.get() + SIZE), 0).unwrap(), usize::try_from(SIZE).unwrap());
+        assert_eq!(
+            region()
+                .checked_offset(GuestPhysAddr::new(BASE.get() + SIZE), 0)
+                .unwrap(),
+            usize::try_from(SIZE).unwrap()
+        );
     }
 
     #[test]
     fn rejects_nonzero_access_at_exact_end() {
         assert!(matches!(
             region().checked_offset(GuestPhysAddr::new(BASE.get() + SIZE), 1),
-            Err(Error::GuestMemory(GuestMemoryError::AccessOutOfBounds { .. }))
+            Err(Error::GuestMemory(
+                GuestMemoryError::AccessOutOfBounds { .. }
+            ))
         ));
     }
 
@@ -256,7 +261,9 @@ mod tests {
     fn rejects_access_before_region() {
         assert!(matches!(
             region().checked_offset(GuestPhysAddr::new(BASE.get() - 1), 1),
-            Err(Error::GuestMemory(GuestMemoryError::AccessOutOfBounds { .. }))
+            Err(Error::GuestMemory(
+                GuestMemoryError::AccessOutOfBounds { .. }
+            ))
         ));
     }
 
@@ -264,7 +271,9 @@ mod tests {
     fn rejects_access_crossing_region_end() {
         assert!(matches!(
             region().checked_offset(GuestPhysAddr::new(BASE.get() + SIZE - 1), 2),
-            Err(Error::GuestMemory(GuestMemoryError::AccessOutOfBounds { .. }))
+            Err(Error::GuestMemory(
+                GuestMemoryError::AccessOutOfBounds { .. }
+            ))
         ));
     }
 
@@ -283,7 +292,9 @@ mod tests {
         let base = GuestPhysAddr::new(u64::MAX - (KVM_MEMORY_ALIGNMENT - 1));
         assert!(matches!(
             GuestMemoryRegion::new(base, KVM_MEMORY_ALIGNMENT),
-            Err(Error::GuestMemory(GuestMemoryError::AddressSpaceOverflow { .. }))
+            Err(Error::GuestMemory(
+                GuestMemoryError::AddressSpaceOverflow { .. }
+            ))
         ));
     }
 
@@ -299,17 +310,22 @@ mod tests {
     fn rejects_misaligned_base_and_size() {
         assert!(matches!(
             GuestMemoryRegion::new(GuestPhysAddr::new(1), KVM_MEMORY_ALIGNMENT),
-            Err(Error::GuestMemory(GuestMemoryError::MisalignedRegion { .. }))
+            Err(Error::GuestMemory(
+                GuestMemoryError::MisalignedRegion { .. }
+            ))
         ));
         assert!(matches!(
             GuestMemoryRegion::new(BASE, KVM_MEMORY_ALIGNMENT + 1),
-            Err(Error::GuestMemory(GuestMemoryError::MisalignedRegion { .. }))
+            Err(Error::GuestMemory(
+                GuestMemoryError::MisalignedRegion { .. }
+            ))
         ));
     }
 
     #[test]
     fn detects_overlap_and_adjacency() {
-        let first = GuestMemoryRegion::new(GuestPhysAddr::new(0), 2 * KVM_MEMORY_ALIGNMENT).unwrap();
+        let first =
+            GuestMemoryRegion::new(GuestPhysAddr::new(0), 2 * KVM_MEMORY_ALIGNMENT).unwrap();
         let overlapping = GuestMemoryRegion::new(
             GuestPhysAddr::new(KVM_MEMORY_ALIGNMENT),
             KVM_MEMORY_ALIGNMENT,

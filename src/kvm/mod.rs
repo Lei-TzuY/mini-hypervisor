@@ -140,9 +140,8 @@ impl Vm {
             region.size(),
             memory.userspace_addr(),
         );
-        sys::set_user_memory_region(self.fd.as_raw_fd(), &kvm_region).map_err(|source| {
-            Error::GuestMemory(GuestMemoryError::Registration { source })
-        })?;
+        sys::set_user_memory_region(self.fd.as_raw_fd(), &kvm_region)
+            .map_err(|source| Error::GuestMemory(GuestMemoryError::Registration { source }))?;
         self.guest_memory = Some(memory);
         Ok(())
     }
