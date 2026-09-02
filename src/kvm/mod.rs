@@ -1,4 +1,4 @@
-mod sys;
+pub(crate) mod sys;
 
 use crate::error::{Error, GuestMemoryError, HostEnvironmentError, KvmCapabilityError};
 use crate::memory::GuestMemory;

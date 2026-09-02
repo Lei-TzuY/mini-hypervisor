@@ -7,6 +7,7 @@ pub enum Error {
     KvmCapability(KvmCapabilityError),
     Configuration(ConfigurationError),
     GuestMemory(GuestMemoryError),
+    GuestImage(GuestImageError),
 }
 
 #[derive(Debug)]
@@ -28,6 +29,11 @@ pub enum HostEnvironmentError {
         id: u16,
         source: io::Error,
     },
+    VcpuOperation {
+        id: u16,
+        operation: &'static str,
+        source: io::Error,
+    },
     Io {
         operation: &'static str,
         source: io::Error,
@@ -44,6 +50,7 @@ pub enum KvmCapabilityError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigurationError {
     UnsupportedVcpuCount { requested: u16, supported: u16 },
+    RealModeEntryOutOfRange { entry: u64, maximum: u64 },
 }
 
 #[derive(Debug)]
@@ -83,6 +90,23 @@ pub enum GuestMemoryError {
     AlreadyRegistered,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuestImageError {
+    EmptyFlatBinary,
+    ImageLengthTooLarge {
+        length: usize,
+    },
+    ImageRangeOverflow {
+        load_address: u64,
+        length: usize,
+    },
+    EntryOutsideImage {
+        entry: u64,
+        load_address: u64,
+        length: usize,
+    },
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -90,6 +114,7 @@ impl fmt::Display for Error {
             Self::KvmCapability(error) => error.fmt(f),
             Self::Configuration(error) => error.fmt(f),
             Self::GuestMemory(error) => error.fmt(f),
+            Self::GuestImage(error) => error.fmt(f),
         }
     }
 }
@@ -99,7 +124,7 @@ impl std::error::Error for Error {
         match self {
             Self::HostEnvironment(error) => error.source(),
             Self::GuestMemory(error) => error.source(),
-            Self::KvmCapability(_) | Self::Configuration(_) => None,
+            Self::KvmCapability(_) | Self::Configuration(_) | Self::GuestImage(_) => None,
         }
     }
 }
@@ -114,6 +139,9 @@ impl fmt::Display for HostEnvironmentError {
             Self::VcpuRunMapping { id, .. } => {
                 write!(f, "failed to map the kvm_run structure for vCPU {id}")
             }
+            Self::VcpuOperation { id, operation, .. } => {
+                write!(f, "KVM vCPU {id} operation {operation} failed")
+            }
             Self::Io { operation, .. } => write!(f, "host I/O failure during {operation}"),
         }
     }
@@ -127,6 +155,7 @@ impl std::error::Error for HostEnvironmentError {
             | Self::VmCreation { source }
             | Self::VcpuCreation { source, .. }
             | Self::VcpuRunMapping { source, .. }
+            | Self::VcpuOperation { source, .. }
             | Self::Io { source, .. } => Some(source),
         }
     }
@@ -158,6 +187,10 @@ impl fmt::Display for ConfigurationError {
             } => write!(
                 f,
                 "requested {requested} vCPUs, but this milestone supports exactly {supported}"
+            ),
+            Self::RealModeEntryOutOfRange { entry, maximum } => write!(
+                f,
+                "real-mode entry {entry:#x} exceeds the current CS=0 RIP limit {maximum:#x}"
             ),
         }
     }
@@ -220,3 +253,31 @@ impl std::error::Error for GuestMemoryError {
         }
     }
 }
+
+impl fmt::Display for GuestImageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyFlatBinary => write!(f, "flat guest image must contain at least one byte"),
+            Self::ImageLengthTooLarge { length } => {
+                write!(f, "flat guest image length {length} does not fit a guest address")
+            }
+            Self::ImageRangeOverflow {
+                load_address,
+                length,
+            } => write!(
+                f,
+                "flat guest image range overflows: load_address={load_address:#x}, length={length}"
+            ),
+            Self::EntryOutsideImage {
+                entry,
+                load_address,
+                length,
+            } => write!(
+                f,
+                "guest entry {entry:#x} is outside flat image at {load_address:#x} with length {length}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for GuestImageError {}

@@ -7,19 +7,22 @@ CLI
  ↓
 VmConfig
  ↓
-verify_kvm_lifecycle
- ↓
 KvmBackend
  ├─ host capability validation
  └─ VM creation
        ↓
       Vm
        ├─ owns one registered GuestMemory mapping
+       │       ↑
+       │   FlatGuestImage
+       │       └─ checked flat-binary load
        └─ vCPU creation
               ↓
              Vcpu
-              ↓
-         kvm_run mapping
+              ├─ explicit real-mode register setup
+              ├─ kvm_run mapping
+              ├─ KVM_RUN
+              └─ VcpuExit classification + register readback
 ```
 
 The KVM UAPI details live in `src/kvm/sys.rs`. Higher layers call typed Rust methods and do not issue raw `ioctl` operations directly.
@@ -34,6 +37,20 @@ The `Vm` takes ownership of `GuestMemory` only after `KVM_SET_USER_MEMORY_REGION
 
 See [docs/memory-map.md](docs/memory-map.md).
 
+## Flat guest loading
+
+`FlatGuestImage` is deliberately narrower than a general executable loader. Construction requires a non-empty byte slice, rejects load-address overflow, and requires the entry point to lie inside the loaded image. Loading still goes through `GuestMemory::write`, so a valid image description cannot escape the configured RAM region.
+
+The deterministic fixture consists only of `HLT` at guest physical address `0x1000`. ELF parsing and Linux boot conventions are intentionally absent.
+
+## vCPU execution
+
+The current fixture uses KVM's newly-created x86 vCPU architectural reset state as the starting special-register state, then explicitly normalizes CS/DS/ES/FS/GS/SS base and selector values to zero and clears CR0 protected-mode/paging enable bits. All general registers are then set from a zeroed `kvm_regs` value with RIP set to the entry point and RFLAGS bit 1 set as required by x86.
+
+The current CS=0 fixture deliberately limits its real-mode RIP to `0xffff`. Broader real-mode segment addressing and protected/long-mode setup belong to later guest boot work.
+
+`Vcpu::run_once` retries an interrupted host syscall, performs exactly one completed `KVM_RUN`, reads the exit reason from the tested prefix of `kvm_run`, and returns `VcpuExit::Hlt` or an explicit `Unhandled { reason }`. This is classification, not yet a centralized exit dispatcher.
+
 ## Ownership and lifetime
 
 `KvmBackend` owns the `/dev/kvm` descriptor. `Vm` owns the VM descriptor and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and a `KvmRunMapping`. Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
@@ -42,12 +59,13 @@ See [docs/memory-map.md](docs/memory-map.md).
 
 Errors are categorized as:
 
-- `HostEnvironment`: host file/device/I/O failures;
+- `HostEnvironment`: host file/device/I/O failures, including named vCPU ioctls;
 - `KvmCapability`: incompatible API version, absent required extension, or invalid kernel-reported mapping size;
-- `Configuration`: unsupported VMM configuration;
-- `GuestMemory`: invalid guest ranges, mapping failures, bounds violations, or KVM RAM-registration failures.
+- `Configuration`: unsupported VMM configuration or current real-mode entry limits;
+- `GuestMemory`: invalid guest ranges, mapping failures, bounds violations, or KVM RAM-registration failures;
+- `GuestImage`: malformed or overflowing flat-image descriptions.
 
-Future guest-image, VM-exit, device, snapshot, and invariant categories will be added only when those responsibilities exist.
+Future centralized VM-exit, device, snapshot, and invariant categories will be added only when those responsibilities exist.
 
 ## Deliberate non-abstractions
 
@@ -57,4 +75,4 @@ There is also no multi-region memory map yet. `GuestMemoryRegion::overlaps` exis
 
 ## Next architectural milestone
 
-The next bounded slice should load a tiny deterministic flat guest into the validated RAM region, initialize vCPU state explicitly, run it, and classify one expected exit. Device buses and richer exit dispatch should wait until that minimal execution path is proven.
+The next bounded slice should centralize VM-exit handling and structured diagnostics around the now-proven execution path, without adding multiple device families. A deterministic test-port device should wait until that exit boundary is explicit and tested.
