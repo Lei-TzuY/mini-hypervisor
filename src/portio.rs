@@ -77,13 +77,7 @@ mod tests {
     use super::*;
 
     fn output(port: u16, size: u8, count: u32, bytes: &[u8]) -> PortIoExit {
-        PortIoExit::new(
-            PortIoDirection::Out,
-            size,
-            port,
-            count,
-            bytes.to_vec(),
-        )
+        PortIoExit::new(PortIoDirection::Out, size, port, count, bytes.to_vec())
     }
 
     #[test]

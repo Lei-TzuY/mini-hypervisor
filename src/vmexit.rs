@@ -65,10 +65,7 @@ pub fn dispatch_vcpu_exit(
         }
         VcpuExit::Hlt => {
             let registers = vcpu.registers()?;
-            Ok(VmExitDisposition::Stopped(hlt_report(
-                vcpu.id(),
-                registers,
-            )))
+            Ok(VmExitDisposition::Stopped(hlt_report(vcpu.id(), registers)))
         }
         VcpuExit::Unhandled { reason } => {
             let registers = vcpu.registers()?;

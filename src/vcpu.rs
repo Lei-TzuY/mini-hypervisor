@@ -265,9 +265,7 @@ fn checked_io_data_range(
     let length = usize::from(io.size)
         .checked_mul(count)
         .ok_or_else(|| invalid_range())?;
-    let end = offset
-        .checked_add(length)
-        .ok_or_else(|| invalid_range())?;
+    let end = offset.checked_add(length).ok_or_else(|| invalid_range())?;
     if end > mapping_size {
         return Err(invalid_range());
     }
@@ -386,10 +384,7 @@ mod tests {
     fn exit_reason_round_trips_typed_classification() {
         assert_eq!(VcpuExit::Hlt.reason(), sys::KVM_EXIT_HLT);
         assert_eq!(VcpuExit::Io.reason(), sys::KVM_EXIT_IO);
-        assert_eq!(
-            VcpuExit::Unhandled { reason: 0x1234 }.reason(),
-            0x1234
-        );
+        assert_eq!(VcpuExit::Unhandled { reason: 0x1234 }.reason(), 0x1234);
     }
 
     #[test]
@@ -420,10 +415,7 @@ mod tests {
             count: 3,
             data_offset: 48,
         };
-        assert_eq!(
-            checked_io_data_range(VcpuId::BOOT, io, 64).unwrap(),
-            48..54
-        );
+        assert_eq!(checked_io_data_range(VcpuId::BOOT, io, 64).unwrap(), 48..54);
     }
 
     #[test]

@@ -47,9 +47,7 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
             Ok(())
         }
         Some(other) => {
-            eprintln!(
-                "usage: mini-hypervisor [probe|lifecycle|run-hlt|run-debug-port]"
-            );
+            eprintln!("usage: mini-hypervisor [probe|lifecycle|run-hlt|run-debug-port]");
             eprintln!("unknown command: {other}");
             Ok(())
         }
