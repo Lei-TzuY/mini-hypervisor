@@ -1,6 +1,6 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::kvm::KvmBackend;
-use mini_hypervisor::{run_hlt_guest, verify_kvm_lifecycle};
+use mini_hypervisor::{run_debug_port_guest, run_hlt_guest, verify_kvm_lifecycle};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -31,8 +31,25 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
             println!("{report}");
             Ok(())
         }
+        Some("run-debug-port") => {
+            let result = run_debug_port_guest(VmConfig::default())?;
+            let io = result.io();
+            println!(
+                "io: direction={:?}, size={}, port={:#x}, count={}, data={:?}",
+                io.direction(),
+                io.size(),
+                io.port(),
+                io.count(),
+                io.output_data()
+            );
+            println!("debug output: {:?}", result.output());
+            println!("{}", result.report());
+            Ok(())
+        }
         Some(other) => {
-            eprintln!("usage: mini-hypervisor [probe|lifecycle|run-hlt]");
+            eprintln!(
+                "usage: mini-hypervisor [probe|lifecycle|run-hlt|run-debug-port]"
+            );
             eprintln!("unknown command: {other}");
             Ok(())
         }

@@ -1,5 +1,6 @@
 use crate::error::{Error, VmExitError};
-use crate::vcpu::{Vcpu, VcpuExit, VcpuId, VcpuRegisters};
+use crate::portio::PortIoBus;
+use crate::vcpu::{PortIoExit, Vcpu, VcpuExit, VcpuId, VcpuRegisters};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,30 +46,53 @@ impl fmt::Display for VmExitReport {
     }
 }
 
-pub fn dispatch_vcpu_exit(vcpu: &Vcpu, exit: VcpuExit) -> Result<VmExitReport, Error> {
-    let registers = vcpu.registers()?;
-    dispatch_with_registers(vcpu.id(), exit, registers)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VmExitDisposition {
+    Continue(PortIoExit),
+    Stopped(VmExitReport),
 }
 
-fn dispatch_with_registers(
-    vcpu_id: VcpuId,
+pub fn dispatch_vcpu_exit(
+    vcpu: &Vcpu,
     exit: VcpuExit,
-    registers: VcpuRegisters,
-) -> Result<VmExitReport, Error> {
+    port_io: &mut PortIoBus,
+) -> Result<VmExitDisposition, Error> {
     match exit {
-        VcpuExit::Hlt => Ok(VmExitReport {
-            vcpu_id,
-            exit,
-            rip: registers.rip,
-            rflags: registers.rflags,
-        }),
-        VcpuExit::Unhandled { reason } => Err(Error::VmExit(VmExitError::Unhandled {
-            vcpu_id: vcpu_id.get(),
-            reason,
-            rip: registers.rip,
-            rflags: registers.rflags,
-        })),
+        VcpuExit::Io => {
+            let io = vcpu.port_io_exit()?;
+            port_io.dispatch(&io)?;
+            Ok(VmExitDisposition::Continue(io))
+        }
+        VcpuExit::Hlt => {
+            let registers = vcpu.registers()?;
+            Ok(VmExitDisposition::Stopped(hlt_report(
+                vcpu.id(),
+                registers,
+            )))
+        }
+        VcpuExit::Unhandled { reason } => {
+            let registers = vcpu.registers()?;
+            Err(unhandled_exit(vcpu.id(), reason, registers))
+        }
     }
+}
+
+fn hlt_report(vcpu_id: VcpuId, registers: VcpuRegisters) -> VmExitReport {
+    VmExitReport {
+        vcpu_id,
+        exit: VcpuExit::Hlt,
+        rip: registers.rip,
+        rflags: registers.rflags,
+    }
+}
+
+fn unhandled_exit(vcpu_id: VcpuId, reason: u32, registers: VcpuRegisters) -> Error {
+    Error::VmExit(VmExitError::Unhandled {
+        vcpu_id: vcpu_id.get(),
+        reason,
+        rip: registers.rip,
+        rflags: registers.rflags,
+    })
 }
 
 #[cfg(test)]
@@ -82,7 +106,7 @@ mod tests {
 
     #[test]
     fn hlt_dispatch_produces_structured_report() {
-        let report = dispatch_with_registers(VcpuId::BOOT, VcpuExit::Hlt, REGISTERS).unwrap();
+        let report = hlt_report(VcpuId::BOOT, REGISTERS);
 
         assert_eq!(report.vcpu_id(), VcpuId::BOOT);
         assert_eq!(report.exit(), VcpuExit::Hlt);
@@ -92,22 +116,16 @@ mod tests {
 
     #[test]
     fn unhandled_dispatch_preserves_reason_and_register_context() {
-        let result = dispatch_with_registers(
-            VcpuId::new(7),
-            VcpuExit::Unhandled {
-                reason: 0xfeed_beef,
-            },
-            REGISTERS,
-        );
+        let result = unhandled_exit(VcpuId::new(7), 0xfeed_beef, REGISTERS);
 
         assert!(matches!(
             result,
-            Err(Error::VmExit(VmExitError::Unhandled {
+            Error::VmExit(VmExitError::Unhandled {
                 vcpu_id: 7,
                 reason: 0xfeed_beef,
                 rip: 0x1001,
                 rflags: 0x2,
-            }))
+            })
         ));
     }
 }

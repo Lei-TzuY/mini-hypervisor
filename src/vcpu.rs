@@ -1,7 +1,8 @@
-use crate::error::{ConfigurationError, Error, HostEnvironmentError};
+use crate::error::{ConfigurationError, Error, HostEnvironmentError, VmExitError};
 use crate::kvm::sys;
 use crate::memory::GuestPhysAddr;
 use std::io;
+use std::ops::Range;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::ptr::NonNull;
 
@@ -30,6 +31,7 @@ impl VcpuId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VcpuExit {
     Hlt,
+    Io,
     Unhandled { reason: u32 },
 }
 
@@ -37,9 +39,87 @@ impl VcpuExit {
     #[must_use]
     pub const fn from_raw(reason: u32) -> Self {
         match reason {
+            sys::KVM_EXIT_IO => Self::Io,
             sys::KVM_EXIT_HLT => Self::Hlt,
             _ => Self::Unhandled { reason },
         }
+    }
+
+    #[must_use]
+    pub const fn reason(self) -> u32 {
+        match self {
+            Self::Io => sys::KVM_EXIT_IO,
+            Self::Hlt => sys::KVM_EXIT_HLT,
+            Self::Unhandled { reason } => reason,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortIoDirection {
+    In,
+    Out,
+}
+
+impl PortIoDirection {
+    #[must_use]
+    pub const fn raw(self) -> u8 {
+        match self {
+            Self::In => sys::KVM_EXIT_IO_IN,
+            Self::Out => sys::KVM_EXIT_IO_OUT,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortIoExit {
+    direction: PortIoDirection,
+    size: u8,
+    port: u16,
+    count: u32,
+    output_data: Vec<u8>,
+}
+
+impl PortIoExit {
+    pub(crate) fn new(
+        direction: PortIoDirection,
+        size: u8,
+        port: u16,
+        count: u32,
+        output_data: Vec<u8>,
+    ) -> Self {
+        Self {
+            direction,
+            size,
+            port,
+            count,
+            output_data,
+        }
+    }
+
+    #[must_use]
+    pub const fn direction(&self) -> PortIoDirection {
+        self.direction
+    }
+
+    #[must_use]
+    pub const fn size(&self) -> u8 {
+        self.size
+    }
+
+    #[must_use]
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    #[must_use]
+    pub const fn count(&self) -> u32 {
+        self.count
+    }
+
+    #[must_use]
+    pub fn output_data(&self) -> &[u8] {
+        &self.output_data
     }
 }
 
@@ -123,6 +203,10 @@ impl Vcpu {
 
         Ok(VcpuExit::from_raw(self.run.exit_reason()))
     }
+
+    pub(crate) fn port_io_exit(&self) -> Result<PortIoExit, Error> {
+        self.run.port_io_exit(self.id)
+    }
 }
 
 fn validate_real_mode_entry(entry: GuestPhysAddr) -> Result<u64, Error> {
@@ -150,6 +234,47 @@ fn vcpu_operation(id: VcpuId, operation: &'static str, source: io::Error) -> Err
     })
 }
 
+fn port_io_direction(id: VcpuId, raw: u8) -> Result<PortIoDirection, Error> {
+    match raw {
+        sys::KVM_EXIT_IO_IN => Ok(PortIoDirection::In),
+        sys::KVM_EXIT_IO_OUT => Ok(PortIoDirection::Out),
+        direction => Err(Error::VmExit(VmExitError::InvalidIoDirection {
+            vcpu_id: id.get(),
+            direction,
+        })),
+    }
+}
+
+fn checked_io_data_range(
+    id: VcpuId,
+    io: sys::KvmRunIo,
+    mapping_size: usize,
+) -> Result<Range<usize>, Error> {
+    let invalid_range = || {
+        Error::VmExit(VmExitError::InvalidIoDataRange {
+            vcpu_id: id.get(),
+            data_offset: io.data_offset,
+            size: io.size,
+            count: io.count,
+            mapping_size,
+        })
+    };
+
+    let offset = usize::try_from(io.data_offset).map_err(|_| invalid_range())?;
+    let count = usize::try_from(io.count).map_err(|_| invalid_range())?;
+    let length = usize::from(io.size)
+        .checked_mul(count)
+        .ok_or_else(|| invalid_range())?;
+    let end = offset
+        .checked_add(length)
+        .ok_or_else(|| invalid_range())?;
+    if end > mapping_size {
+        return Err(invalid_range());
+    }
+
+    Ok(offset..end)
+}
+
 #[derive(Debug)]
 struct KvmRunMapping {
     ptr: NonNull<libc::c_void>,
@@ -158,10 +283,10 @@ struct KvmRunMapping {
 
 impl KvmRunMapping {
     fn map(fd: &OwnedFd, len: usize) -> io::Result<Self> {
-        if len < std::mem::size_of::<sys::KvmRunHeader>() {
+        if len < std::mem::size_of::<sys::KvmRunIoPrefix>() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "kvm_run mmap length is smaller than the required header",
+                "kvm_run mmap length is smaller than the required x86 I/O prefix",
             ));
         }
 
@@ -184,11 +309,53 @@ impl KvmRunMapping {
         Ok(Self { ptr, len })
     }
 
+    fn prefix(&self) -> &sys::KvmRunIoPrefix {
+        // SAFETY: construction requires a mapping at least as large as `KvmRunIoPrefix`, KVM
+        // places `struct kvm_run` at offset zero, and mmap returns suitably aligned memory.
+        unsafe { &*self.ptr.as_ptr().cast::<sys::KvmRunIoPrefix>() }
+    }
+
     fn exit_reason(&self) -> u32 {
-        // SAFETY: construction requires a mapping at least as large as `KvmRunHeader`, and KVM
-        // defines that structure as the prefix at offset zero of the shared `kvm_run` mapping.
-        let header = unsafe { &*self.ptr.as_ptr().cast::<sys::KvmRunHeader>() };
-        header.exit_reason
+        self.prefix().header.exit_reason
+    }
+
+    fn port_io_exit(&self, id: VcpuId) -> Result<PortIoExit, Error> {
+        let prefix = self.prefix();
+        if prefix.header.exit_reason != sys::KVM_EXIT_IO {
+            return Err(Error::VmExit(VmExitError::IoPayloadUnavailable {
+                vcpu_id: id.get(),
+                exit_reason: prefix.header.exit_reason,
+            }));
+        }
+
+        let io = prefix.io;
+        let direction = port_io_direction(id, io.direction)?;
+        let range = checked_io_data_range(id, io, self.len)?;
+        let output_data = if direction == PortIoDirection::Out {
+            let mut bytes = vec![0; range.len()];
+            if !bytes.is_empty() {
+                // SAFETY: `range` was checked against the mapping length. The destination owns
+                // `range.len()` initialized bytes and cannot overlap the mmap source.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        self.ptr.as_ptr().cast::<u8>().add(range.start),
+                        bytes.as_mut_ptr(),
+                        range.len(),
+                    );
+                }
+            }
+            bytes
+        } else {
+            Vec::new()
+        };
+
+        Ok(PortIoExit::new(
+            direction,
+            io.size,
+            io.port,
+            io.count,
+            output_data,
+        ))
     }
 }
 
@@ -204,14 +371,95 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classifies_hlt_and_preserves_unknown_reason() {
+    fn classifies_hlt_io_and_preserves_unknown_reason() {
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_HLT), VcpuExit::Hlt);
+        assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_IO), VcpuExit::Io);
         assert_eq!(
             VcpuExit::from_raw(0xfeed_beef),
             VcpuExit::Unhandled {
                 reason: 0xfeed_beef
             }
         );
+    }
+
+    #[test]
+    fn exit_reason_round_trips_typed_classification() {
+        assert_eq!(VcpuExit::Hlt.reason(), sys::KVM_EXIT_HLT);
+        assert_eq!(VcpuExit::Io.reason(), sys::KVM_EXIT_IO);
+        assert_eq!(
+            VcpuExit::Unhandled { reason: 0x1234 }.reason(),
+            0x1234
+        );
+    }
+
+    #[test]
+    fn validates_port_io_directions() {
+        assert_eq!(
+            port_io_direction(VcpuId::BOOT, sys::KVM_EXIT_IO_IN).unwrap(),
+            PortIoDirection::In
+        );
+        assert_eq!(
+            port_io_direction(VcpuId::BOOT, sys::KVM_EXIT_IO_OUT).unwrap(),
+            PortIoDirection::Out
+        );
+        assert!(matches!(
+            port_io_direction(VcpuId::new(3), 9),
+            Err(Error::VmExit(VmExitError::InvalidIoDirection {
+                vcpu_id: 3,
+                direction: 9,
+            }))
+        ));
+    }
+
+    #[test]
+    fn validates_port_io_data_range() {
+        let io = sys::KvmRunIo {
+            direction: sys::KVM_EXIT_IO_OUT,
+            size: 2,
+            port: 0xe9,
+            count: 3,
+            data_offset: 48,
+        };
+        assert_eq!(
+            checked_io_data_range(VcpuId::BOOT, io, 64).unwrap(),
+            48..54
+        );
+    }
+
+    #[test]
+    fn rejects_port_io_data_range_outside_mapping() {
+        let io = sys::KvmRunIo {
+            direction: sys::KVM_EXIT_IO_OUT,
+            size: 4,
+            port: 0xe9,
+            count: 2,
+            data_offset: 60,
+        };
+        assert!(matches!(
+            checked_io_data_range(VcpuId::new(2), io, 64),
+            Err(Error::VmExit(VmExitError::InvalidIoDataRange {
+                vcpu_id: 2,
+                data_offset: 60,
+                size: 4,
+                count: 2,
+                mapping_size: 64,
+            }))
+        ));
+    }
+
+    #[test]
+    fn rejects_port_io_data_range_overflow() {
+        let io = sys::KvmRunIo {
+            direction: sys::KVM_EXIT_IO_OUT,
+            size: 2,
+            port: 0xe9,
+            count: 1,
+            data_offset: u64::MAX,
+        };
+        assert!(matches!(
+            checked_io_data_range(VcpuId::BOOT, io, usize::MAX),
+            Err(Error::VmExit(VmExitError::InvalidIoDataRange { .. }))
+        ));
     }
 
     #[test]
