@@ -1,6 +1,7 @@
 mod sys;
 
-use crate::error::{Error, HostEnvironmentError, KvmCapabilityError};
+use crate::error::{Error, GuestMemoryError, HostEnvironmentError, KvmCapabilityError};
+use crate::memory::GuestMemory;
 use crate::vcpu::{Vcpu, VcpuId};
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -113,6 +114,7 @@ impl KvmBackend {
 
         Ok(Vm {
             fd,
+            guest_memory: None,
             vcpu_mmap_size: usize::try_from(self.capabilities.vcpu_mmap_size)
                 .expect("validated positive i32 always fits usize"),
         })
@@ -121,11 +123,43 @@ impl KvmBackend {
 
 #[derive(Debug)]
 pub struct Vm {
+    // Field order is deliberate: closing the VM fd removes KVM's memory-slot reference before the
+    // backing mmap in `guest_memory` is dropped.
     fd: OwnedFd,
+    guest_memory: Option<GuestMemory>,
     vcpu_mmap_size: usize,
 }
 
 impl Vm {
+    pub fn register_guest_memory(&mut self, memory: GuestMemory) -> Result<(), Error> {
+        if self.guest_memory.is_some() {
+            return Err(Error::GuestMemory(GuestMemoryError::AlreadyRegistered));
+        }
+
+        let region = memory.region();
+        let kvm_region = sys::KvmUserspaceMemoryRegion {
+            slot: 0,
+            flags: 0,
+            guest_phys_addr: region.base().get(),
+            memory_size: region.size(),
+            userspace_addr: memory.userspace_addr(),
+        };
+        sys::set_user_memory_region(self.fd.as_raw_fd(), &kvm_region).map_err(|source| {
+            Error::GuestMemory(GuestMemoryError::Registration { source })
+        })?;
+        self.guest_memory = Some(memory);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn guest_memory(&self) -> Option<&GuestMemory> {
+        self.guest_memory.as_ref()
+    }
+
+    pub fn guest_memory_mut(&mut self) -> Option<&mut GuestMemory> {
+        self.guest_memory.as_mut()
+    }
+
     pub fn create_vcpu(&self, id: VcpuId) -> Result<Vcpu, Error> {
         let raw_fd = sys::ioctl_with_arg(
             self.fd.as_raw_fd(),
