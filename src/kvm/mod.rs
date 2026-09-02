@@ -105,9 +105,10 @@ impl KvmBackend {
     }
 
     pub fn create_vm(&self) -> Result<Vm, Error> {
-        let raw_fd = sys::ioctl_with_arg(self.fd.as_raw_fd(), sys::KVM_CREATE_VM, 0).map_err(
-            |source| Error::HostEnvironment(HostEnvironmentError::VmCreation { source }),
-        )?;
+        let raw_fd =
+            sys::ioctl_with_arg(self.fd.as_raw_fd(), sys::KVM_CREATE_VM, 0).map_err(|source| {
+                Error::HostEnvironment(HostEnvironmentError::VmCreation { source })
+            })?;
         let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
 
         Ok(Vm {

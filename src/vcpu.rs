@@ -81,8 +81,8 @@ impl KvmRunMapping {
             return Err(io::Error::last_os_error());
         }
 
-        let ptr = NonNull::new(raw)
-            .ok_or_else(|| io::Error::other("mmap unexpectedly returned null"))?;
+        let ptr =
+            NonNull::new(raw).ok_or_else(|| io::Error::other("mmap unexpectedly returned null"))?;
         Ok(Self { ptr, len })
     }
 }
