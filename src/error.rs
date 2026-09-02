@@ -8,6 +8,7 @@ pub enum Error {
     Configuration(ConfigurationError),
     GuestMemory(GuestMemoryError),
     GuestImage(GuestImageError),
+    VmExit(VmExitError),
 }
 
 #[derive(Debug)]
@@ -117,6 +118,16 @@ pub enum GuestImageError {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VmExitError {
+    Unhandled {
+        vcpu_id: u16,
+        reason: u32,
+        rip: u64,
+        rflags: u64,
+    },
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -125,6 +136,7 @@ impl fmt::Display for Error {
             Self::Configuration(error) => error.fmt(f),
             Self::GuestMemory(error) => error.fmt(f),
             Self::GuestImage(error) => error.fmt(f),
+            Self::VmExit(error) => error.fmt(f),
         }
     }
 }
@@ -134,7 +146,10 @@ impl std::error::Error for Error {
         match self {
             Self::HostEnvironment(error) => error.source(),
             Self::GuestMemory(error) => error.source(),
-            Self::KvmCapability(_) | Self::Configuration(_) | Self::GuestImage(_) => None,
+            Self::KvmCapability(_)
+            | Self::Configuration(_)
+            | Self::GuestImage(_)
+            | Self::VmExit(_) => None,
         }
     }
 }
@@ -305,3 +320,21 @@ impl fmt::Display for GuestImageError {
 }
 
 impl std::error::Error for GuestImageError {}
+
+impl fmt::Display for VmExitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unhandled {
+                vcpu_id,
+                reason,
+                rip,
+                rflags,
+            } => write!(
+                f,
+                "unhandled VM exit on vCPU {vcpu_id}: reason={reason}, rip={rip:#x}, rflags={rflags:#x}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for VmExitError {}
