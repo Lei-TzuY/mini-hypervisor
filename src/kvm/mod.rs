@@ -1,7 +1,7 @@
-mod sys;
+pub(crate) mod sys;
 
 use crate::error::{Error, GuestMemoryError, HostEnvironmentError, KvmCapabilityError};
-use crate::memory::GuestMemory;
+use crate::memory::{GuestMemory, GuestMemoryRegion, GuestPhysAddr, KVM_MEMORY_ALIGNMENT};
 use crate::vcpu::{Vcpu, VcpuId};
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -10,6 +10,20 @@ use std::path::Path;
 
 const EXPECTED_KVM_API_VERSION: i32 = 12;
 const KVM_CAP_USER_MEMORY: i32 = 3;
+const KVM_CAP_SET_TSS_ADDR: i32 = 4;
+const KVM_CAP_SET_IDENTITY_MAP_ADDR: i32 = 37;
+const KVM_IDENTITY_MAP_ADDR: u64 = 0xfeff_c000;
+const KVM_TSS_ADDR: u64 = KVM_IDENTITY_MAP_ADDR + KVM_MEMORY_ALIGNMENT;
+const KVM_RESERVED_X86_SIZE: u64 = 4 * KVM_MEMORY_ALIGNMENT;
+
+const REQUIRED_EXTENSIONS: [(&str, i32); 3] = [
+    ("KVM_CAP_USER_MEMORY", KVM_CAP_USER_MEMORY),
+    ("KVM_CAP_SET_TSS_ADDR", KVM_CAP_SET_TSS_ADDR),
+    (
+        "KVM_CAP_SET_IDENTITY_MAP_ADDR",
+        KVM_CAP_SET_IDENTITY_MAP_ADDR,
+    ),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capability {
@@ -44,17 +58,20 @@ impl HostCapabilities {
             ));
         }
 
-        let user_memory = self
-            .extensions
-            .iter()
-            .find(|capability| capability.id == KVM_CAP_USER_MEMORY);
-        match user_memory {
-            Some(capability) if capability.value > 0 => Ok(()),
-            _ => Err(Error::KvmCapability(KvmCapabilityError::MissingExtension {
-                name: "KVM_CAP_USER_MEMORY",
-                id: KVM_CAP_USER_MEMORY,
-            })),
+        for (name, id) in REQUIRED_EXTENSIONS {
+            let available = self
+                .extensions
+                .iter()
+                .any(|capability| capability.id == id && capability.value > 0);
+            if !available {
+                return Err(Error::KvmCapability(KvmCapabilityError::MissingExtension {
+                    name,
+                    id,
+                }));
+            }
         }
+
+        Ok(())
     }
 }
 
@@ -80,20 +97,16 @@ impl KvmBackend {
             .map_err(|source| host_io("KVM_GET_API_VERSION", source))?;
         let vcpu_mmap_size = sys::ioctl_noarg(fd.as_raw_fd(), sys::KVM_GET_VCPU_MMAP_SIZE)
             .map_err(|source| host_io("KVM_GET_VCPU_MMAP_SIZE", source))?;
-        let capability_id = libc::c_ulong::try_from(KVM_CAP_USER_MEMORY)
-            .expect("KVM capability identifiers are positive constants");
-        let user_memory =
-            sys::ioctl_with_arg(fd.as_raw_fd(), sys::KVM_CHECK_EXTENSION, capability_id)
-                .map_err(|source| host_io("KVM_CHECK_EXTENSION(KVM_CAP_USER_MEMORY)", source))?;
+
+        let mut extensions = Vec::with_capacity(REQUIRED_EXTENSIONS.len());
+        for (name, id) in REQUIRED_EXTENSIONS {
+            extensions.push(check_extension(&fd, name, id)?);
+        }
 
         let capabilities = HostCapabilities {
             api_version,
             vcpu_mmap_size,
-            extensions: vec![Capability {
-                name: "KVM_CAP_USER_MEMORY",
-                id: KVM_CAP_USER_MEMORY,
-                value: user_memory,
-            }],
+            extensions,
         };
         capabilities.validate()?;
 
@@ -111,6 +124,19 @@ impl KvmBackend {
                 Error::HostEnvironment(HostEnvironmentError::VmCreation { source })
             })?;
         let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+
+        sys::set_identity_map_addr(fd.as_raw_fd(), KVM_IDENTITY_MAP_ADDR).map_err(|source| {
+            Error::HostEnvironment(HostEnvironmentError::VmOperation {
+                operation: "KVM_SET_IDENTITY_MAP_ADDR",
+                source,
+            })
+        })?;
+        sys::set_tss_addr(fd.as_raw_fd(), KVM_TSS_ADDR).map_err(|source| {
+            Error::HostEnvironment(HostEnvironmentError::VmOperation {
+                operation: "KVM_SET_TSS_ADDR",
+                source,
+            })
+        })?;
 
         Ok(Vm {
             fd,
@@ -134,6 +160,7 @@ impl Vm {
             return Err(Error::GuestMemory(GuestMemoryError::AlreadyRegistered));
         }
 
+        validate_guest_memory_registration(memory.region())?;
         let region = memory.region();
         let kvm_region = sys::KvmUserspaceMemoryRegion::ram_slot0(
             region.base().get(),
@@ -194,6 +221,34 @@ impl Drop for Vm {
     }
 }
 
+fn check_extension(fd: &File, name: &'static str, id: i32) -> Result<Capability, Error> {
+    let capability_id = libc::c_ulong::try_from(id).expect("KVM capability IDs are non-negative");
+    let value = sys::ioctl_with_arg(fd.as_raw_fd(), sys::KVM_CHECK_EXTENSION, capability_id)
+        .map_err(|source| host_io("KVM_CHECK_EXTENSION", source))?;
+    Ok(Capability { name, id, value })
+}
+
+fn reserved_kvm_x86_region() -> GuestMemoryRegion {
+    GuestMemoryRegion::new(
+        GuestPhysAddr::new(KVM_IDENTITY_MAP_ADDR),
+        KVM_RESERVED_X86_SIZE,
+    )
+    .expect("KVM reserved x86 range constants are page aligned and non-overflowing")
+}
+
+fn validate_guest_memory_registration(region: GuestMemoryRegion) -> Result<(), Error> {
+    let reserved = reserved_kvm_x86_region();
+    if region.overlaps(reserved) {
+        return Err(Error::GuestMemory(GuestMemoryError::ReservedRangeOverlap {
+            region_base: region.base().get(),
+            region_size: region.size(),
+            reserved_base: reserved.base().get(),
+            reserved_size: reserved.size(),
+        }));
+    }
+    Ok(())
+}
+
 fn classify_open_error(source: io::Error) -> Error {
     match source.kind() {
         io::ErrorKind::NotFound => {
@@ -221,11 +276,10 @@ mod tests {
         HostCapabilities {
             api_version: EXPECTED_KVM_API_VERSION,
             vcpu_mmap_size: 4096,
-            extensions: vec![Capability {
-                name: "KVM_CAP_USER_MEMORY",
-                id: KVM_CAP_USER_MEMORY,
-                value: 1,
-            }],
+            extensions: REQUIRED_EXTENSIONS
+                .into_iter()
+                .map(|(name, id)| Capability { name, id, value: 1 })
+                .collect(),
         }
     }
 
@@ -249,12 +303,14 @@ mod tests {
     #[test]
     fn rejects_missing_required_extension() {
         let mut capabilities = valid_capabilities();
-        capabilities.extensions.clear();
+        capabilities
+            .extensions
+            .retain(|capability| capability.id != KVM_CAP_SET_TSS_ADDR);
         assert!(matches!(
             capabilities.validate(),
             Err(Error::KvmCapability(KvmCapabilityError::MissingExtension {
-                name: "KVM_CAP_USER_MEMORY",
-                ..
+                name: "KVM_CAP_SET_TSS_ADDR",
+                id: KVM_CAP_SET_TSS_ADDR,
             }))
         ));
     }
@@ -262,12 +318,17 @@ mod tests {
     #[test]
     fn rejects_disabled_required_extension() {
         let mut capabilities = valid_capabilities();
-        capabilities.extensions[0].value = 0;
+        capabilities
+            .extensions
+            .iter_mut()
+            .find(|capability| capability.id == KVM_CAP_SET_IDENTITY_MAP_ADDR)
+            .unwrap()
+            .value = 0;
         assert!(matches!(
             capabilities.validate(),
             Err(Error::KvmCapability(KvmCapabilityError::MissingExtension {
-                name: "KVM_CAP_USER_MEMORY",
-                ..
+                name: "KVM_CAP_SET_IDENTITY_MAP_ADDR",
+                id: KVM_CAP_SET_IDENTITY_MAP_ADDR,
             }))
         ));
     }
@@ -282,5 +343,30 @@ mod tests {
                 KvmCapabilityError::InvalidVcpuMmapSize { size: 0 }
             ))
         ));
+    }
+
+    #[test]
+    fn rejects_ram_overlapping_kvm_x86_reserved_pages() {
+        let region = GuestMemoryRegion::new(
+            GuestPhysAddr::new(KVM_IDENTITY_MAP_ADDR),
+            KVM_MEMORY_ALIGNMENT,
+        )
+        .unwrap();
+        assert!(matches!(
+            validate_guest_memory_registration(region),
+            Err(Error::GuestMemory(
+                GuestMemoryError::ReservedRangeOverlap { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn accepts_ram_adjacent_to_kvm_x86_reserved_pages() {
+        let region = GuestMemoryRegion::new(
+            GuestPhysAddr::new(KVM_IDENTITY_MAP_ADDR - KVM_MEMORY_ALIGNMENT),
+            KVM_MEMORY_ALIGNMENT,
+        )
+        .unwrap();
+        assert!(validate_guest_memory_registration(region).is_ok());
     }
 }

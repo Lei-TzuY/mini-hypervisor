@@ -1,6 +1,6 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::kvm::KvmBackend;
-use mini_hypervisor::verify_kvm_lifecycle;
+use mini_hypervisor::{run_hlt_guest, verify_kvm_lifecycle};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -26,8 +26,15 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
             Ok(())
         }
         Some("lifecycle") => verify_kvm_lifecycle(VmConfig::default()),
+        Some("run-hlt") => {
+            let result = run_hlt_guest(VmConfig::default())?;
+            println!("exit: {:?}", result.exit);
+            println!("rip: {:#x}", result.rip);
+            println!("rflags: {:#x}", result.rflags);
+            Ok(())
+        }
         Some(other) => {
-            eprintln!("usage: mini-hypervisor [probe|lifecycle]");
+            eprintln!("usage: mini-hypervisor [probe|lifecycle|run-hlt]");
             eprintln!("unknown command: {other}");
             Ok(())
         }
