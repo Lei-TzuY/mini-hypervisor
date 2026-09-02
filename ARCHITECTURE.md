@@ -30,13 +30,13 @@ The KVM UAPI details live in `src/kvm/sys.rs`. Higher layers call typed Rust met
 
 The region constructor rejects guest-physical wraparound and alignment errors. Access validation rejects address-plus-length overflow, ranges outside RAM, and host-size conversion failures. Zero-length accesses are valid at the exclusive end; non-zero accesses are not.
 
-The `Vm` takes ownership of `GuestMemory` only after `KVM_SET_USER_MEMORY_REGION` succeeds. Its field order deliberately closes the VM descriptor before unmapping guest RAM during drop, so the host mapping remains alive through the registration lifetime.
+The `Vm` takes ownership of `GuestMemory` only after `KVM_SET_USER_MEMORY_REGION` succeeds. During `Vm` destruction it first issues a zero-sized slot-0 update to unregister RAM. If KVM refuses that cleanup, the process intentionally leaks the backing mapping rather than unmapping memory while a surviving vCPU fd could still keep the kernel VM alive.
 
 See [docs/memory-map.md](docs/memory-map.md).
 
 ## Ownership and lifetime
 
-`KvmBackend` owns the `/dev/kvm` descriptor. `Vm` owns the VM descriptor and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and a `KvmRunMapping`. Rust ownership is used for cleanup; raw KVM UAPI operations and mappings stay inside the backend/memory boundary.
+`KvmBackend` owns the `/dev/kvm` descriptor. `Vm` owns the VM descriptor and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and a `KvmRunMapping`. Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
 ## Error boundary
 

@@ -123,8 +123,6 @@ impl KvmBackend {
 
 #[derive(Debug)]
 pub struct Vm {
-    // Field order is deliberate: closing the VM fd removes KVM's memory-slot reference before the
-    // backing mmap in `guest_memory` is dropped.
     fd: OwnedFd,
     guest_memory: Option<GuestMemory>,
     vcpu_mmap_size: usize,
@@ -137,13 +135,11 @@ impl Vm {
         }
 
         let region = memory.region();
-        let kvm_region = sys::KvmUserspaceMemoryRegion {
-            slot: 0,
-            flags: 0,
-            guest_phys_addr: region.base().get(),
-            memory_size: region.size(),
-            userspace_addr: memory.userspace_addr(),
-        };
+        let kvm_region = sys::KvmUserspaceMemoryRegion::ram_slot0(
+            region.base().get(),
+            region.size(),
+            memory.userspace_addr(),
+        );
         sys::set_user_memory_region(self.fd.as_raw_fd(), &kvm_region).map_err(|source| {
             Error::GuestMemory(GuestMemoryError::Registration { source })
         })?;
@@ -174,6 +170,28 @@ impl Vm {
         })?;
         let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
         Vcpu::from_kvm_fd(id, fd, self.vcpu_mmap_size)
+    }
+
+    fn unregister_guest_memory(&self) -> io::Result<()> {
+        let region = sys::KvmUserspaceMemoryRegion::unregister_slot0();
+        sys::set_user_memory_region(self.fd.as_raw_fd(), &region)
+    }
+}
+
+impl Drop for Vm {
+    fn drop(&mut self) {
+        if self.guest_memory.is_none() {
+            return;
+        }
+
+        if self.unregister_guest_memory().is_err() {
+            // A vCPU fd can keep the kernel VM alive after this userspace VM handle is dropped.
+            // If slot removal cannot be confirmed, leaking the mapping is safer than leaving KVM
+            // with a userspace address that has already been unmapped.
+            if let Some(memory) = self.guest_memory.take() {
+                std::mem::forget(memory);
+            }
+        }
     }
 }
 

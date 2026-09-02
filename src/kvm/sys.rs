@@ -9,13 +9,37 @@ pub const KVM_CREATE_VCPU: libc::c_ulong = 0xAE41;
 pub const KVM_SET_USER_MEMORY_REGION: libc::c_ulong = 0x4020_AE46;
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KvmUserspaceMemoryRegion {
     pub slot: u32,
     pub flags: u32,
     pub guest_phys_addr: u64,
     pub memory_size: u64,
     pub userspace_addr: u64,
+}
+
+impl KvmUserspaceMemoryRegion {
+    #[must_use]
+    pub const fn ram_slot0(guest_phys_addr: u64, memory_size: u64, userspace_addr: u64) -> Self {
+        Self {
+            slot: 0,
+            flags: 0,
+            guest_phys_addr,
+            memory_size,
+            userspace_addr,
+        }
+    }
+
+    #[must_use]
+    pub const fn unregister_slot0() -> Self {
+        Self {
+            slot: 0,
+            flags: 0,
+            guest_phys_addr: 0,
+            memory_size: 0,
+            userspace_addr: 0,
+        }
+    }
 }
 
 pub fn ioctl_noarg(fd: RawFd, request: libc::c_ulong) -> io::Result<i32> {
@@ -51,5 +75,19 @@ mod tests {
     fn userspace_memory_region_matches_x86_64_kvm_uapi_layout() {
         assert_eq!(std::mem::size_of::<KvmUserspaceMemoryRegion>(), 32);
         assert_eq!(KVM_SET_USER_MEMORY_REGION, 0x4020_AE46);
+    }
+
+    #[test]
+    fn unregister_request_removes_slot_zero() {
+        assert_eq!(
+            KvmUserspaceMemoryRegion::unregister_slot0(),
+            KvmUserspaceMemoryRegion {
+                slot: 0,
+                flags: 0,
+                guest_phys_addr: 0,
+                memory_size: 0,
+                userspace_addr: 0,
+            }
+        );
     }
 }
