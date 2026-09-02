@@ -43,18 +43,17 @@ impl HostCapabilities {
             ));
         }
 
-        for capability in &self.extensions {
-            if capability.value <= 0 {
-                return Err(Error::KvmCapability(
-                    KvmCapabilityError::MissingExtension {
-                        name: capability.name,
-                        id: capability.id,
-                    },
-                ));
-            }
+        let user_memory = self
+            .extensions
+            .iter()
+            .find(|capability| capability.id == KVM_CAP_USER_MEMORY);
+        match user_memory {
+            Some(capability) if capability.value > 0 => Ok(()),
+            _ => Err(Error::KvmCapability(KvmCapabilityError::MissingExtension {
+                name: "KVM_CAP_USER_MEMORY",
+                id: KVM_CAP_USER_MEMORY,
+            })),
         }
-
-        Ok(())
     }
 }
 
@@ -80,12 +79,11 @@ impl KvmBackend {
             .map_err(|source| host_io("KVM_GET_API_VERSION", source))?;
         let vcpu_mmap_size = sys::ioctl_noarg(fd.as_raw_fd(), sys::KVM_GET_VCPU_MMAP_SIZE)
             .map_err(|source| host_io("KVM_GET_VCPU_MMAP_SIZE", source))?;
-        let user_memory = sys::ioctl_with_arg(
-            fd.as_raw_fd(),
-            sys::KVM_CHECK_EXTENSION,
-            KVM_CAP_USER_MEMORY as libc::c_ulong,
-        )
-        .map_err(|source| host_io("KVM_CHECK_EXTENSION(KVM_CAP_USER_MEMORY)", source))?;
+        let capability_id = libc::c_ulong::try_from(KVM_CAP_USER_MEMORY)
+            .expect("KVM capability identifiers are positive constants");
+        let user_memory =
+            sys::ioctl_with_arg(fd.as_raw_fd(), sys::KVM_CHECK_EXTENSION, capability_id)
+                .map_err(|source| host_io("KVM_CHECK_EXTENSION(KVM_CAP_USER_MEMORY)", source))?;
 
         let capabilities = HostCapabilities {
             api_version,
@@ -107,8 +105,9 @@ impl KvmBackend {
     }
 
     pub fn create_vm(&self) -> Result<Vm, Error> {
-        let raw_fd = sys::ioctl_with_arg(self.fd.as_raw_fd(), sys::KVM_CREATE_VM, 0)
-            .map_err(|source| host_io("KVM_CREATE_VM", source))?;
+        let raw_fd = sys::ioctl_with_arg(self.fd.as_raw_fd(), sys::KVM_CREATE_VM, 0).map_err(
+            |source| Error::HostEnvironment(HostEnvironmentError::VmCreation { source }),
+        )?;
         let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
 
         Ok(Vm {
@@ -132,7 +131,12 @@ impl Vm {
             sys::KVM_CREATE_VCPU,
             libc::c_ulong::from(id.get()),
         )
-        .map_err(|source| host_io("KVM_CREATE_VCPU", source))?;
+        .map_err(|source| {
+            Error::HostEnvironment(HostEnvironmentError::VcpuCreation {
+                id: id.get(),
+                source,
+            })
+        })?;
         let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
         Vcpu::from_kvm_fd(id, fd, self.vcpu_mmap_size)
     }
@@ -193,15 +197,26 @@ mod tests {
     #[test]
     fn rejects_missing_required_extension() {
         let mut capabilities = valid_capabilities();
+        capabilities.extensions.clear();
+        assert!(matches!(
+            capabilities.validate(),
+            Err(Error::KvmCapability(KvmCapabilityError::MissingExtension {
+                name: "KVM_CAP_USER_MEMORY",
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn rejects_disabled_required_extension() {
+        let mut capabilities = valid_capabilities();
         capabilities.extensions[0].value = 0;
         assert!(matches!(
             capabilities.validate(),
-            Err(Error::KvmCapability(
-                KvmCapabilityError::MissingExtension {
-                    name: "KVM_CAP_USER_MEMORY",
-                    ..
-                }
-            ))
+            Err(Error::KvmCapability(KvmCapabilityError::MissingExtension {
+                name: "KVM_CAP_USER_MEMORY",
+                ..
+            }))
         ));
     }
 

@@ -12,11 +12,7 @@ pub fn ioctl_noarg(fd: RawFd, request: libc::c_ulong) -> io::Result<i32> {
     cvt_ioctl(result)
 }
 
-pub fn ioctl_with_arg(
-    fd: RawFd,
-    request: libc::c_ulong,
-    arg: libc::c_ulong,
-) -> io::Result<i32> {
+pub fn ioctl_with_arg(fd: RawFd, request: libc::c_ulong, arg: libc::c_ulong) -> io::Result<i32> {
     let result = unsafe { libc::ioctl(fd, request, arg) };
     cvt_ioctl(result)
 }

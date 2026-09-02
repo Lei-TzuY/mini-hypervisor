@@ -1,5 +1,4 @@
-use crate::error::Error;
-use crate::kvm::host_io;
+use crate::error::{Error, HostEnvironmentError};
 use std::io;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::ptr::NonNull;
@@ -34,8 +33,12 @@ impl Vcpu {
         fd: OwnedFd,
         run_mmap_size: usize,
     ) -> Result<Self, Error> {
-        let run = KvmRunMapping::map(&fd, run_mmap_size)
-            .map_err(|source| host_io("mmap kvm_run", source))?;
+        let run = KvmRunMapping::map(&fd, run_mmap_size).map_err(|source| {
+            Error::HostEnvironment(HostEnvironmentError::VcpuRunMapping {
+                id: id.get(),
+                source,
+            })
+        })?;
         Ok(Self {
             id,
             _fd: fd,
@@ -78,9 +81,8 @@ impl KvmRunMapping {
             return Err(io::Error::last_os_error());
         }
 
-        let ptr = NonNull::new(raw).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "mmap unexpectedly returned null")
-        })?;
+        let ptr = NonNull::new(raw)
+            .ok_or_else(|| io::Error::other("mmap unexpectedly returned null"))?;
         Ok(Self { ptr, len })
     }
 }

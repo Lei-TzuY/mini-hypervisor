@@ -10,9 +10,27 @@ pub enum Error {
 
 #[derive(Debug)]
 pub enum HostEnvironmentError {
-    KvmUnavailable { source: io::Error },
-    PermissionDenied { source: io::Error },
-    Io { operation: &'static str, source: io::Error },
+    KvmUnavailable {
+        source: io::Error,
+    },
+    PermissionDenied {
+        source: io::Error,
+    },
+    VmCreation {
+        source: io::Error,
+    },
+    VcpuCreation {
+        id: u16,
+        source: io::Error,
+    },
+    VcpuRunMapping {
+        id: u16,
+        source: io::Error,
+    },
+    Io {
+        operation: &'static str,
+        source: io::Error,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +69,11 @@ impl fmt::Display for HostEnvironmentError {
         match self {
             Self::KvmUnavailable { .. } => write!(f, "/dev/kvm is unavailable"),
             Self::PermissionDenied { .. } => write!(f, "permission denied while opening /dev/kvm"),
+            Self::VmCreation { .. } => write!(f, "KVM failed to create a VM"),
+            Self::VcpuCreation { id, .. } => write!(f, "KVM failed to create vCPU {id}"),
+            Self::VcpuRunMapping { id, .. } => {
+                write!(f, "failed to map the kvm_run structure for vCPU {id}")
+            }
             Self::Io { operation, .. } => write!(f, "host I/O failure during {operation}"),
         }
     }
@@ -61,6 +84,9 @@ impl std::error::Error for HostEnvironmentError {
         match self {
             Self::KvmUnavailable { source }
             | Self::PermissionDenied { source }
+            | Self::VmCreation { source }
+            | Self::VcpuCreation { source, .. }
+            | Self::VcpuRunMapping { source, .. }
             | Self::Io { source, .. } => Some(source),
         }
     }
