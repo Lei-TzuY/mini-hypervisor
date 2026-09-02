@@ -22,10 +22,12 @@ KvmBackend
              Vcpu
               ├─ explicit real-mode register setup
               ├─ kvm_run mapping
+              ├─ checked KVM_EXIT_IO metadata/payload extraction
               └─ KVM_RUN → VcpuExit
                          ↓
                  vmexit::dispatch_vcpu_exit
                   ├─ HLT → VmExitReport
+                  ├─ IO  → PortIoBus → debug port 0xe9 → Continue
                   └─ other → VmExitError
 ```
 
@@ -51,27 +53,45 @@ See [docs/memory-map.md](docs/memory-map.md).
 
 `FlatGuestImage` is deliberately narrower than a general executable loader. Construction requires a non-empty byte slice, rejects load-address overflow, and requires the entry point to lie inside the loaded image. Loading still goes through `GuestMemory::write`, so a valid image description cannot escape the configured RAM region.
 
-The deterministic fixture consists only of `HLT` at guest physical address `0x1000`. ELF parsing and Linux boot conventions are intentionally absent.
+The HLT fixture contains only `HLT` at guest physical address `0x1000`. The debug-port fixture contains `MOV AL, 'K'; OUT 0xe9, AL; HLT` at the same entry. ELF parsing and Linux boot conventions are intentionally absent.
 
 ## vCPU execution
 
-The current fixture uses KVM's newly-created x86 vCPU architectural reset state as the starting special-register state, then explicitly normalizes CS/DS/ES/FS/GS/SS base and selector values to zero and clears CR0 protected-mode/paging enable bits. All general registers are then set from a zeroed `kvm_regs` value with RIP set to the entry point and RFLAGS bit 1 set as required by x86.
+The current fixtures use KVM's newly-created x86 vCPU architectural reset state as the starting special-register state, then explicitly normalize CS/DS/ES/FS/GS/SS base and selector values to zero and clear CR0 protected-mode/paging enable bits. All general registers are then set from a zeroed `kvm_regs` value with RIP set to the entry point and RFLAGS bit 1 set as required by x86.
 
 The current CS=0 fixture deliberately limits its real-mode RIP to `0xffff`. Broader real-mode segment addressing and protected/long-mode setup belong to later guest boot work.
 
-`Vcpu::run_once` retries an interrupted host syscall, performs exactly one completed `KVM_RUN`, reads the exit reason from the tested prefix of `kvm_run`, and returns a typed `VcpuExit`. It does not decide whether that exit is acceptable VMM policy.
+`Vcpu::run_once` retries an interrupted host syscall, performs one completed `KVM_RUN`, reads the tested x86 prefix of `kvm_run`, and returns a typed `VcpuExit`. HLT and I/O are classified explicitly; unknown reasons retain the exact raw reason.
+
+For `KVM_EXIT_IO`, `Vcpu::port_io_exit` is the only layer allowed to inspect the I/O union and referenced data area. It validates direction, converts and checks `data_offset`, computes `size * count` with checked arithmetic, validates the complete range against the mmap length, and copies OUT bytes into owned Rust memory. IN buffers are not read in this milestone. No pointer into `kvm_run` leaves the vCPU layer.
 
 ## VM-exit dispatch
 
-`vmexit::dispatch_vcpu_exit` is the single policy boundary for completed vCPU exits in the current architecture. It snapshots RIP/RFLAGS through the typed vCPU API before making a decision.
+`vmexit::dispatch_vcpu_exit` is the single policy boundary for vCPU exits.
 
-A HLT exit becomes a `VmExitReport` containing vCPU id, the typed exit, RIP, and RFLAGS. Any unsupported exit becomes `VmExitError::Unhandled` carrying the same vCPU id/register context plus the exact raw KVM exit reason. Higher-level execution code therefore does not silently accept or discard an unfamiliar exit.
+- HLT snapshots RIP/RFLAGS and becomes `VmExitDisposition::Stopped(VmExitReport)`.
+- Port I/O is parsed into an owned `PortIoExit`, routed through `PortIoBus`, and becomes `VmExitDisposition::Continue` only when the bus actually services it.
+- Unsupported raw exit reasons become `VmExitError::Unhandled` with vCPU id and register diagnostics.
 
-The dispatcher deliberately has no device bus yet. This keeps exit policy explicit before port-I/O or MMIO handling introduces guest-controlled payload parsing and device routing.
+The dispatcher deliberately does **not** snapshot registers for an in-flight KVM I/O exit. KVM defines port-I/O operations as pending until userspace re-enters `KVM_RUN`; register state used as a completed-operation diagnostic is therefore taken only on a later terminal exit. The deterministic debug-port fixture services the OUT, re-enters KVM, and then reaches HLT at RIP `0x1005`.
+
+## Port-I/O bus and debug device
+
+`PortIoBus` is intentionally minimal. It may contain one exact debug-port device at port `0xe9`; it is not yet a general dynamic device registry.
+
+The debug device accepts only:
+
+- direction: OUT;
+- width: 1 byte;
+- count: 1;
+- port: `0xe9`;
+- copied payload length: exactly 1 byte.
+
+Unknown ports become `PortIoError::UnhandledPort`. IN, wider accesses, and multi-count operations to `0xe9` become `PortIoError::UnsupportedDebugAccess`. A payload-length mismatch is also an explicit error. No request is silently truncated, widened, repeated, or redirected.
 
 ## Ownership and lifetime
 
-`KvmBackend` owns the `/dev/kvm` descriptor. `Vm` owns the VM descriptor and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and a `KvmRunMapping`. Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
+`KvmBackend` owns the `/dev/kvm` descriptor. `Vm` owns the VM descriptor and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and a `KvmRunMapping`. `PortIoBus` owns its optional debug device and the bytes that device has accepted. Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
 ## Error boundary
 
@@ -82,9 +102,10 @@ Errors are categorized as:
 - `Configuration`: unsupported VMM configuration or current real-mode entry limits;
 - `GuestMemory`: invalid guest ranges, reserved-range overlap, mapping failures, bounds violations, or KVM RAM-registration failures;
 - `GuestImage`: malformed or overflowing flat-image descriptions;
-- `VmExit`: unsupported completed VM exits with vCPU and register diagnostics.
+- `VmExit`: unsupported exits, malformed KVM I/O metadata/ranges, or deterministic fixture sequence failures;
+- `PortIo`: unknown ports or unsupported/malformed device accesses.
 
-Future device, snapshot, and invariant categories will be added only when those responsibilities exist.
+Future MMIO, interrupt, snapshot, and stronger invariant categories will be added only when those responsibilities exist.
 
 ## Deliberate non-abstractions
 
@@ -92,8 +113,8 @@ There is no generic hypervisor backend trait yet. KVM is the only implementation
 
 There is also no multi-region memory map yet. `GuestMemoryRegion::overlaps` exists to make range semantics explicit and tested, but the VM intentionally supports only slot 0 in this milestone.
 
-The VM-exit boundary is a module-level dispatcher rather than a generic handler trait. HLT is the only handled exit today, so introducing trait machinery would be premature.
+The port bus is not a trait-object registry yet. One exact device is enough to prove the exit → typed request → bus → device → re-entry boundary without introducing registration/range-resolution machinery prematurely.
 
 ## Next architectural milestone
 
-The next bounded slice should exercise one deterministic port-I/O exit through a minimal bus boundary and one exact test/debug-port device. It should preserve width/direction/count metadata and reject unsupported ports without adding MMIO, interrupts, or multiple device families.
+The next bounded slice should exercise one deterministic port-input (`KVM_EXIT_IO_IN`) path. It should validate and write the exact response bytes back into the checked `kvm_run` data range, re-enter KVM to complete the pending IN operation, and verify the guest consumed the value. It should not add MMIO, interrupts, or a second device family.

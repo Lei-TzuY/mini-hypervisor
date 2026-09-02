@@ -9,6 +9,7 @@ pub enum Error {
     GuestMemory(GuestMemoryError),
     GuestImage(GuestImageError),
     VmExit(VmExitError),
+    PortIo(PortIoError),
 }
 
 #[derive(Debug)]
@@ -126,6 +127,47 @@ pub enum VmExitError {
         rip: u64,
         rflags: u64,
     },
+    IoPayloadUnavailable {
+        vcpu_id: u16,
+        exit_reason: u32,
+    },
+    InvalidIoDirection {
+        vcpu_id: u16,
+        direction: u8,
+    },
+    InvalidIoDataRange {
+        vcpu_id: u16,
+        data_offset: u64,
+        size: u8,
+        count: u32,
+        mapping_size: usize,
+    },
+    UnexpectedSequence {
+        stage: &'static str,
+        expected_reason: u32,
+        actual_reason: u32,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PortIoError {
+    UnhandledPort {
+        port: u16,
+        direction: u8,
+        size: u8,
+        count: u32,
+    },
+    UnsupportedDebugAccess {
+        port: u16,
+        direction: u8,
+        size: u8,
+        count: u32,
+    },
+    InvalidOutputPayload {
+        port: u16,
+        expected: usize,
+        actual: usize,
+    },
 }
 
 impl fmt::Display for Error {
@@ -137,6 +179,7 @@ impl fmt::Display for Error {
             Self::GuestMemory(error) => error.fmt(f),
             Self::GuestImage(error) => error.fmt(f),
             Self::VmExit(error) => error.fmt(f),
+            Self::PortIo(error) => error.fmt(f),
         }
     }
 }
@@ -149,7 +192,8 @@ impl std::error::Error for Error {
             Self::KvmCapability(_)
             | Self::Configuration(_)
             | Self::GuestImage(_)
-            | Self::VmExit(_) => None,
+            | Self::VmExit(_)
+            | Self::PortIo(_) => None,
         }
     }
 }
@@ -333,8 +377,72 @@ impl fmt::Display for VmExitError {
                 f,
                 "unhandled VM exit on vCPU {vcpu_id}: reason={reason}, rip={rip:#x}, rflags={rflags:#x}"
             ),
+            Self::IoPayloadUnavailable {
+                vcpu_id,
+                exit_reason,
+            } => write!(
+                f,
+                "vCPU {vcpu_id} has no port-I/O payload for exit reason {exit_reason}"
+            ),
+            Self::InvalidIoDirection { vcpu_id, direction } => write!(
+                f,
+                "vCPU {vcpu_id} reported invalid KVM port-I/O direction {direction}"
+            ),
+            Self::InvalidIoDataRange {
+                vcpu_id,
+                data_offset,
+                size,
+                count,
+                mapping_size,
+            } => write!(
+                f,
+                "vCPU {vcpu_id} reported invalid KVM port-I/O data range: offset={data_offset:#x}, size={size}, count={count}, mapping_size={mapping_size}"
+            ),
+            Self::UnexpectedSequence {
+                stage,
+                expected_reason,
+                actual_reason,
+            } => write!(
+                f,
+                "unexpected VM-exit sequence during {stage}: expected reason {expected_reason}, got {actual_reason}"
+            ),
         }
     }
 }
 
 impl std::error::Error for VmExitError {}
+
+impl fmt::Display for PortIoError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnhandledPort {
+                port,
+                direction,
+                size,
+                count,
+            } => write!(
+                f,
+                "unhandled port-I/O access: port={port:#x}, direction={direction}, size={size}, count={count}"
+            ),
+            Self::UnsupportedDebugAccess {
+                port,
+                direction,
+                size,
+                count,
+            } => write!(
+                f,
+                "unsupported debug-port access: port={port:#x}, direction={direction}, size={size}, count={count}"
+            ),
+            Self::InvalidOutputPayload {
+                port,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "invalid output payload for port {port:#x}: expected {expected} bytes, got {actual}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PortIoError {}

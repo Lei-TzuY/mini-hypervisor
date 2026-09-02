@@ -14,7 +14,10 @@ pub const KVM_GET_REGS: libc::c_ulong = 0x8090_AE81;
 pub const KVM_SET_REGS: libc::c_ulong = 0x4090_AE82;
 pub const KVM_GET_SREGS: libc::c_ulong = 0x8138_AE83;
 pub const KVM_SET_SREGS: libc::c_ulong = 0x4138_AE84;
+pub const KVM_EXIT_IO: u32 = 2;
 pub const KVM_EXIT_HLT: u32 = 5;
+pub const KVM_EXIT_IO_IN: u8 = 0;
+pub const KVM_EXIT_IO_OUT: u8 = 1;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +137,25 @@ pub struct KvmRunHeader {
     pub flags: u16,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KvmRunIo {
+    pub direction: u8,
+    pub size: u8,
+    pub port: u16,
+    pub count: u32,
+    pub data_offset: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KvmRunIoPrefix {
+    pub header: KvmRunHeader,
+    pub cr8: u64,
+    pub apic_base: u64,
+    pub io: KvmRunIo,
+}
+
 pub fn ioctl_noarg(fd: RawFd, request: libc::c_ulong) -> io::Result<i32> {
     let result = unsafe { libc::ioctl(fd, request) };
     cvt_ioctl(result)
@@ -242,6 +264,17 @@ mod tests {
         assert_eq!(std::mem::offset_of!(KvmRunHeader, exit_reason), 8);
         assert_eq!(KVM_RUN, 0xAE80);
         assert_eq!(KVM_EXIT_HLT, 5);
+    }
+
+    #[test]
+    fn io_exit_matches_x86_64_kvm_run_layout() {
+        assert_eq!(KVM_EXIT_IO, 2);
+        assert_eq!(KVM_EXIT_IO_IN, 0);
+        assert_eq!(KVM_EXIT_IO_OUT, 1);
+        assert_eq!(std::mem::size_of::<KvmRunIo>(), 16);
+        assert_eq!(std::mem::offset_of!(KvmRunIo, data_offset), 8);
+        assert_eq!(std::mem::size_of::<KvmRunIoPrefix>(), 48);
+        assert_eq!(std::mem::offset_of!(KvmRunIoPrefix, io), 32);
     }
 
     #[test]
