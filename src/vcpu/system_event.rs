@@ -146,7 +146,10 @@ mod tests {
 
     #[test]
     fn system_event_prefix_matches_kvm_run_union_offset_and_capacity() {
-        assert_eq!(std::mem::offset_of!(KvmRunSystemEventPrefix, system_event), 32);
+        assert_eq!(
+            std::mem::offset_of!(KvmRunSystemEventPrefix, system_event),
+            32
+        );
         assert_eq!(std::mem::size_of::<KvmRunSystemEvent>(), 136);
         assert_eq!(required_kvm_run_prefix_size(), 168);
     }
@@ -205,13 +208,13 @@ mod tests {
 
     #[test]
     fn preserves_unknown_system_event_type_and_owns_payload() {
-        let event = decode_system_event(
-            VcpuId::BOOT,
-            raw_event(0xfeed_beef, 2, &[0x1111, 0x2222]),
-        )
-        .unwrap();
+        let event = decode_system_event(VcpuId::BOOT, raw_event(0xfeed_beef, 2, &[0x1111, 0x2222]))
+            .unwrap();
 
-        assert_eq!(event.event_type(), VcpuSystemEventType::Unknown(0xfeed_beef));
+        assert_eq!(
+            event.event_type(),
+            VcpuSystemEventType::Unknown(0xfeed_beef)
+        );
         assert_eq!(event.data(), [0x1111, 0x2222]);
     }
 }
