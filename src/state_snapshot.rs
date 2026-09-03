@@ -101,6 +101,17 @@ impl Vcpu {
             || self.restore_msr_snapshot(snapshot.msrs()),
         )
     }
+
+    pub fn restore_and_verify_state_snapshot(
+        &self,
+        snapshot: &VcpuStateSnapshot,
+    ) -> Result<VcpuStateSnapshotComparison, Error> {
+        restore_and_verify_with(
+            || self.restore_state_snapshot(snapshot),
+            || self.capture_state_snapshot(snapshot.msrs().policy()),
+            |observed| snapshot.compare(observed),
+        )
+    }
 }
 
 fn capture_components_with<R, S, M, E, FR, FS, FM>(
@@ -149,6 +160,21 @@ where
     restore_registers()?;
     restore_msrs()?;
     Ok(())
+}
+
+fn restore_and_verify_with<O, C, E, R, Capture, Compare>(
+    mut restore: R,
+    mut capture: Capture,
+    compare: Compare,
+) -> Result<C, E>
+where
+    R: FnMut() -> Result<(), E>,
+    Capture: FnMut() -> Result<O, E>,
+    Compare: FnOnce(&O) -> C,
+{
+    restore()?;
+    let observed = capture()?;
+    Ok(compare(&observed))
 }
 
 #[cfg(test)]
@@ -356,5 +382,101 @@ mod tests {
             &*sequence.borrow(),
             &["special-registers", "registers", "msrs"]
         );
+    }
+
+    #[test]
+    fn restore_verification_restores_then_captures_once_then_compares() {
+        let sequence = RefCell::new(Vec::new());
+
+        let comparison = restore_and_verify_with(
+            || {
+                sequence.borrow_mut().push("restore");
+                Ok::<_, &'static str>(())
+            },
+            || {
+                sequence.borrow_mut().push("capture");
+                Ok::<_, &'static str>(7_u8)
+            },
+            |observed| {
+                sequence.borrow_mut().push("compare");
+                *observed == 7
+            },
+        )
+        .unwrap();
+
+        assert!(comparison);
+        assert_eq!(&*sequence.borrow(), &["restore", "capture", "compare"]);
+    }
+
+    #[test]
+    fn restore_verification_failure_skips_capture_and_compare() {
+        let sequence = RefCell::new(Vec::new());
+
+        let error = restore_and_verify_with(
+            || {
+                sequence.borrow_mut().push("restore");
+                Err::<(), _>("restore failure")
+            },
+            || {
+                sequence.borrow_mut().push("capture");
+                Ok::<_, &'static str>(7_u8)
+            },
+            |observed| {
+                sequence.borrow_mut().push("compare");
+                *observed == 7
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "restore failure");
+        assert_eq!(&*sequence.borrow(), &["restore"]);
+    }
+
+    #[test]
+    fn restore_verification_capture_failure_skips_compare_without_retry() {
+        let sequence = RefCell::new(Vec::new());
+
+        let error = restore_and_verify_with(
+            || {
+                sequence.borrow_mut().push("restore");
+                Ok::<_, &'static str>(())
+            },
+            || {
+                sequence.borrow_mut().push("capture");
+                Err::<u8, _>("capture failure")
+            },
+            |_observed| {
+                sequence.borrow_mut().push("compare");
+                true
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "capture failure");
+        assert_eq!(&*sequence.borrow(), &["restore", "capture"]);
+    }
+
+    #[test]
+    fn restore_verification_returns_mismatch_without_retry_or_repair() {
+        let sequence = RefCell::new(Vec::new());
+
+        let comparison = restore_and_verify_with(
+            || {
+                sequence.borrow_mut().push("restore");
+                Ok::<_, &'static str>(())
+            },
+            || {
+                sequence.borrow_mut().push("capture");
+                Ok::<_, &'static str>(9_u8)
+            },
+            |observed| {
+                sequence.borrow_mut().push("compare");
+                *observed == 7
+            },
+        )
+        .unwrap();
+
+        assert!(!comparison);
+        assert_eq!(&*sequence.borrow(), &["restore", "capture", "compare"]);
     }
 }
