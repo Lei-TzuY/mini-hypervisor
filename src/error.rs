@@ -137,6 +137,7 @@ pub enum VmExitError {
         reason: u32,
         rip: u64,
         rflags: u64,
+        exit_reasons: Vec<u32>,
     },
     IoPayloadUnavailable {
         vcpu_id: u16,
@@ -419,6 +420,7 @@ impl fmt::Display for VmExitError {
                 reason,
                 rip,
                 rflags,
+                ..
             } => write!(
                 f,
                 "unhandled VM exit on vCPU {vcpu_id}: reason={reason}, rip={rip:#x}, rflags={rflags:#x}"
