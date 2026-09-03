@@ -222,6 +222,8 @@ impl Vm {
         })?;
         let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
         apply_cpu_policy(&self.cpu_policy, id, &fd)?;
+        let readback = read_vcpu_cpuid(id, &fd)?;
+        verify_cpu_policy_readback(&self.cpu_policy, id, &readback)?;
         Vcpu::from_kvm_fd(id, fd, self.vcpu_mmap_size)
     }
 
@@ -290,6 +292,59 @@ fn apply_cpu_policy(policy: &GuestCpuPolicy, id: VcpuId, fd: &OwnedFd) -> Result
     })
 }
 
+fn read_vcpu_cpuid(id: VcpuId, fd: &OwnedFd) -> Result<Vec<CpuidEntry>, Error> {
+    let mut buffer = sys::KvmCpuid2::<KVM_MAX_SUPPORTED_CPUID_ENTRIES>::new();
+    sys::get_cpuid2(fd.as_raw_fd(), &mut buffer).map_err(|source| {
+        Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
+            id: id.get(),
+            operation: "KVM_GET_CPUID2",
+            source,
+        })
+    })?;
+
+    let count = validate_vcpu_cpuid_count(id, buffer.nent, KVM_MAX_SUPPORTED_CPUID_ENTRIES)?;
+    Ok(buffer.entries[..count]
+        .iter()
+        .copied()
+        .map(cpuid_entry_from_kvm)
+        .collect())
+}
+
+fn verify_cpu_policy_readback(
+    policy: &GuestCpuPolicy,
+    id: VcpuId,
+    actual: &[CpuidEntry],
+) -> Result<(), Error> {
+    let expected = policy.entries();
+    if expected == actual {
+        return Ok(());
+    }
+
+    let first_mismatch = expected
+        .iter()
+        .zip(actual)
+        .position(|(expected, actual)| expected != actual);
+    let detail = match first_mismatch {
+        Some(index) => format!(
+            "KVM CPUID read-back differs at entry {index}: expected {:?}, got {:?}",
+            expected[index], actual[index]
+        ),
+        None => format!(
+            "KVM CPUID read-back entry count differs: expected {}, got {}",
+            expected.len(),
+            actual.len()
+        ),
+    };
+
+    Err(Error::HostEnvironment(
+        HostEnvironmentError::VcpuOperation {
+            id: id.get(),
+            operation: "verify KVM_GET_CPUID2 policy",
+            source: io::Error::new(io::ErrorKind::InvalidData, detail),
+        },
+    ))
+}
+
 fn cpuid_entry_from_kvm(entry: sys::KvmCpuidEntry2) -> CpuidEntry {
     CpuidEntry {
         function: entry.function,
@@ -332,6 +387,26 @@ fn malformed_supported_cpuid(reported: u32, capacity: usize) -> Error {
             format!("KVM reported {reported} supported CPUID entries; expected 1..={capacity}"),
         ),
     )
+}
+
+fn validate_vcpu_cpuid_count(id: VcpuId, reported: u32, capacity: usize) -> Result<usize, Error> {
+    let invalid = || malformed_vcpu_cpuid(id, reported, capacity);
+    let count = usize::try_from(reported).map_err(|_| invalid())?;
+    if count == 0 || count > capacity {
+        return Err(invalid());
+    }
+    Ok(count)
+}
+
+fn malformed_vcpu_cpuid(id: VcpuId, reported: u32, capacity: usize) -> Error {
+    Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
+        id: id.get(),
+        operation: "validate KVM_GET_CPUID2 response",
+        source: io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("KVM reported {reported} vCPU CPUID entries; expected 1..={capacity}"),
+        ),
+    })
 }
 
 fn reserved_kvm_x86_region() -> GuestMemoryRegion {
@@ -387,6 +462,18 @@ mod tests {
                 .map(|(name, id)| Capability { name, id, value: 1 })
                 .collect(),
         }
+    }
+
+    fn policy_fixture() -> GuestCpuPolicy {
+        GuestCpuPolicy::from_host(&HostCpuid::from_entries(vec![CpuidEntry {
+            function: 0x8000_0001,
+            index: 2,
+            flags: 0x55aa_aa55,
+            eax: 0x1111_1111,
+            ebx: 0x2222_2222,
+            ecx: 0x3333_3333,
+            edx: 0x4444_4444,
+        }]))
     }
 
     #[test]
@@ -483,6 +570,73 @@ mod tests {
                 operation: "validate KVM_GET_SUPPORTED_CPUID response",
                 ..
             }))
+        ));
+    }
+
+    #[test]
+    fn validates_vcpu_cpuid_readback_count_against_fixed_capacity() {
+        assert_eq!(validate_vcpu_cpuid_count(VcpuId::BOOT, 1, 256).unwrap(), 1);
+        assert_eq!(
+            validate_vcpu_cpuid_count(VcpuId::BOOT, 256, 256).unwrap(),
+            256
+        );
+        assert!(matches!(
+            validate_vcpu_cpuid_count(VcpuId::BOOT, 0, 256),
+            Err(Error::HostEnvironment(
+                HostEnvironmentError::VcpuOperation {
+                    id: 0,
+                    operation: "validate KVM_GET_CPUID2 response",
+                    ..
+                }
+            ))
+        ));
+        assert!(matches!(
+            validate_vcpu_cpuid_count(VcpuId::BOOT, 257, 256),
+            Err(Error::HostEnvironment(
+                HostEnvironmentError::VcpuOperation {
+                    id: 0,
+                    operation: "validate KVM_GET_CPUID2 response",
+                    ..
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn exact_cpuid_policy_readback_is_accepted() {
+        let policy = policy_fixture();
+        assert!(verify_cpu_policy_readback(&policy, VcpuId::BOOT, policy.entries()).is_ok());
+    }
+
+    #[test]
+    fn cpuid_policy_readback_rejects_entry_count_mismatch() {
+        let policy = policy_fixture();
+        assert!(matches!(
+            verify_cpu_policy_readback(&policy, VcpuId::BOOT, &[]),
+            Err(Error::HostEnvironment(
+                HostEnvironmentError::VcpuOperation {
+                    id: 0,
+                    operation: "verify KVM_GET_CPUID2 policy",
+                    ..
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn cpuid_policy_readback_rejects_field_mismatch() {
+        let policy = policy_fixture();
+        let mut actual = policy.entries().to_vec();
+        actual[0].ecx ^= 1;
+        assert!(matches!(
+            verify_cpu_policy_readback(&policy, VcpuId::BOOT, &actual),
+            Err(Error::HostEnvironment(
+                HostEnvironmentError::VcpuOperation {
+                    id: 0,
+                    operation: "verify KVM_GET_CPUID2 policy",
+                    ..
+                }
+            ))
         ));
     }
 

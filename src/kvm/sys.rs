@@ -16,6 +16,7 @@ pub const KVM_SET_REGS: libc::c_ulong = 0x4090_AE82;
 pub const KVM_GET_SREGS: libc::c_ulong = 0x8138_AE83;
 pub const KVM_SET_SREGS: libc::c_ulong = 0x4138_AE84;
 pub const KVM_SET_CPUID2: libc::c_ulong = 0x4008_AE90;
+pub const KVM_GET_CPUID2: libc::c_ulong = 0xC008_AE91;
 pub const KVM_EXIT_IO: u32 = 2;
 pub const KVM_EXIT_HLT: u32 = 5;
 pub const KVM_EXIT_IO_IN: u8 = 0;
@@ -226,6 +227,13 @@ pub fn set_cpuid2<const N: usize>(fd: RawFd, cpuid: &KvmCpuid2<N>) -> io::Result
     cvt_ioctl(result).map(|_| ())
 }
 
+pub fn get_cpuid2<const N: usize>(fd: RawFd, cpuid: &mut KvmCpuid2<N>) -> io::Result<()> {
+    // SAFETY: `cpuid` is one contiguous writable repr(C) header plus N entries. The caller sets
+    // `nent` to N, which bounds KVM's copy into the trailing variable-length array.
+    let result = unsafe { libc::ioctl(fd, KVM_GET_CPUID2, cpuid) };
+    cvt_ioctl(result).map(|_| ())
+}
+
 pub fn set_user_memory_region(fd: RawFd, region: &KvmUserspaceMemoryRegion) -> io::Result<()> {
     // SAFETY: `region` points to a correctly laid out KVM UAPI structure for the duration of the
     // ioctl. The caller retains ownership of the backing mapping after successful registration.
@@ -326,6 +334,7 @@ mod tests {
         assert_eq!(std::mem::offset_of!(KvmCpuid2<1>, entries), 8);
         assert_eq!(KVM_GET_SUPPORTED_CPUID, 0xC008_AE05);
         assert_eq!(KVM_SET_CPUID2, 0x4008_AE90);
+        assert_eq!(KVM_GET_CPUID2, 0xC008_AE91);
     }
 
     #[test]
