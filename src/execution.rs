@@ -43,7 +43,7 @@ pub fn run_vcpu_until_stopped(
     let mut exit_reasons = Vec::new();
 
     loop {
-        budget.ensure_run_allowed()?;
+        budget.ensure_run_allowed(&exit_reasons)?;
         let exit = vcpu.run_once()?;
         record_completed_exit(&mut budget, &mut exit_reasons, exit.reason());
 
@@ -87,7 +87,10 @@ impl ExitBudget {
         }
     }
 
-    fn ensure_run_allowed(self) -> Result<(), Error> {
+    fn ensure_run_allowed(self, exit_reasons: &[u32]) -> Result<(), Error> {
+        debug_assert_eq!(exit_reasons.len(), self.completed as usize);
+        debug_assert_eq!(exit_reasons.last().copied(), self.last_exit_reason);
+
         if self.completed < self.limit {
             return Ok(());
         }
@@ -97,6 +100,7 @@ impl ExitBudget {
             budget: self.limit,
             completed: self.completed,
             last_exit_reason: self.last_exit_reason,
+            exit_reasons: exit_reasons.to_vec(),
         }))
     }
 
@@ -121,52 +125,57 @@ mod tests {
         let budget = ExitBudget::new(VcpuId::new(4), 0);
 
         assert!(matches!(
-            budget.ensure_run_allowed(),
+            budget.ensure_run_allowed(&[]),
             Err(Error::VmExit(VmExitError::ExitBudgetExhausted {
                 vcpu_id: 4,
                 budget: 0,
                 completed: 0,
                 last_exit_reason: None,
-            }))
+                exit_reasons,
+            })) if exit_reasons.is_empty()
         ));
     }
 
     #[test]
     fn exact_budget_allows_each_reserved_run_then_exhausts() {
         let mut budget = ExitBudget::new(VcpuId::BOOT, 2);
+        let mut exit_reasons = Vec::new();
 
-        budget.ensure_run_allowed().unwrap();
-        budget.record(sys::KVM_EXIT_IO);
-        budget.ensure_run_allowed().unwrap();
-        budget.record(sys::KVM_EXIT_HLT);
+        budget.ensure_run_allowed(&exit_reasons).unwrap();
+        record_completed_exit(&mut budget, &mut exit_reasons, sys::KVM_EXIT_IO);
+        budget.ensure_run_allowed(&exit_reasons).unwrap();
+        record_completed_exit(&mut budget, &mut exit_reasons, sys::KVM_EXIT_HLT);
 
         assert_eq!(budget.completed(), 2);
         assert!(matches!(
-            budget.ensure_run_allowed(),
+            budget.ensure_run_allowed(&exit_reasons),
             Err(Error::VmExit(VmExitError::ExitBudgetExhausted {
                 vcpu_id: 0,
                 budget: 2,
                 completed: 2,
                 last_exit_reason: Some(sys::KVM_EXIT_HLT),
-            }))
+                exit_reasons,
+            })) if exit_reasons == [sys::KVM_EXIT_IO, sys::KVM_EXIT_HLT]
         ));
     }
 
     #[test]
     fn exhausted_budget_preserves_last_serviceable_exit_reason() {
         let mut budget = ExitBudget::new(VcpuId::new(3), 1);
+        let mut exit_reasons = Vec::new();
 
-        budget.ensure_run_allowed().unwrap();
-        budget.record(sys::KVM_EXIT_IO);
+        budget.ensure_run_allowed(&exit_reasons).unwrap();
+        record_completed_exit(&mut budget, &mut exit_reasons, sys::KVM_EXIT_IO);
 
         assert!(matches!(
-            budget.ensure_run_allowed(),
+            budget.ensure_run_allowed(&exit_reasons),
             Err(Error::VmExit(VmExitError::ExitBudgetExhausted {
                 vcpu_id: 3,
                 budget: 1,
                 completed: 1,
                 last_exit_reason: Some(sys::KVM_EXIT_IO),
-            }))
+                exit_reasons,
+            })) if exit_reasons == [sys::KVM_EXIT_IO]
         ));
     }
 
@@ -175,9 +184,9 @@ mod tests {
         let mut budget = ExitBudget::new(VcpuId::BOOT, 2);
         let mut exit_reasons = Vec::new();
 
-        budget.ensure_run_allowed().unwrap();
+        budget.ensure_run_allowed(&exit_reasons).unwrap();
         record_completed_exit(&mut budget, &mut exit_reasons, sys::KVM_EXIT_IO);
-        budget.ensure_run_allowed().unwrap();
+        budget.ensure_run_allowed(&exit_reasons).unwrap();
         record_completed_exit(&mut budget, &mut exit_reasons, sys::KVM_EXIT_HLT);
 
         assert_eq!(exit_reasons, [sys::KVM_EXIT_IO, sys::KVM_EXIT_HLT]);
