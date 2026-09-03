@@ -168,6 +168,7 @@ pub enum VmExitError {
         budget: u32,
         completed: u32,
         last_exit_reason: Option<u32>,
+        exit_reasons: Vec<u32>,
     },
     UnexpectedSequence {
         stage: &'static str,
@@ -461,6 +462,7 @@ impl fmt::Display for VmExitError {
                 budget,
                 completed,
                 last_exit_reason,
+                ..
             } => match last_exit_reason {
                 Some(reason) => write!(
                     f,
