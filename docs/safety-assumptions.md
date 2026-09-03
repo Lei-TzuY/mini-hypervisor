@@ -16,9 +16,11 @@ Before any vCPU exists, the VM backend configures KVM's x86 identity-map page an
 
 The vCPU run structure is mapped using the exact positive size returned by `KVM_GET_VCPU_MMAP_SIZE`. The mapping must be at least large enough for the tested x86 `KvmRunIoPrefix` before it is accepted. HLT reads only the exit reason from that prefix. Port-I/O handling additionally reads the tested I/O union fields.
 
-For `KVM_EXIT_IO`, `data_offset` is treated only as an offset into the owned `kvm_run` mapping, never as a pointer. The vCPU layer checks conversion to `usize`, checked `size * count`, checked end-offset addition, and the final range against the mmap length before pointer arithmetic. OUT bytes are copied into an owned `Vec<u8>` before they cross into VM-exit policy or device code. IN data is not read or written in this milestone and is rejected by the only device.
+For `KVM_EXIT_IO`, `data_offset` is treated only as an offset into the owned `kvm_run` mapping, never as a pointer. The vCPU layer checks conversion to `usize`, checked `size * count`, checked end-offset addition, and the final range against the mmap length before pointer arithmetic. OUT bytes are copied into an owned `Vec<u8>` before they cross into VM-exit policy or device code.
 
-KVM documents port-I/O operations as pending until userspace re-enters `KVM_RUN`. The dispatcher therefore services the copied request without taking a completed-operation register snapshot, returns `Continue`, and lets the execution loop re-enter KVM. The deterministic fixture takes its final register snapshot only after the following HLT exit.
+For `KVM_EXIT_IO_IN`, device policy returns owned response bytes rather than a pointer. Before copying those bytes into `kvm_run`, the vCPU layer re-checks that the current exit is port I/O, requires IN direction, recomputes the complete checked data range, and requires the response length to equal that range exactly. Only then does the unsafe copy target the validated region. OUT exits cannot be given an input response, and short or oversized responses are rejected.
+
+KVM documents port-I/O operations as pending until userspace re-enters `KVM_RUN`. The dispatcher therefore services a request without taking a completed-operation register snapshot and returns `Continue`. For IN, the response buffer is populated before re-entry; KVM transfers it into guest architectural state when the following `KVM_RUN` completes the pending operation. The deterministic input fixture proves consumption by having guest code store AL into checked guest RAM and reading that RAM only after the later HLT exit.
 
 Guest RAM is a private anonymous mapping owned by `GuestMemory`. Region construction validates non-zero size, 4 KiB alignment, and guest-physical end arithmetic before `mmap` or KVM registration. After `KVM_SET_USER_MEMORY_REGION` succeeds, the `Vm` owns the mapping.
 
@@ -28,8 +30,8 @@ Guest-memory read/write helpers validate guest address plus length against the r
 
 vCPU register ioctls use fixed-layout x86-64 UAPI structures. General registers are initialized from a fully zeroed structure plus explicit RIP/RFLAGS values. Special registers begin from the KVM-created vCPU reset state, after which the real-mode segment bases/selectors and CR0 mode bits required by the fixtures are explicitly normalized.
 
-The minimal `PortIoBus` recognizes only debug port `0xe9`. The device accepts one byte-wide, single-count OUT request with exactly one copied payload byte. Unknown ports, IN, wide accesses, multi-count accesses, and payload-length mismatches are explicit structured errors; no guest request is silently coerced.
+The minimal `PortIoBus` recognizes only debug port `0xe9`. The device accepts byte-wide, single-count accesses only. OUT requires exactly one copied payload byte; IN returns exactly one configured byte. Unknown ports, wide accesses, multi-count accesses, malformed OUT payloads, and malformed IN response lengths are explicit structured errors; no guest request is silently coerced.
 
 ## Not yet present
 
-There is no guest virtual-address translation, external guest-image parser, MMIO, port input, interrupt injection, virtqueue, disk backend, snapshot decoder, dynamic device registration, or guest-controlled device descriptor parsing in this revision. Unsupported exits and unsupported port requests are rejected with structured diagnostics rather than serviced heuristically.
+There is no guest virtual-address translation, external guest-image parser, MMIO, interrupt injection, virtqueue, disk backend, snapshot decoder, dynamic device registration, or guest-controlled device descriptor parsing in this revision. Unsupported exits and unsupported port requests are rejected with structured diagnostics rather than serviced heuristically.
