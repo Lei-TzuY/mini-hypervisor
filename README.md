@@ -1,18 +1,20 @@
 # mini-hypervisor
 
-`mini-hypervisor` is an x86-64 virtualization and VMM laboratory for Linux hosts. The project is intentionally small, but its boundaries, state transitions, unsafe host interactions, and guest-facing semantics are intended to remain explicit and testable.
+`mini-hypervisor` is an x86-64 virtualization and VMM laboratory for Linux hosts. The project is intentionally small, but its boundaries, state transitions, unsafe host interactions, guest-facing semantics, and verification paths are intended to remain explicit and testable.
 
 ## Current capability
 
-The repository currently implements the KVM lifecycle foundation, one bounded guest-RAM region, an explicit bounded x86 CPUID contract, deterministic guest execution, centralized VM-exit policy, one bounded vCPU execution loop, and one minimal bidirectional port-I/O device path:
+The repository currently implements the KVM lifecycle foundation, one bounded guest-RAM region, explicit CPUID/MSR policy and state-model boundaries, deterministic one-vCPU execution, centralized VM-exit policy, bounded execution diagnostics, and one minimal bidirectional port-I/O device path:
 
 - open `/dev/kvm` with structured environment errors;
 - require KVM API version 12;
 - check `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, `KVM_CAP_EXT_CPUID`, and `KVM_CAP_SET_IDENTITY_MAP_ADDR`;
 - obtain and validate the `kvm_run` mmap size;
 - retrieve KVM's supported x86 CPUID set into one fixed-capacity 256-entry `repr(C)` buffer and reject zero or out-of-capacity returned counts;
-- clear LAPIC-dependent x2APIC, TSC-deadline, and KVM PV-unhalt feature bits while this VMM has no in-kernel LAPIC model;
-- apply the validated CPUID set with `KVM_SET_CPUID2` before a newly created vCPU is returned to higher layers;
+- derive a bounded configured guest CPUID contract that clears LAPIC-dependent x2APIC, TSC-deadline, and KVM PV-unhalt feature bits while this VMM has no in-kernel LAPIC model;
+- apply the validated guest CPUID set before a newly created vCPU is returned to higher layers, read it back, compare it against the configured contract, and support guest-observed CPUID proof;
+- discover bounded host MSR index/feature sets, classify feature-value stability, build immutable host MSR model candidates, and compare candidates without KVM mutation;
+- represent guest MSR access through an explicit validated policy, policy-bound value sets and snapshots, pure snapshot comparison, bounded non-transactional restore, and restore-and-verify;
 - create one VM and configure the x86 KVM identity-map/TSS reserved pages before any vCPU exists;
 - create vCPU 0;
 - represent guest physical addresses with `GuestPhysAddr`;
@@ -20,21 +22,25 @@ The repository currently implements the KVM lifecycle foundation, one bounded gu
 - validate a non-empty flat guest image, its load range, and its entry point before loading it;
 - initialize vCPU general registers explicitly for the current real-mode fixtures;
 - normalize the six visible real-mode segment bases/selectors to zero and ensure paging/protected mode are disabled;
-- classify `KVM_EXIT_HLT`, `KVM_EXIT_IO`, and unsupported raw exit reasons;
+- capture owned vCPU general-register snapshots, compare all 18 fields deterministically, restore them, and restore-and-verify through read-back;
+- capture owned vCPU special-register snapshots covering segments, descriptor tables, control registers, EFER, APIC base, and the interrupt bitmap without exposing KVM padding, then compare, restore, and restore-and-verify them;
+- capture composite vCPU state snapshots containing general registers, special registers, and policy-bound MSRs; compare those components without flattening their typed mismatch semantics; perform bounded non-transactional restore; and restore-and-verify through a fresh capture;
+- classify `KVM_EXIT_HLT`, `KVM_EXIT_IO`, and legacy `KVM_EXIT_SHUTDOWN` as typed exits while preserving unsupported raw exit reasons;
 - validate x86 `kvm_run` port-I/O metadata with checked offset/length arithmetic against the mapped region;
 - copy OUT payloads into owned Rust memory only after validation;
 - write IN responses back into the exact checked `kvm_run` data range only when direction and response length are valid;
 - route exits through `vmexit::dispatch_vcpu_exit`;
-- repeatedly run and dispatch through `execution::run_vcpu_until_stopped` until a terminal report or explicit VM-exit budget exhaustion;
-- preserve completed-exit count, serviced typed port-I/O exits, and the terminal report in `VmExecutionResult`;
-- report zero/exhausted budgets with vCPU id, configured budget, completed-exit count, and the last completed raw exit reason when one exists;
+- repeatedly run and dispatch through `execution::run_vcpu_until_stopped` until a typed terminal report, structured unsupported exit, or explicit VM-exit budget exhaustion;
+- preserve completed-exit count, serviced typed port-I/O exits, the terminal report, and the full ordered raw exit-reason trace in successful `VmExecutionResult` values;
+- preserve the full ordered completed-exit trace on budget exhaustion while retaining the configured budget, completed count, and last completed reason;
+- preserve the full ordered completed-exit trace on unhandled VM exits while retaining vCPU id, raw reason, RIP, and RFLAGS diagnostics;
 - service exactly one byte-wide, single-count debug device at port `0xe9` through `PortIoBus`;
 - support configured one-byte IN responses and one-byte OUT capture on that same device;
 - reject unknown ports, wide accesses, multi-count debug-port operations, and malformed response/payload sizes with structured errors;
 - respect KVM's pending-I/O completion rule by re-entering `KVM_RUN` when execution continues after a serviced I/O exit;
-- produce a typed `VmExitReport` containing vCPU id, terminal exit, RIP, and RFLAGS for handled HLT exits;
+- produce a typed `VmExitReport` containing vCPU id, terminal exit, RIP, and RFLAGS for handled HLT and legacy shutdown exits;
 - release or conservatively retain mappings according to the documented KVM lifetime rules;
-- run pure validation/UAPI/CPUID/loader/exit-dispatch/port-bus/execution-budget tests without KVM;
+- run pure validation/UAPI/CPUID/MSR/state-snapshot/loader/exit-dispatch/port-bus/execution-budget tests without requiring KVM;
 - run environment-sensitive KVM integration tests that distinguish unavailable `/dev/kvm` from product regressions.
 
 The deterministic `run-hlt` fixture registers 2 MiB of RAM at guest physical address 0, loads the single byte `HLT` instruction at `0x1000`, starts vCPU 0 there, and runs with an exit budget of 1. It expects a handled HLT report with RIP advanced to `0x1001`.
@@ -43,9 +49,13 @@ The deterministic `run-debug-port` fixture loads `MOV AL, 'K'; OUT 0xe9, AL; HLT
 
 The deterministic port-input fixture loads `IN AL, 0xe9; MOV [0x2000], AL; HLT` at `0x1000` and also uses an exit budget of 2. The debug device supplies byte `R`, the vCPU layer writes that response into the exact checked KVM input buffer, the common loop re-enters KVM, and the guest stores the consumed byte into RAM at `0x2000` before halting with RIP `0x1006`.
 
-Exit-budget exhaustion is not a terminal guest report. If the last permitted exit was serviceable I/O, the request has been serviced in userspace but the loop does not claim that KVM has completed the pending operation because no further `KVM_RUN` was permitted.
+KVM-aware state regressions also exercise real vCPU capture/compare/restore/verify paths when `/dev/kvm` is available. These snapshots cover the owned vCPU CPU-state boundaries listed above; they are **not** whole-VM, guest-memory, device-state, migration, checkpoint, or atomic/quiesced snapshot semantics.
 
-This is still only a single-vCPU flat-binary execution path. It does **not** yet provide MMIO, multiple device families, interrupts, configurable CPU models, MSR policy, virtio, snapshots, SMP, ELF loading, or Linux boot support.
+Exit-budget exhaustion is not a terminal guest report. If the last permitted exit was serviceable I/O, the request has been serviced in userspace but the loop does not claim that KVM has completed the pending operation because no further `KVM_RUN` was permitted. Likewise, composite state restore is explicitly non-transactional: if a later component fails, already completed earlier component writes are not rolled back.
+
+This remains a single-vCPU, flat-binary, real-mode execution laboratory. It does **not** yet provide MMIO, multiple device families, interrupts, an in-kernel interrupt controller model, arbitrary/configurable CPU models, virtio, SMP, ELF loading, long-mode guest boot, Linux boot, migration orchestration, whole-VM snapshots, guest-memory/device snapshots, resumable execution, or architectural rollback. `KVM_EXIT_SYSTEM_EVENT` payload policy is also not yet modeled; only legacy `KVM_EXIT_SHUTDOWN` is currently a typed terminal shutdown exit.
+
+For the authoritative current bounded implementation state and next-slice selection rules, see [ROADMAP.md](ROADMAP.md).
 
 ## Supported host
 
@@ -72,10 +82,12 @@ cargo run -- run-hlt
 cargo run -- run-debug-port
 ```
 
-`probe` validates host KVM capabilities and the bounded supported-CPUID query. `lifecycle` creates a VM, configures the reserved x86 KVM pages, registers the fixed RAM region, creates vCPU 0, applies the validated CPUID contract, maps `kvm_run`, then shuts down cleanly. `run-hlt` exercises the bounded terminal HLT path. `run-debug-port` exercises checked KVM port output, the minimal `PortIoBus`, common bounded execution, I/O completion by re-entry, and final HLT termination. The port-input path is currently exercised through the library API and integration regression rather than a separate CLI command.
+`probe` validates host KVM capabilities and the bounded supported-CPUID query. `lifecycle` creates a VM, configures the reserved x86 KVM pages, registers the fixed RAM region, creates vCPU 0, applies the validated CPUID contract, maps `kvm_run`, then shuts down cleanly. `run-hlt` exercises the bounded terminal HLT path. `run-debug-port` exercises checked KVM port output, the minimal `PortIoBus`, common bounded execution, I/O completion by re-entry, and final HLT termination. The port-input and state snapshot/restore/verification paths are currently exercised through the library API and integration regressions rather than separate CLI commands.
 
 ## Safety boundary
 
-Unsafe operations are limited to Linux KVM `ioctl` calls, conversion of successful KVM-created file descriptors into owned descriptors, and `mmap`/`munmap` for `kvm_run` and guest RAM. The variable-length `kvm_cpuid2` ABI is represented by one contiguous fixed-capacity `repr(C)` header-plus-entry buffer; the returned `nent` is checked before any slice is formed, reserved entry padding is zeroed, and the validated set is copied into a fresh bounded buffer before `KVM_SET_CPUID2`. Flat guest bytes are copied only through checked guest-memory ranges. The x86 `kvm_run` I/O union is accessed only through tested UAPI layouts. Both OUT copying and IN write-back use `data_offset + size * count` only after checked conversion, overflow, and mapping-bounds validation; IN additionally requires an exact response-length match. Raw pointers into `kvm_run` never cross into VM-exit policy, execution-loop, or device code. No guest physical address is treated as a host pointer.
+Unsafe operations are limited to Linux KVM `ioctl` calls, conversion of successful KVM-created file descriptors into owned descriptors, and `mmap`/`munmap` for `kvm_run` and guest RAM. Variable-length KVM ABIs are represented by bounded `repr(C)` buffers with returned counts validated before slices are formed. Flat guest bytes are copied only through checked guest-memory ranges. The x86 `kvm_run` I/O union is accessed only through tested UAPI layouts. Both OUT copying and IN write-back use `data_offset + size * count` only after checked conversion, overflow, and mapping-bounds validation; IN additionally requires an exact response-length match. Raw pointers into `kvm_run` never cross into VM-exit policy, execution-loop, or device code. No guest physical address is treated as a host pointer.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md), [docs/memory-map.md](docs/memory-map.md), and [docs/safety-assumptions.md](docs/safety-assumptions.md).
+CPU/MSR snapshot comparison is pure Rust over owned values. Restore boundaries delegate to the existing validated KVM setters and deliberately do not claim transactionality, rollback, repair, or atomic point-in-time capture. MSR partial writes retain structured diagnostics for the processed prefix rather than pretending the operation was all-or-nothing.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md), [docs/memory-map.md](docs/memory-map.md), and [docs/safety-assumptions.md](docs/safety-assumptions.md). Architecture and safety documents describe the accumulated design and can lag the authoritative roadmap by one documentation pass.
