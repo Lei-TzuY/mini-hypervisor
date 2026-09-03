@@ -322,7 +322,10 @@ mod tests {
         let candidate = observation.model_candidate();
 
         assert_eq!(candidate.source_observation(), &observation);
-        assert_eq!(candidate.source_observation().host_mutable_values().count(), 1);
+        assert_eq!(
+            candidate.source_observation().host_mutable_values().count(),
+            1
+        );
     }
 
     #[test]
