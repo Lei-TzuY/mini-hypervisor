@@ -9,6 +9,8 @@ pub mod memory;
 pub mod portio;
 pub mod vcpu;
 pub mod vmexit;
+#[cfg(test)]
+mod model;
 
 use config::VmConfig;
 use error::{Error, VmExitError};
