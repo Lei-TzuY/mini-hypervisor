@@ -94,13 +94,8 @@ mod tests {
 
     #[test]
     fn feature_indices_reuse_typed_values_and_preserve_order() {
-        let snapshot = HostMsrFeatureIndexList::from_validated_raw(&[
-            0x3a,
-            0x10a,
-            0x3a,
-            0x48,
-            0x10a,
-        ]);
+        let snapshot =
+            HostMsrFeatureIndexList::from_validated_raw(&[0x3a, 0x10a, 0x3a, 0x48, 0x10a]);
         assert_eq!(
             snapshot.indices(),
             &[
