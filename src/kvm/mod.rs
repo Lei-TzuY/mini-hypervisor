@@ -94,10 +94,7 @@ impl SupportedCpuid {
         sys::get_supported_cpuid(fd.as_raw_fd(), &mut buffer)
             .map_err(|source| host_io("KVM_GET_SUPPORTED_CPUID", source))?;
 
-        let count = validate_supported_cpuid_count(
-            buffer.nent,
-            KVM_MAX_SUPPORTED_CPUID_ENTRIES,
-        )?;
+        let count = validate_supported_cpuid_count(buffer.nent, KVM_MAX_SUPPORTED_CPUID_ENTRIES)?;
         let mut entries = buffer.entries[..count].to_vec();
         sanitize_supported_cpuid(&mut entries);
         Ok(Self { entries })
@@ -282,7 +279,8 @@ fn check_extension(fd: &File, name: &'static str, id: i32) -> Result<Capability,
 }
 
 fn validate_supported_cpuid_count(reported: u32, capacity: usize) -> Result<usize, Error> {
-    let count = usize::try_from(reported).map_err(|_| malformed_supported_cpuid(reported, capacity))?;
+    let count =
+        usize::try_from(reported).map_err(|_| malformed_supported_cpuid(reported, capacity))?;
     if count == 0 || count > capacity {
         return Err(malformed_supported_cpuid(reported, capacity));
     }
@@ -294,9 +292,7 @@ fn malformed_supported_cpuid(reported: u32, capacity: usize) -> Error {
         "validate KVM_GET_SUPPORTED_CPUID response",
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!(
-                "KVM reported {reported} supported CPUID entries; expected 1..={capacity}"
-            ),
+            format!("KVM reported {reported} supported CPUID entries; expected 1..={capacity}"),
         ),
     )
 }
