@@ -16,26 +16,24 @@ The repository currently has typed, owned boundaries for:
 - composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison, read-only snapshot-bound verification, bounded non-transactional restore, restore-and-verify, and a deterministic public/CLI round-trip fixture;
 - centralized VM-exit dispatch with typed HLT and legacy shutdown terminal exits, typed `KVM_EXIT_FAIL_ENTRY`, base `KVM_EXIT_INTERNAL_ERROR`, and `KVM_EXIT_SYSTEM_EVENT` diagnostics, bounded execution budgets, ordered completed-exit reason traces on successful results, budget-exhaustion, unhandled-exit, fail-entry, internal-error, and system-event diagnostics, plus the minimal bidirectional debug port-I/O device;
 - deterministic CLI command dispatch that preserves structured hypervisor failures for known commands and rejects unknown commands with a usage failure before any KVM access;
-- public README synchronized through the Phase 60 optional-capability observation boundary; architecture and safety documentation remain synchronized through the Phase 59 documentation pass.
+- public README, architecture, and safety documentation synchronized through the Phase 61 documentation pass with the integrated Phase 60 optional internal-error-data capability-observation boundary.
 
-## Phase 60 — optional internal-error-data capability observation
+## Phase 61 — optional internal-error capability architecture and safety synchronization
 
-The current bounded slice records `KVM_CAP_INTERNAL_ERROR_DATA` as optional host capability metadata without changing the required KVM host contract or consuming capability-dependent `KVM_EXIT_INTERNAL_ERROR` payload fields.
+The current bounded slice reconciles `ARCHITECTURE.md` and `docs/safety-assumptions.md` with the already integrated Phase 60 optional `KVM_CAP_INTERNAL_ERROR_DATA` observation. It changes no Rust source, test source, KVM ABI behavior, execution policy, required-capability contract, state mutation, or guest lifecycle semantics.
 
 Correctness contract:
 
-- Linux KVM capability ID `40` is queried through the existing `KVM_CHECK_EXTENSION` boundary when `KvmBackend` opens;
-- the returned raw capability value is retained as a normal `Capability` entry inside the existing owned `HostCapabilities.extensions` snapshot;
-- `HostCapabilities::internal_error_data_capability` exposes the recorded observation read-only when present, including a raw value of `0`;
-- `HostCapabilities::supports_internal_error_data` is true exactly when the recorded capability value is greater than zero;
-- `HostCapabilities::validate` continues to require only the existing five `REQUIRED_EXTENSIONS`; an absent manually constructed optional observation or a recorded value of `0` does not invalidate otherwise valid host capabilities;
-- existing required-extension failure semantics, KVM API-version validation, vCPU mmap-size validation, CPUID/MSR discovery, VM/vCPU construction, and execution behavior remain unchanged;
-- the base `KVM_EXIT_INTERNAL_ERROR` decoder continues to read and own only always-available `suberror`; it does not read, validate, slice, copy, or expose capability-dependent `ndata` or `data[16]` even when the optional capability is reported available;
-- no optional-payload decoder, emulation-recovery policy, retry, replacement execution, lifecycle action, new KVM requirement, MMIO, interrupts, SMP, long-mode/Linux boot, migration, resumable execution, or guest-memory/device snapshot behavior is introduced;
-- focused pure regression coverage locks absent/zero/present optional capability semantics, while the environment-sensitive KVM regression confirms a real backend records the ID-40 observation whenever `/dev/kvm` is usable.
+- architecture documentation distinguishes the five required KVM extensions from the separately observed optional `KVM_CAP_INTERNAL_ERROR_DATA` capability;
+- the optional capability observation is recorded as ordinary owned `HostCapabilities` metadata and a value of `0` remains valid for the current host contract;
+- documentation states that `internal_error_data_capability()` exposes the recorded observation when present and `supports_internal_error_data()` reflects only whether its raw value is greater than zero;
+- a positive optional observation does not enlarge the current 40-byte typed internal-error base view and does not authorize reading, validating, slicing, copying, or exposing capability-dependent `ndata` or `data[16]`;
+- the typed `VcpuInternalError` boundary continues to own only the always-available raw `suberror`, and dispatch/execution behavior remain unchanged;
+- the documents do not imply optional-payload support, emulation recovery, retry, replacement execution, lifecycle action, MMIO, interrupts, SMP, long-mode/Linux boot, migration, resumable execution, or guest-memory/device snapshot semantics;
+- this slice changes documentation only; repository Format/Clippy/Test CI remains the unchanged integration gate.
 
 ## Next bounded slice
 
 No broader implementation slice is preselected by this commit.
 
-After Phase 60 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, CPU-model, state-model, memory, CLI, lifecycle-policy, capability, or architecture work. Do not infer optional internal-error `ndata`/`data[16]` decoding, internal-error recovery/retry, fail-entry retry/placement policy, system-event reset/reboot/crash policy, MMIO, interrupts, long-mode boot, SMP, migration, resumable execution, guest-memory/device snapshots, or another CLI command automatically from this optional capability observation boundary.
+After Phase 61 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, CPU-model, state-model, memory, CLI, lifecycle-policy, capability, or architecture work. Do not infer optional internal-error `ndata`/`data[16]` decoding, internal-error recovery/retry, fail-entry retry/placement policy, system-event reset/reboot/crash policy, MMIO, interrupts, long-mode boot, SMP, migration, resumable execution, guest-memory/device snapshots, or another CLI command automatically from this documentation synchronization pass.
