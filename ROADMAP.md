@@ -16,27 +16,26 @@ The repository currently has typed, owned boundaries for:
 - composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison, read-only snapshot-bound verification, bounded non-transactional restore, restore-and-verify, and a deterministic public/CLI round-trip fixture;
 - centralized VM-exit dispatch with typed HLT and legacy shutdown terminal exits, typed `KVM_EXIT_UNKNOWN` hardware diagnostics, typed `KVM_EXIT_FAIL_ENTRY`, capability-gated `KVM_EXIT_INTERNAL_ERROR` optional diagnostics plus lossless typed classification of the four currently defined KVM internal-error suberrors, and `KVM_EXIT_SYSTEM_EVENT` diagnostics, bounded execution budgets, ordered completed-exit reason traces on successful results, budget-exhaustion, unhandled-exit, KVM-unknown, fail-entry, internal-error, malformed internal-error-data, and system-event diagnostics, plus the minimal bidirectional debug port-I/O device;
 - deterministic CLI command dispatch that preserves structured hypervisor failures for known commands and rejects unknown commands with a usage failure before any KVM access;
-- public README, architecture, and safety documentation synchronized through the Phase 65 documentation pass with the integrated Phase 64 typed internal-error suberror-classification boundary; the Phase 66 KVM-unknown diagnostic boundary may be reconciled in a later documentation pass.
+- public README synchronized through Phase 66 with the typed KVM-unknown diagnostic boundary; architecture and safety documentation remain synchronized through the Phase 65 internal-error suberror-classification pass and may be reconciled with Phase 66 in a later dedicated documentation slice.
 
-## Phase 66 — typed KVM unknown-hardware exit diagnostics
+## Phase 67 — public KVM-unknown documentation synchronization
 
-The current bounded slice separates Linux KVM's explicit `KVM_EXIT_UNKNOWN = 0` exit from this project's generic unsupported-raw-reason path and preserves the fixed x86 `hardware_exit_reason` payload as owned structured diagnostics without introducing hardware-specific recovery policy.
+The current bounded slice reconciles the public README with the already integrated Phase 66 `KVM_EXIT_UNKNOWN` hardware-diagnostic boundary while intentionally leaving the larger architecture and safety documents for a separate future documentation pass. It changes no Rust source, test source, KVM ABI behavior, execution policy, state mutation, capability requirement, or guest lifecycle semantics.
 
 Correctness contract:
 
-- raw exit reason `0` maps to the distinct public `VcpuExit::KvmUnknown` variant and round-trips back to `0`, while other unsupported raw reasons continue to map to `VcpuExit::Unhandled { reason }` unchanged;
-- the tested x86 `kvm_run` unknown-exit view begins at union offset 32, contains exactly one `u64 hardware_exit_reason`, and therefore requires a 40-byte prefix already covered by the current common mapping-size floor;
-- `Vcpu::kvm_unknown_exit()` requires the current raw exit reason to be `KVM_EXIT_UNKNOWN` before reading the payload and copies the hardware reason into owned `VcpuKvmUnknownExit` state;
-- using the payload accessor for another exit reason returns structured `KvmUnknownPayloadUnavailable` rather than reading the wrong union member;
-- central VM-exit dispatch turns `VcpuExit::KvmUnknown` into `VmExitError::KvmUnknownExit` retaining vCPU id, raw hardware exit reason, and a local one-element reason trace;
-- KVM-unknown dispatch deliberately does not issue `KVM_GET_REGS` or another secondary vCPU ioctl that could replace the original purpose-built diagnostic with a new host error;
-- the common execution loop replaces the local reason trace with the complete ordered completed-exit trace, preserving every prior completed exit and reason `0` exactly once at the tail;
-- existing generic `Unhandled` behavior, including RIP/RFLAGS register context for other unsupported raw reasons, remains unchanged;
-- `hardware_exit_reason` is retained as opaque KVM/hardware diagnostic metadata and is not translated into SGX/VMX policy, retry, recovery, replacement execution, lifecycle action, a new KVM requirement, MMIO, interrupts, SMP, long-mode/Linux boot, migration, resumable execution, or guest-memory/device snapshot behavior;
-- a focused public regression locks reason-0 typed classification without collapsing other unsupported reasons, while pure decoder/dispatch/execution regressions lock the fixed layout, owned hardware reason, local diagnostic shape, and complete-trace replacement.
+- the README documents raw exit reason `0` as the distinct typed `VcpuExit::KvmUnknown` path rather than collapsing it into generic `Unhandled { reason }`;
+- the README documents the tested fixed x86 unknown-exit view and owned `VcpuKvmUnknownExit::hardware_exit_reason` diagnostic;
+- the README documents that `Vcpu::kvm_unknown_exit()` validates the current exit reason before reading the union member and that misuse is represented by structured `KvmUnknownPayloadUnavailable` diagnostics;
+- the README documents central `VmExitError::KvmUnknownExit` handling without a secondary `KVM_GET_REGS`/vCPU ioctl that could obscure the purpose-built hardware diagnostic;
+- the README documents complete ordered execution-trace preservation with raw reason `0` appearing exactly once at the trace tail;
+- generic unsupported raw reasons remain on the existing `Unhandled { reason }` path with RIP/RFLAGS context and are not conflated with KVM's explicit unknown-hardware exit;
+- `hardware_exit_reason` remains opaque diagnostic metadata and is not interpreted as SGX/VMX policy, retry, recovery, replacement execution, lifecycle action, a new KVM requirement, MMIO, interrupts, SMP, long-mode/Linux boot, migration, resumable execution, or guest-memory/device snapshot behavior;
+- the README safety summary includes the fixed KVM-unknown UAPI view as an owned-copy boundary without changing the existing unsafe mapping-size floor or any runtime operation;
+- this slice changes documentation only, while the authoritative roadmap records that `ARCHITECTURE.md` and `docs/safety-assumptions.md` still lag Phase 66 by one documentation pass rather than pretending they are already synchronized.
 
 ## Next bounded slice
 
 No broader implementation slice is preselected by this commit.
 
-After Phase 66 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, CPU-model, state-model, memory, CLI, lifecycle-policy, capability, or architecture work. Do not infer KVM-unknown hardware-reason interpretation/recovery, internal-error suberror/data-specific recovery or retry, fail-entry retry/placement policy, system-event reset/reboot/crash policy, MMIO, interrupts, long-mode boot, SMP, migration, resumable execution, guest-memory/device snapshots, or another CLI command automatically from this diagnostic boundary.
+After Phase 67 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, CPU-model, state-model, memory, CLI, lifecycle-policy, capability, or architecture work. A future dedicated documentation slice may reconcile `ARCHITECTURE.md` and `docs/safety-assumptions.md` with the already integrated Phase 66 KVM-unknown boundary, but do not infer that work or KVM-unknown hardware-reason interpretation/recovery, internal-error suberror/data-specific recovery or retry, fail-entry retry/placement policy, system-event reset/reboot/crash policy, MMIO, interrupts, long-mode boot, SMP, migration, resumable execution, guest-memory/device snapshots, or another CLI command automatically.
