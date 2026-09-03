@@ -11,14 +11,22 @@ use std::path::Path;
 const EXPECTED_KVM_API_VERSION: i32 = 12;
 const KVM_CAP_USER_MEMORY: i32 = 3;
 const KVM_CAP_SET_TSS_ADDR: i32 = 4;
+const KVM_CAP_EXT_CPUID: i32 = 7;
 const KVM_CAP_SET_IDENTITY_MAP_ADDR: i32 = 37;
 const KVM_IDENTITY_MAP_ADDR: u64 = 0xfeff_c000;
 const KVM_TSS_ADDR: u64 = KVM_IDENTITY_MAP_ADDR + KVM_MEMORY_ALIGNMENT;
 const KVM_RESERVED_X86_SIZE: u64 = 4 * KVM_MEMORY_ALIGNMENT;
+const KVM_MAX_SUPPORTED_CPUID_ENTRIES: usize = 256;
+const CPUID_FEATURES: u32 = 0x0000_0001;
+const CPUID_FEATURE_X2APIC: u32 = 1 << 21;
+const CPUID_FEATURE_TSC_DEADLINE: u32 = 1 << 24;
+const KVM_CPUID_FEATURES: u32 = 0x4000_0001;
+const KVM_FEATURE_PV_UNHALT: u32 = 1 << 7;
 
-const REQUIRED_EXTENSIONS: [(&str, i32); 3] = [
+const REQUIRED_EXTENSIONS: [(&str, i32); 4] = [
     ("KVM_CAP_USER_MEMORY", KVM_CAP_USER_MEMORY),
     ("KVM_CAP_SET_TSS_ADDR", KVM_CAP_SET_TSS_ADDR),
+    ("KVM_CAP_EXT_CPUID", KVM_CAP_EXT_CPUID),
     (
         "KVM_CAP_SET_IDENTITY_MAP_ADDR",
         KVM_CAP_SET_IDENTITY_MAP_ADDR,
@@ -75,10 +83,44 @@ impl HostCapabilities {
     }
 }
 
+#[derive(Debug, Clone)]
+struct SupportedCpuid {
+    entries: Vec<sys::KvmCpuidEntry2>,
+}
+
+impl SupportedCpuid {
+    fn query(fd: &File) -> Result<Self, Error> {
+        let mut buffer = sys::KvmCpuid2::<KVM_MAX_SUPPORTED_CPUID_ENTRIES>::new();
+        sys::get_supported_cpuid(fd.as_raw_fd(), &mut buffer)
+            .map_err(|source| host_io("KVM_GET_SUPPORTED_CPUID", source))?;
+
+        let count = validate_supported_cpuid_count(buffer.nent, KVM_MAX_SUPPORTED_CPUID_ENTRIES)?;
+        let mut entries = buffer.entries[..count].to_vec();
+        sanitize_supported_cpuid(&mut entries);
+        Ok(Self { entries })
+    }
+
+    fn apply_to_vcpu(&self, id: VcpuId, fd: &OwnedFd) -> Result<(), Error> {
+        let mut buffer = sys::KvmCpuid2::<KVM_MAX_SUPPORTED_CPUID_ENTRIES>::new();
+        let count = self.entries.len();
+        buffer.nent = u32::try_from(count).expect("validated KVM CPUID count fits u32");
+        buffer.entries[..count].copy_from_slice(&self.entries);
+
+        sys::set_cpuid2(fd.as_raw_fd(), &buffer).map_err(|source| {
+            Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
+                id: id.get(),
+                operation: "KVM_SET_CPUID2",
+                source,
+            })
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct KvmBackend {
     fd: File,
     capabilities: HostCapabilities,
+    supported_cpuid: SupportedCpuid,
 }
 
 impl KvmBackend {
@@ -109,8 +151,13 @@ impl KvmBackend {
             extensions,
         };
         capabilities.validate()?;
+        let supported_cpuid = SupportedCpuid::query(&fd)?;
 
-        Ok(Self { fd, capabilities })
+        Ok(Self {
+            fd,
+            capabilities,
+            supported_cpuid,
+        })
     }
 
     #[must_use]
@@ -143,6 +190,7 @@ impl KvmBackend {
             guest_memory: None,
             vcpu_mmap_size: usize::try_from(self.capabilities.vcpu_mmap_size)
                 .expect("validated positive i32 always fits usize"),
+            supported_cpuid: self.supported_cpuid.clone(),
         })
     }
 }
@@ -152,6 +200,7 @@ pub struct Vm {
     fd: OwnedFd,
     guest_memory: Option<GuestMemory>,
     vcpu_mmap_size: usize,
+    supported_cpuid: SupportedCpuid,
 }
 
 impl Vm {
@@ -195,6 +244,7 @@ impl Vm {
             })
         })?;
         let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+        self.supported_cpuid.apply_to_vcpu(id, &fd)?;
         Vcpu::from_kvm_fd(id, fd, self.vcpu_mmap_size)
     }
 
@@ -226,6 +276,43 @@ fn check_extension(fd: &File, name: &'static str, id: i32) -> Result<Capability,
     let value = sys::ioctl_with_arg(fd.as_raw_fd(), sys::KVM_CHECK_EXTENSION, capability_id)
         .map_err(|source| host_io("KVM_CHECK_EXTENSION", source))?;
     Ok(Capability { name, id, value })
+}
+
+fn validate_supported_cpuid_count(reported: u32, capacity: usize) -> Result<usize, Error> {
+    let count =
+        usize::try_from(reported).map_err(|_| malformed_supported_cpuid(reported, capacity))?;
+    if count == 0 || count > capacity {
+        return Err(malformed_supported_cpuid(reported, capacity));
+    }
+    Ok(count)
+}
+
+fn malformed_supported_cpuid(reported: u32, capacity: usize) -> Error {
+    host_io(
+        "validate KVM_GET_SUPPORTED_CPUID response",
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("KVM reported {reported} supported CPUID entries; expected 1..={capacity}"),
+        ),
+    )
+}
+
+fn sanitize_supported_cpuid(entries: &mut [sys::KvmCpuidEntry2]) {
+    for entry in entries {
+        entry.padding = [0; 3];
+        match entry.function {
+            CPUID_FEATURES => {
+                // This VMM has no in-kernel LAPIC yet. KVM documents X2APIC and TSC deadline as
+                // LAPIC-dependent, so do not expose them until the interrupt model exists.
+                entry.ecx &= !(CPUID_FEATURE_X2APIC | CPUID_FEATURE_TSC_DEADLINE);
+            }
+            KVM_CPUID_FEATURES => {
+                // PV_UNHALT also depends on in-kernel LAPIC support.
+                entry.eax &= !KVM_FEATURE_PV_UNHALT;
+            }
+            _ => {}
+        }
+    }
 }
 
 fn reserved_kvm_x86_region() -> GuestMemoryRegion {
@@ -316,6 +403,21 @@ mod tests {
     }
 
     #[test]
+    fn rejects_missing_extended_cpuid_support() {
+        let mut capabilities = valid_capabilities();
+        capabilities
+            .extensions
+            .retain(|capability| capability.id != KVM_CAP_EXT_CPUID);
+        assert!(matches!(
+            capabilities.validate(),
+            Err(Error::KvmCapability(KvmCapabilityError::MissingExtension {
+                name: "KVM_CAP_EXT_CPUID",
+                id: KVM_CAP_EXT_CPUID,
+            }))
+        ));
+    }
+
+    #[test]
     fn rejects_disabled_required_extension() {
         let mut capabilities = valid_capabilities();
         capabilities
@@ -343,6 +445,51 @@ mod tests {
                 KvmCapabilityError::InvalidVcpuMmapSize { size: 0 }
             ))
         ));
+    }
+
+    #[test]
+    fn validates_supported_cpuid_count_against_fixed_capacity() {
+        assert_eq!(validate_supported_cpuid_count(1, 256).unwrap(), 1);
+        assert_eq!(validate_supported_cpuid_count(256, 256).unwrap(), 256);
+        assert!(matches!(
+            validate_supported_cpuid_count(0, 256),
+            Err(Error::HostEnvironment(HostEnvironmentError::Io {
+                operation: "validate KVM_GET_SUPPORTED_CPUID response",
+                ..
+            }))
+        ));
+        assert!(matches!(
+            validate_supported_cpuid_count(257, 256),
+            Err(Error::HostEnvironment(HostEnvironmentError::Io {
+                operation: "validate KVM_GET_SUPPORTED_CPUID response",
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn cpuid_policy_masks_lapic_dependent_features_and_reserved_padding() {
+        let mut entries = [
+            sys::KvmCpuidEntry2 {
+                function: CPUID_FEATURES,
+                ecx: CPUID_FEATURE_X2APIC | CPUID_FEATURE_TSC_DEADLINE | 1,
+                padding: [1, 2, 3],
+                ..sys::KvmCpuidEntry2::ZERO
+            },
+            sys::KvmCpuidEntry2 {
+                function: KVM_CPUID_FEATURES,
+                eax: KVM_FEATURE_PV_UNHALT | 1,
+                padding: [4, 5, 6],
+                ..sys::KvmCpuidEntry2::ZERO
+            },
+        ];
+
+        sanitize_supported_cpuid(&mut entries);
+
+        assert_eq!(entries[0].ecx, 1);
+        assert_eq!(entries[1].eax, 1);
+        assert_eq!(entries[0].padding, [0; 3]);
+        assert_eq!(entries[1].padding, [0; 3]);
     }
 
     #[test]

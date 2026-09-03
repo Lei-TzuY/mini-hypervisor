@@ -9,6 +9,8 @@ VmConfig
  ↓
 KvmBackend
  ├─ host capability validation
+ ├─ bounded KVM_GET_SUPPORTED_CPUID
+ │    └─ validated/masked SupportedCpuid
  └─ VM creation
        ├─ x86 identity-map/TSS setup before vCPUs
        ↓
@@ -18,6 +20,8 @@ KvmBackend
        │   FlatGuestImage
        │       └─ checked flat-binary load
        └─ vCPU creation
+              ├─ KVM_CREATE_VCPU
+              ├─ KVM_SET_CPUID2 before vCPU exposure
               ↓
              Vcpu
               ├─ explicit real-mode register setup
@@ -37,9 +41,21 @@ KvmBackend
 
 The KVM UAPI details live in `src/kvm/sys.rs`. Higher layers call typed Rust methods and do not issue raw `ioctl` operations directly.
 
+## x86 host and CPU capability contract
+
+The backend requires KVM API version 12 plus `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, `KVM_CAP_EXT_CPUID`, and `KVM_CAP_SET_IDENTITY_MAP_ADDR`.
+
+After fixed host capability validation, `KvmBackend` performs `KVM_GET_SUPPORTED_CPUID` through a fixed 256-entry `repr(C)` `KvmCpuid2<N>` buffer. The header remains the exact 8-byte KVM ABI header and each trailing `KvmCpuidEntry2` is the exact 40-byte x86 entry. Pure tests lock header size, entry size, entry offset, and both CPUID ioctl request numbers.
+
+The kernel-returned `nent` is not trusted as a Rust slice length. It must be non-zero and no greater than the fixed capacity before the entry prefix is copied into owned Rust memory. Reserved padding is zeroed before retention.
+
+The current interrupt model has no in-kernel LAPIC or IRQ chip. Linux KVM documents x2APIC, TSC-deadline, and `KVM_FEATURE_PV_UNHALT` as depending on that model, so the host-derived supported set is conservatively masked to remove those bits. No additional CPU feature is synthesized. This is a host-derived runtime contract, not yet a migration-stable named CPU model.
+
+`KvmBackend` retains the validated set and clones it into each `Vm`. `Vm::create_vcpu` performs `KVM_CREATE_VCPU`, immediately applies the retained set with `KVM_SET_CPUID2`, and only then constructs/returns `Vcpu`. A failed CPUID application closes the fresh descriptor through `OwnedFd` drop. Therefore every vCPU reachable through the public lifecycle has an explicit CPUID configuration before `KVM_RUN` can occur.
+
 ## x86 VM setup
 
-The backend requires `KVM_CAP_SET_TSS_ADDR` and `KVM_CAP_SET_IDENTITY_MAP_ADDR` in addition to user-memory support. Immediately after `KVM_CREATE_VM`, before any vCPU can exist, it places the one-page identity-map region at `0xfeff_c000` and the three-page TSS region at `0xfeff_d000`. Together these reserve `0xfeff_c000..0xff00_0000`.
+Immediately after `KVM_CREATE_VM`, before any vCPU can exist, the backend places the one-page identity-map region at `0xfeff_c000` and the three-page TSS region at `0xfeff_d000`. Together these reserve `0xfeff_c000..0xff00_0000`.
 
 Those pages are intentionally outside the current low 2 MiB RAM fixture. Guest RAM registration rejects any region overlapping the reserved range so a future configurable RAM base cannot silently violate the x86 KVM requirement.
 
@@ -77,7 +93,7 @@ For `KVM_EXIT_IO_IN`, `Vcpu::write_port_io_input` re-reads the current I/O metad
 
 Each completed exit is sent through `vmexit::dispatch_vcpu_exit`. Serviceable I/O is recorded as an owned `PortIoExit` and execution continues while budget remains. A terminal HLT returns `VmExecutionResult`, which contains the terminal `VmExitReport`, every serviced typed I/O exit, and the exact completed-exit count.
 
-A zero budget fails before any guest run. When the budget has been fully consumed, the next run attempt fails with `VmExitError::ExitBudgetExhausted`, preserving vCPU id, configured budget, completed count, and the last completed raw exit reason when available. Exhaustion is not reported as guest termination. In particular, if the final permitted exit was serviceable port I/O, userspace may have prepared the service response but the VMM does not claim the pending KVM operation completed because no further `KVM_RUN` was permitted.
+A zero budget fails before any guest run. When the budget has been fully consumed, the next run attempt fails with `VmExitError::ExitBudgetExhausted`, preserving vCPU id, configured budget, completed count, and the last completed raw exit reason when available. Exhaustion is not reported as guest termination. If the final permitted exit was serviceable port I/O, userspace may have prepared the service response but the VMM does not claim the pending KVM operation completed because no further `KVM_RUN` was permitted.
 
 The HLT fixture uses budget 1. Both deterministic port fixtures use budget 2, so their successful sequence is exactly one serviceable I/O exit followed by terminal HLT. Extra serviceable exits cannot be silently accepted: they consume the budget and prevent a terminal success report.
 
@@ -108,13 +124,15 @@ Unknown ports become `PortIoError::UnhandledPort`. Wider or multi-count operatio
 
 ## Ownership and lifetime
 
-`KvmBackend` owns the `/dev/kvm` descriptor. `Vm` owns the VM descriptor and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and a `KvmRunMapping`. `PortIoBus` owns its optional debug device, its configured input byte, and accepted output bytes. `VmExecutionResult` owns only safe copied exit metadata and the terminal report. Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
+`KvmBackend` owns `/dev/kvm`, validated host capabilities, and the sanitized supported-CPUID set. `Vm` owns the VM descriptor, a clone of that CPU contract, and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`. `PortIoBus` owns its optional debug device, configured input byte, and accepted output bytes. `VmExecutionResult` owns only safe copied exit metadata and the terminal report.
+
+Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
 ## Error boundary
 
 Errors are categorized as:
 
-- `HostEnvironment`: host file/device/I/O failures, including named VM and vCPU ioctls;
+- `HostEnvironment`: host file/device/I/O failures, malformed host KVM variable-length responses, and named VM/vCPU ioctls including CPUID query/application;
 - `KvmCapability`: incompatible API version, absent required extension, or invalid kernel-reported mapping size;
 - `Configuration`: unsupported VMM configuration or current real-mode entry limits;
 - `GuestMemory`: invalid guest ranges, reserved-range overlap, mapping failures, bounds violations, or KVM RAM-registration failures;
@@ -128,6 +146,8 @@ Future MMIO, interrupt, snapshot, and stronger invariant categories will be adde
 
 There is no generic hypervisor backend trait yet. KVM is the only implementation, and an abstraction would not have a second consumer. The KVM-specific plumbing is nevertheless isolated so a later raw-VMX research backend would not require leaking ioctls into VM policy.
 
+There is no configurable or migration-stable CPU model yet. The current CPUID contract is intentionally the smallest explicit step: host/KVM-supported entries plus conservative masking for the absent LAPIC model.
+
 There is also no multi-region memory map yet. `GuestMemoryRegion::overlaps` exists to make range semantics explicit and tested, but the VM intentionally supports only slot 0 in this milestone.
 
 The port bus is not a trait-object registry yet. One exact bidirectional device is enough to prove OUT copying and IN response write-back without introducing registration/range-resolution machinery prematurely.
@@ -136,4 +156,4 @@ The execution loop is not a scheduler. It owns no vCPU, thread, timer, or interr
 
 ## Next architectural milestone
 
-The next bounded slice should make the x86 guest CPU capability contract explicit before execution: retrieve a bounded supported-CPUID set from KVM, validate the variable-length UAPI data, and apply it to vCPU 0 with `KVM_SET_CPUID2` before `KVM_RUN`. It should add focused layout/count tests and keep MSR policy, long-mode boot, interrupts, MMIO, SMP, and device expansion out of scope.
+The next bounded slice should prove the configured CPU contract from inside the guest with one deterministic real-mode `CPUID` fixture. The guest should execute selected leaves, store the observed register values into checked guest RAM, halt through the existing bounded loop, and let the host verify that LAPIC-dependent bits intentionally masked by policy are not visible. It should not add a configurable CPU model, MSR policy, long-mode boot, interrupts, MMIO, SMP, or device expansion.
