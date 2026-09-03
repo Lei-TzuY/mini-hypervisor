@@ -4,12 +4,15 @@
 
 ## Current capability
 
-The repository currently implements the KVM lifecycle foundation, one bounded guest-RAM region, deterministic guest execution, centralized VM-exit policy, one bounded vCPU execution loop, and one minimal bidirectional port-I/O device path:
+The repository currently implements the KVM lifecycle foundation, one bounded guest-RAM region, an explicit bounded x86 CPUID contract, deterministic guest execution, centralized VM-exit policy, one bounded vCPU execution loop, and one minimal bidirectional port-I/O device path:
 
 - open `/dev/kvm` with structured environment errors;
 - require KVM API version 12;
-- check `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, and `KVM_CAP_SET_IDENTITY_MAP_ADDR`;
+- check `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, `KVM_CAP_EXT_CPUID`, and `KVM_CAP_SET_IDENTITY_MAP_ADDR`;
 - obtain and validate the `kvm_run` mmap size;
+- retrieve KVM's supported x86 CPUID set into one fixed-capacity 256-entry `repr(C)` buffer and reject zero or out-of-capacity returned counts;
+- clear LAPIC-dependent x2APIC, TSC-deadline, and KVM PV-unhalt feature bits while this VMM has no in-kernel LAPIC model;
+- apply the validated CPUID set with `KVM_SET_CPUID2` before a newly created vCPU is returned to higher layers;
 - create one VM and configure the x86 KVM identity-map/TSS reserved pages before any vCPU exists;
 - create vCPU 0;
 - represent guest physical addresses with `GuestPhysAddr`;
@@ -31,7 +34,7 @@ The repository currently implements the KVM lifecycle foundation, one bounded gu
 - respect KVM's pending-I/O completion rule by re-entering `KVM_RUN` when execution continues after a serviced I/O exit;
 - produce a typed `VmExitReport` containing vCPU id, terminal exit, RIP, and RFLAGS for handled HLT exits;
 - release or conservatively retain mappings according to the documented KVM lifetime rules;
-- run pure validation/UAPI/loader/exit-dispatch/port-bus/execution-budget tests without KVM;
+- run pure validation/UAPI/CPUID/loader/exit-dispatch/port-bus/execution-budget tests without KVM;
 - run environment-sensitive KVM integration tests that distinguish unavailable `/dev/kvm` from product regressions.
 
 The deterministic `run-hlt` fixture registers 2 MiB of RAM at guest physical address 0, loads the single byte `HLT` instruction at `0x1000`, starts vCPU 0 there, and runs with an exit budget of 1. It expects a handled HLT report with RIP advanced to `0x1001`.
@@ -42,7 +45,7 @@ The deterministic port-input fixture loads `IN AL, 0xe9; MOV [0x2000], AL; HLT` 
 
 Exit-budget exhaustion is not a terminal guest report. If the last permitted exit was serviceable I/O, the request has been serviced in userspace but the loop does not claim that KVM has completed the pending operation because no further `KVM_RUN` was permitted.
 
-This is still only a single-vCPU flat-binary execution path. It does **not** yet provide MMIO, multiple device families, interrupts, explicit CPUID policy, virtio, snapshots, SMP, ELF loading, or Linux boot support.
+This is still only a single-vCPU flat-binary execution path. It does **not** yet provide MMIO, multiple device families, interrupts, configurable CPU models, MSR policy, virtio, snapshots, SMP, ELF loading, or Linux boot support.
 
 ## Supported host
 
@@ -52,6 +55,7 @@ This is still only a single-vCPU flat-binary execution path. It does **not** yet
 - KVM API version 12
 - `KVM_CAP_USER_MEMORY`
 - `KVM_CAP_SET_TSS_ADDR`
+- `KVM_CAP_EXT_CPUID`
 - `KVM_CAP_SET_IDENTITY_MAP_ADDR`
 
 GitHub-hosted CI may run without usable `/dev/kvm`; pure tests remain mandatory there, and the environment-sensitive KVM tests report unavailable host capability without treating it as a VMM correctness failure.
@@ -68,10 +72,10 @@ cargo run -- run-hlt
 cargo run -- run-debug-port
 ```
 
-`probe` validates host KVM capabilities. `lifecycle` creates a VM, configures the reserved x86 KVM pages, registers the fixed RAM region, creates vCPU 0, maps `kvm_run`, then shuts down cleanly. `run-hlt` exercises the bounded terminal HLT path. `run-debug-port` exercises checked KVM port output, the minimal `PortIoBus`, common bounded execution, I/O completion by re-entry, and final HLT termination. The port-input path is currently exercised through the library API and integration regression rather than a separate CLI command.
+`probe` validates host KVM capabilities and the bounded supported-CPUID query. `lifecycle` creates a VM, configures the reserved x86 KVM pages, registers the fixed RAM region, creates vCPU 0, applies the validated CPUID contract, maps `kvm_run`, then shuts down cleanly. `run-hlt` exercises the bounded terminal HLT path. `run-debug-port` exercises checked KVM port output, the minimal `PortIoBus`, common bounded execution, I/O completion by re-entry, and final HLT termination. The port-input path is currently exercised through the library API and integration regression rather than a separate CLI command.
 
 ## Safety boundary
 
-Unsafe operations are limited to Linux KVM `ioctl` calls, conversion of successful KVM-created file descriptors into owned descriptors, and `mmap`/`munmap` for `kvm_run` and guest RAM. Flat guest bytes are copied only through checked guest-memory ranges. The x86 `kvm_run` I/O union is accessed only through tested UAPI layouts. Both OUT copying and IN write-back use `data_offset + size * count` only after checked conversion, overflow, and mapping-bounds validation; IN additionally requires an exact response-length match. Raw pointers into `kvm_run` never cross into VM-exit policy, execution-loop, or device code. No guest physical address is treated as a host pointer.
+Unsafe operations are limited to Linux KVM `ioctl` calls, conversion of successful KVM-created file descriptors into owned descriptors, and `mmap`/`munmap` for `kvm_run` and guest RAM. The variable-length `kvm_cpuid2` ABI is represented by one contiguous fixed-capacity `repr(C)` header-plus-entry buffer; the returned `nent` is checked before any slice is formed, reserved entry padding is zeroed, and the validated set is copied into a fresh bounded buffer before `KVM_SET_CPUID2`. Flat guest bytes are copied only through checked guest-memory ranges. The x86 `kvm_run` I/O union is accessed only through tested UAPI layouts. Both OUT copying and IN write-back use `data_offset + size * count` only after checked conversion, overflow, and mapping-bounds validation; IN additionally requires an exact response-length match. Raw pointers into `kvm_run` never cross into VM-exit policy, execution-loop, or device code. No guest physical address is treated as a host pointer.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md), [docs/memory-map.md](docs/memory-map.md), and [docs/safety-assumptions.md](docs/safety-assumptions.md).
