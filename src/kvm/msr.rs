@@ -348,6 +348,160 @@ mod tests {
     }
 
     #[test]
+    fn identical_model_candidates_compare_as_exact_match() {
+        let observation = HostMsrFeatureValues::from_values(vec![
+            MsrFeatureValue::new(MsrIndex::new(0x3a), 1),
+            MsrFeatureValue::new(MsrIndex::new(0x10a), 2),
+        ]);
+        let reference = observation.model_candidate();
+        let observed = observation.model_candidate();
+        let comparison = reference.compare(&observed);
+
+        assert!(comparison.is_exact_match());
+        assert!(comparison.missing_from_observed().is_empty());
+        assert!(comparison.extra_in_observed().is_empty());
+        assert!(comparison.value_mismatches().is_empty());
+        assert_eq!(comparison.reference(), &reference);
+        assert_eq!(comparison.observed(), &observed);
+    }
+
+    #[test]
+    fn model_comparison_is_order_insensitive_for_same_index_values() {
+        let reference = HostMsrFeatureValues::from_values(vec![
+            MsrFeatureValue::new(MsrIndex::new(0x3a), 1),
+            MsrFeatureValue::new(MsrIndex::new(0x10a), 2),
+        ])
+        .model_candidate();
+        let observed = HostMsrFeatureValues::from_values(vec![
+            MsrFeatureValue::new(MsrIndex::new(0x10a), 2),
+            MsrFeatureValue::new(MsrIndex::new(0x3a), 1),
+        ])
+        .model_candidate();
+
+        assert!(reference.compare(&observed).is_exact_match());
+    }
+
+    #[test]
+    fn model_comparison_reports_reference_index_missing_from_observed() {
+        let missing = MsrFeatureValue::new(MsrIndex::new(0x10a), 2);
+        let reference = HostMsrFeatureValues::from_values(vec![
+            MsrFeatureValue::new(MsrIndex::new(0x3a), 1),
+            missing,
+        ])
+        .model_candidate();
+        let observed = HostMsrFeatureValues::from_values(vec![MsrFeatureValue::new(
+            MsrIndex::new(0x3a),
+            1,
+        )])
+        .model_candidate();
+        let comparison = reference.compare(&observed);
+
+        assert!(!comparison.is_exact_match());
+        assert_eq!(comparison.missing_from_observed(), &[missing]);
+        assert!(comparison.extra_in_observed().is_empty());
+        assert!(comparison.value_mismatches().is_empty());
+    }
+
+    #[test]
+    fn model_comparison_reports_observed_index_extra_to_reference() {
+        let extra = MsrFeatureValue::new(MsrIndex::new(0x10a), 2);
+        let reference = HostMsrFeatureValues::from_values(vec![MsrFeatureValue::new(
+            MsrIndex::new(0x3a),
+            1,
+        )])
+        .model_candidate();
+        let observed = HostMsrFeatureValues::from_values(vec![
+            MsrFeatureValue::new(MsrIndex::new(0x3a), 1),
+            extra,
+        ])
+        .model_candidate();
+        let comparison = reference.compare(&observed);
+
+        assert!(!comparison.is_exact_match());
+        assert!(comparison.missing_from_observed().is_empty());
+        assert_eq!(comparison.extra_in_observed(), &[extra]);
+        assert!(comparison.value_mismatches().is_empty());
+    }
+
+    #[test]
+    fn model_comparison_reports_same_index_value_mismatch() {
+        let index = MsrIndex::new(0x3a);
+        let reference = HostMsrFeatureValues::from_values(vec![MsrFeatureValue::new(index, 1)])
+            .model_candidate();
+        let observed = HostMsrFeatureValues::from_values(vec![MsrFeatureValue::new(index, 2)])
+            .model_candidate();
+        let comparison = reference.compare(&observed);
+
+        assert_eq!(
+            comparison.value_mismatches(),
+            &[MsrModelValueMismatch::new(index, 1, 2)]
+        );
+        assert!(comparison.missing_from_observed().is_empty());
+        assert!(comparison.extra_in_observed().is_empty());
+    }
+
+    #[test]
+    fn model_comparison_ignores_host_mutable_source_drift_but_keeps_provenance() {
+        let immutable = MsrFeatureValue::new(MsrIndex::new(0x3a), 7);
+        let reference_observation = HostMsrFeatureValues::from_values(vec![
+            immutable,
+            MsrFeatureValue::new(MSR_IA32_UCODE_REV, 0x1111),
+        ]);
+        let observed_observation = HostMsrFeatureValues::from_values(vec![
+            MsrFeatureValue::new(MSR_IA32_UCODE_REV, 0x2222),
+            immutable,
+        ]);
+        let reference = reference_observation.model_candidate();
+        let observed = observed_observation.model_candidate();
+        let comparison = reference.compare(&observed);
+
+        assert!(comparison.is_exact_match());
+        assert_eq!(
+            comparison.reference().source_observation(),
+            &reference_observation
+        );
+        assert_eq!(
+            comparison.observed().source_observation(),
+            &observed_observation
+        );
+        assert_ne!(
+            comparison.reference().source_observation(),
+            comparison.observed().source_observation()
+        );
+    }
+
+    #[test]
+    fn model_comparison_reports_mixed_differences_in_source_order() {
+        let shared = MsrFeatureValue::new(MsrIndex::new(0x3a), 1);
+        let missing = MsrFeatureValue::new(MsrIndex::new(0x48), 2);
+        let mismatch_reference = MsrFeatureValue::new(MsrIndex::new(0x10a), 3);
+        let mismatch_observed = MsrFeatureValue::new(MsrIndex::new(0x10a), 4);
+        let extra = MsrFeatureValue::new(MsrIndex::new(0x122), 5);
+        let reference =
+            HostMsrFeatureValues::from_values(vec![shared, missing, mismatch_reference])
+                .model_candidate();
+        let observed =
+            HostMsrFeatureValues::from_values(vec![mismatch_observed, shared, extra])
+                .model_candidate();
+        let comparison = reference.compare(&observed);
+
+        assert_eq!(comparison.missing_from_observed(), &[missing]);
+        assert_eq!(comparison.extra_in_observed(), &[extra]);
+        assert_eq!(
+            comparison.value_mismatches(),
+            &[MsrModelValueMismatch::new(MsrIndex::new(0x10a), 3, 4)]
+        );
+    }
+
+    #[test]
+    fn empty_model_candidates_compare_as_exact_match() {
+        let reference = HostMsrFeatureValues::from_values(Vec::new()).model_candidate();
+        let observed = HostMsrFeatureValues::from_values(Vec::new()).model_candidate();
+
+        assert!(reference.compare(&observed).is_exact_match());
+    }
+
+    #[test]
     fn msr_index_round_trips_raw_value() {
         let index = MsrIndex::new(0xdead_beef);
         assert_eq!(index.get(), 0xdead_beef);
