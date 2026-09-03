@@ -1,6 +1,6 @@
 use crate::error::{Error, VmExitError};
 use crate::portio::PortIoBus;
-use crate::vcpu::{PortIoExit, Vcpu, VcpuId};
+use crate::vcpu::{PortIoExit, Vcpu, VcpuExit, VcpuId};
 use crate::vmexit::{dispatch_vcpu_exit, VmExitDisposition, VmExitReport};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +80,44 @@ fn attach_completed_exit_trace(error: Error, exit_reasons: &[u32]) -> Error {
                 reason,
                 rip,
                 rflags,
+                exit_reasons: exit_reasons.to_vec(),
+            })
+        }
+        Error::VmExit(VmExitError::UnsupportedSystemEvent {
+            vcpu_id,
+            event_type,
+            data,
+            rip,
+            rflags,
+            ..
+        }) => {
+            debug_assert_eq!(
+                exit_reasons.last().copied(),
+                Some(VcpuExit::SystemEvent.reason())
+            );
+            Error::VmExit(VmExitError::UnsupportedSystemEvent {
+                vcpu_id,
+                event_type,
+                data,
+                rip,
+                rflags,
+                exit_reasons: exit_reasons.to_vec(),
+            })
+        }
+        Error::VmExit(VmExitError::InvalidSystemEventDataCount {
+            vcpu_id,
+            ndata,
+            capacity,
+            ..
+        }) => {
+            debug_assert_eq!(
+                exit_reasons.last().copied(),
+                Some(VcpuExit::SystemEvent.reason())
+            );
+            Error::VmExit(VmExitError::InvalidSystemEventDataCount {
+                vcpu_id,
+                ndata,
+                capacity,
                 exit_reasons: exit_reasons.to_vec(),
             })
         }
@@ -239,6 +277,57 @@ mod tests {
                 rflags: 0x2,
                 exit_reasons,
             }) if exit_reasons == [sys::KVM_EXIT_IO, 0xfeed_beef]
+        ));
+    }
+
+    #[test]
+    fn system_event_error_trace_is_replaced_with_complete_execution_trace() {
+        let system_event_reason = VcpuExit::SystemEvent.reason();
+        let error = Error::VmExit(VmExitError::UnsupportedSystemEvent {
+            vcpu_id: 2,
+            event_type: 3,
+            data: vec![0x11, 0x22],
+            rip: 0x2000,
+            rflags: 0x2,
+            exit_reasons: vec![system_event_reason],
+        });
+
+        let result = attach_completed_exit_trace(error, &[sys::KVM_EXIT_IO, system_event_reason]);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::UnsupportedSystemEvent {
+                vcpu_id: 2,
+                event_type: 3,
+                data,
+                rip: 0x2000,
+                rflags: 0x2,
+                exit_reasons,
+            }) if data == [0x11, 0x22]
+                && exit_reasons == [sys::KVM_EXIT_IO, system_event_reason]
+        ));
+    }
+
+    #[test]
+    fn malformed_system_event_trace_is_replaced_with_complete_execution_trace() {
+        let system_event_reason = VcpuExit::SystemEvent.reason();
+        let error = Error::VmExit(VmExitError::InvalidSystemEventDataCount {
+            vcpu_id: 6,
+            ndata: 17,
+            capacity: 16,
+            exit_reasons: vec![system_event_reason],
+        });
+
+        let result = attach_completed_exit_trace(error, &[sys::KVM_EXIT_IO, system_event_reason]);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::InvalidSystemEventDataCount {
+                vcpu_id: 6,
+                ndata: 17,
+                capacity: 16,
+                exit_reasons,
+            }) if exit_reasons == [sys::KVM_EXIT_IO, system_event_reason]
         ));
     }
 
