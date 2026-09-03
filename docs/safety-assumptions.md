@@ -2,7 +2,7 @@
 
 ## Trust model
 
-The Linux KVM kernel interface and explicitly supplied host process configuration are trusted. Guest-controlled addresses, lengths, CPU state, port-I/O metadata, future MMIO requests, and future device requests are untrusted at userspace policy boundaries.
+The Linux KVM kernel interface and explicitly supplied host process configuration are trusted. Guest-controlled addresses, lengths, CPU state, port-I/O metadata, future MMIO requests, and future device requests are untrusted at userspace policy boundaries. Kernel-returned variable-length metadata such as the supported-CPUID entry count is also validated before it is used for Rust slicing or copied back into a vCPU ioctl.
 
 The current HLT and debug-port fixtures are repository-owned test inputs rather than arbitrary external guest content. `FlatGuestImage` nevertheless applies range and entry validation so later callers do not acquire an unchecked loading path by accident.
 
@@ -11,6 +11,18 @@ The current HLT and debug-port fixtures are repository-owned test inputs rather 
 `src/kvm/sys.rs` contains raw `ioctl` calls. The call sites use constants and structures matching the stable x86-64 Linux KVM UAPI and convert `-1` into `std::io::Error` immediately.
 
 Successful `KVM_CREATE_VM` and `KVM_CREATE_VCPU` results are file descriptors owned by the caller; they are immediately wrapped in `OwnedFd`.
+
+### CPUID contract
+
+`KVM_GET_SUPPORTED_CPUID` and `KVM_SET_CPUID2` use the variable-length `struct kvm_cpuid2` ABI. The implementation does not allocate an unaligned byte buffer and cast it. Instead, `KvmCpuid2<N>` is one `repr(C)` object containing the 8-byte header followed immediately by an aligned fixed array of `KvmCpuidEntry2` values. Pure tests lock the 40-byte entry size, header size, entries offset, and ioctl request values.
+
+The system query uses a fixed capacity of 256 entries, matching the current x86 KVM maximum. The kernel-returned `nent` is treated as untrusted metadata: it must be in `1..=256` before a slice is formed. A zero or out-of-capacity count is rejected as an invalid host/KVM response. Reserved entry padding is reset to zero before the entries are retained.
+
+The current VMM intentionally has no in-kernel LAPIC/IRQ-chip model. Linux KVM documents x2APIC, TSC-deadline exposure, and `KVM_FEATURE_PV_UNHALT` as depending on that interrupt model, so those bits are removed from the supported set before it becomes the guest contract. This is a conservative feature reduction; no unsupported feature is synthesized.
+
+Every `Vm::create_vcpu` call applies the already-validated set with `KVM_SET_CPUID2` before the `Vcpu` object is returned. A failure closes the newly created descriptor through `OwnedFd` drop and returns a named `KVM_SET_CPUID2` vCPU-operation error. Higher layers therefore cannot reach this project's `KVM_RUN` path through a vCPU that skipped CPUID setup.
+
+### VM and memory setup
 
 Before any vCPU exists, the VM backend configures KVM's x86 identity-map page and TSS pages in the reserved range `0xfeff_c000..0xff00_0000`. The required KVM capabilities are checked before VM creation, and guest RAM registration rejects overlap with this range.
 
@@ -40,4 +52,4 @@ The minimal `PortIoBus` recognizes only debug port `0xe9`. The device accepts by
 
 ## Not yet present
 
-There is no guest virtual-address translation, external guest-image parser, MMIO, interrupt injection, explicit CPUID policy, virtqueue, disk backend, snapshot decoder, dynamic device registration, scheduler, or guest-controlled device descriptor parsing in this revision. Unsupported exits and unsupported port requests are rejected with structured diagnostics rather than serviced heuristically.
+There is no guest virtual-address translation, external guest-image parser, MMIO, interrupt injection, configurable/migratable CPU model, MSR policy, virtqueue, disk backend, snapshot decoder, dynamic device registration, scheduler, or guest-controlled device descriptor parsing in this revision. The current CPUID contract is deliberately host-derived and conservatively masked rather than a stable cross-host CPU profile. Unsupported exits and unsupported port requests are rejected with structured diagnostics rather than serviced heuristically.
