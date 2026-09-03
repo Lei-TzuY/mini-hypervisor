@@ -151,7 +151,7 @@ pub struct HostMsrModelCandidate {
 
 impl HostMsrModelCandidate {
     fn from_observation(observation: &HostMsrFeatureValues) -> Self {
-        let values = observation.model_immutable_values().copied().collect();
+        let values: Vec<MsrFeatureValue> = observation.model_immutable_values().copied().collect();
         debug_assert!(values
             .iter()
             .all(|value| value.stability() == MsrFeatureStability::ModelImmutable));
