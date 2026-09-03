@@ -100,3 +100,92 @@ impl std::fmt::Display for GuestMsrValueSetError {
 }
 
 impl std::error::Error for GuestMsrValueSetError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuestMsrSnapshot {
+    policy: GuestMsrAccessPolicy,
+    values: GuestMsrValueSet,
+}
+
+impl GuestMsrSnapshot {
+    pub(crate) fn from_capture(
+        policy: &GuestMsrAccessPolicy,
+        values: &GuestMsrValueSet,
+    ) -> Result<Self, GuestMsrSnapshotError> {
+        if policy.entries().len() != values.values().len() {
+            return Err(GuestMsrSnapshotError::CoverageMismatch {
+                policy_entries: policy.entries().len(),
+                value_entries: values.values().len(),
+            });
+        }
+
+        for (position, (policy_entry, value)) in policy
+            .entries()
+            .iter()
+            .zip(values.values().iter())
+            .enumerate()
+        {
+            if policy_entry.index() != value.index() {
+                return Err(GuestMsrSnapshotError::IndexMismatch {
+                    position,
+                    policy_index: policy_entry.index(),
+                    value_index: value.index(),
+                });
+            }
+        }
+
+        Ok(Self {
+            policy: policy.clone(),
+            values: values.clone(),
+        })
+    }
+
+    #[must_use]
+    pub fn policy(&self) -> &GuestMsrAccessPolicy {
+        &self.policy
+    }
+
+    #[must_use]
+    pub fn values(&self) -> &GuestMsrValueSet {
+        &self.values
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GuestMsrSnapshotError {
+    CoverageMismatch {
+        policy_entries: usize,
+        value_entries: usize,
+    },
+    IndexMismatch {
+        position: usize,
+        policy_index: MsrIndex,
+        value_index: MsrIndex,
+    },
+}
+
+impl std::fmt::Display for GuestMsrSnapshotError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CoverageMismatch {
+                policy_entries,
+                value_entries,
+            } => write!(
+                f,
+                "full guest MSR snapshot has {value_entries} values for {policy_entries} policy entries"
+            ),
+            Self::IndexMismatch {
+                position,
+                policy_index,
+                value_index,
+            } => write!(
+                f,
+                "full guest MSR snapshot index mismatch at position {position}: policy {:#x}, values {:#x}",
+                policy_index.get(),
+                value_index.get()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for GuestMsrSnapshotError {}
