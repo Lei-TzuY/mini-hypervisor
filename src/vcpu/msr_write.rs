@@ -1,6 +1,6 @@
 use crate::error::{Error, HostEnvironmentError};
-use crate::kvm::msr::value_set::GuestMsrSnapshot;
-use crate::kvm::msr::GuestMsrValueSet;
+use crate::kvm::msr::value_set::{GuestMsrSnapshot, GuestMsrSnapshotComparison};
+use crate::kvm::msr::{GuestMsrAccessPolicy, GuestMsrValueSet};
 use crate::kvm::sys;
 use crate::vcpu::{vcpu_operation, Vcpu, VcpuId};
 use std::io;
@@ -24,6 +24,17 @@ impl Vcpu {
     pub fn restore_msr_snapshot(&self, snapshot: &GuestMsrSnapshot) -> Result<(), Error> {
         restore_msr_snapshot_with(snapshot, |values| self.set_msrs(values))
     }
+
+    pub fn restore_and_verify_msr_snapshot(
+        &self,
+        snapshot: &GuestMsrSnapshot,
+    ) -> Result<GuestMsrSnapshotComparison, Error> {
+        restore_and_verify_msr_snapshot_with(
+            snapshot,
+            |expected| self.restore_msr_snapshot(expected),
+            |policy| self.capture_msr_snapshot(policy),
+        )
+    }
 }
 
 fn restore_msr_snapshot_with<F>(snapshot: &GuestMsrSnapshot, mut write: F) -> Result<(), Error>
@@ -31,6 +42,20 @@ where
     F: FnMut(&GuestMsrValueSet) -> Result<(), Error>,
 {
     write(snapshot.values())
+}
+
+fn restore_and_verify_msr_snapshot_with<W, C>(
+    snapshot: &GuestMsrSnapshot,
+    mut write: W,
+    mut capture: C,
+) -> Result<GuestMsrSnapshotComparison, Error>
+where
+    W: FnMut(&GuestMsrSnapshot) -> Result<(), Error>,
+    C: FnMut(&GuestMsrAccessPolicy) -> Result<GuestMsrSnapshot, Error>,
+{
+    write(snapshot)?;
+    let observed = capture(snapshot.policy())?;
+    Ok(snapshot.compare(&observed))
 }
 
 fn prepare_vcpu_msr_write_request(
@@ -340,3 +365,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "msr_restore_verify_tests.rs"]
+mod msr_restore_verify_tests;
