@@ -1,5 +1,5 @@
-use crate::kvm::cpu::GuestCpuPolicy;
-use crate::kvm::msr::HostMsrModelCandidate;
+use crate::kvm::cpu::{GuestCpuPolicy, GuestCpuPolicyComparison};
+use crate::kvm::msr::{HostMsrModelCandidate, HostMsrModelComparison};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuModelCandidate {
@@ -28,6 +28,34 @@ impl CpuModelCandidate {
     pub fn host_msr_model_candidate(&self) -> &HostMsrModelCandidate {
         &self.host_msr_model_candidate
     }
+
+    #[must_use]
+    pub fn compare(&self, observed: &Self) -> CpuModelComparison {
+        CpuModelComparison {
+            guest_cpu_policy_comparison: self.guest_cpu_policy.compare(&observed.guest_cpu_policy),
+            host_msr_model_comparison: self
+                .host_msr_model_candidate
+                .compare(&observed.host_msr_model_candidate),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuModelComparison {
+    guest_cpu_policy_comparison: GuestCpuPolicyComparison,
+    host_msr_model_comparison: HostMsrModelComparison,
+}
+
+impl CpuModelComparison {
+    #[must_use]
+    pub fn guest_cpu_policy_comparison(&self) -> &GuestCpuPolicyComparison {
+        &self.guest_cpu_policy_comparison
+    }
+
+    #[must_use]
+    pub fn host_msr_model_comparison(&self) -> &HostMsrModelComparison {
+        &self.host_msr_model_comparison
+    }
 }
 
 #[cfg(test)]
@@ -44,6 +72,18 @@ mod tests {
 
     fn msr_candidate(values: Vec<MsrFeatureValue>) -> HostMsrModelCandidate {
         HostMsrFeatureValues::from_values(values).model_candidate()
+    }
+
+    fn cpuid_entry(function: u32, index: u32, eax: u32) -> CpuidEntry {
+        CpuidEntry {
+            function,
+            index,
+            flags: 0,
+            eax,
+            ebx: 0x2222_2222,
+            ecx: 0x3333_3333,
+            edx: 0x4444_4444,
+        }
     }
 
     #[test]
@@ -135,5 +175,164 @@ mod tests {
         let candidate = CpuModelCandidate::new(&guest_cpu_policy, &host_msr_model_candidate);
 
         assert_eq!(candidate.clone(), candidate);
+    }
+
+    #[test]
+    fn comparison_delegates_exact_component_contracts() {
+        let guest_cpu_policy = guest_policy(vec![cpuid_entry(7, 0, 1)]);
+        let host_msr_model_candidate =
+            msr_candidate(vec![MsrFeatureValue::new(MsrIndex::new(0x3a), 2)]);
+        let reference = CpuModelCandidate::new(&guest_cpu_policy, &host_msr_model_candidate);
+        let observed = reference.clone();
+        let expected_cpuid = reference
+            .guest_cpu_policy()
+            .compare(observed.guest_cpu_policy());
+        let expected_msr = reference
+            .host_msr_model_candidate()
+            .compare(observed.host_msr_model_candidate());
+
+        let comparison = reference.compare(&observed);
+
+        assert_eq!(comparison.guest_cpu_policy_comparison(), &expected_cpuid);
+        assert_eq!(comparison.host_msr_model_comparison(), &expected_msr);
+        assert!(comparison.guest_cpu_policy_comparison().is_exact_match());
+        assert!(comparison.host_msr_model_comparison().is_exact_match());
+    }
+
+    #[test]
+    fn comparison_preserves_cpuid_only_drift() {
+        let reference_policy = guest_policy(vec![cpuid_entry(7, 0, 1)]);
+        let observed_policy = guest_policy(vec![cpuid_entry(7, 0, 2)]);
+        let msr = msr_candidate(vec![MsrFeatureValue::new(MsrIndex::new(0x3a), 3)]);
+        let reference = CpuModelCandidate::new(&reference_policy, &msr);
+        let observed = CpuModelCandidate::new(&observed_policy, &msr);
+        let expected_cpuid = reference
+            .guest_cpu_policy()
+            .compare(observed.guest_cpu_policy());
+        let expected_msr = reference
+            .host_msr_model_candidate()
+            .compare(observed.host_msr_model_candidate());
+
+        let comparison = reference.compare(&observed);
+
+        assert_eq!(comparison.guest_cpu_policy_comparison(), &expected_cpuid);
+        assert_eq!(comparison.host_msr_model_comparison(), &expected_msr);
+        assert!(!comparison.guest_cpu_policy_comparison().is_exact_match());
+        assert!(comparison.host_msr_model_comparison().is_exact_match());
+    }
+
+    #[test]
+    fn comparison_preserves_msr_only_drift_and_source_provenance() {
+        let policy = guest_policy(vec![cpuid_entry(1, 0, 1)]);
+        let reference_msr = msr_candidate(vec![
+            MsrFeatureValue::new(MsrIndex::new(0x3a), 10),
+            MsrFeatureValue::new(MSR_IA32_UCODE_REV, 11),
+        ]);
+        let observed_msr = msr_candidate(vec![
+            MsrFeatureValue::new(MsrIndex::new(0x3a), 20),
+            MsrFeatureValue::new(MSR_IA32_UCODE_REV, 21),
+        ]);
+        let reference = CpuModelCandidate::new(&policy, &reference_msr);
+        let observed = CpuModelCandidate::new(&policy, &observed_msr);
+        let expected_cpuid = reference
+            .guest_cpu_policy()
+            .compare(observed.guest_cpu_policy());
+        let expected_msr = reference
+            .host_msr_model_candidate()
+            .compare(observed.host_msr_model_candidate());
+
+        let comparison = reference.compare(&observed);
+
+        assert_eq!(comparison.guest_cpu_policy_comparison(), &expected_cpuid);
+        assert_eq!(comparison.host_msr_model_comparison(), &expected_msr);
+        assert!(comparison.guest_cpu_policy_comparison().is_exact_match());
+        assert!(!comparison.host_msr_model_comparison().is_exact_match());
+        assert_eq!(
+            comparison
+                .host_msr_model_comparison()
+                .reference()
+                .source_observation(),
+            reference.host_msr_model_candidate().source_observation()
+        );
+        assert_eq!(
+            comparison
+                .host_msr_model_comparison()
+                .observed()
+                .source_observation(),
+            observed.host_msr_model_candidate().source_observation()
+        );
+    }
+
+    #[test]
+    fn comparison_preserves_direction_when_both_components_drift() {
+        let reference_policy = guest_policy(vec![cpuid_entry(7, 0, 1)]);
+        let observed_policy = guest_policy(vec![cpuid_entry(7, 1, 1)]);
+        let reference_msr = msr_candidate(vec![MsrFeatureValue::new(MsrIndex::new(0x3a), 1)]);
+        let observed_msr = msr_candidate(vec![MsrFeatureValue::new(MsrIndex::new(0x10a), 2)]);
+        let reference = CpuModelCandidate::new(&reference_policy, &reference_msr);
+        let observed = CpuModelCandidate::new(&observed_policy, &observed_msr);
+
+        let comparison = reference.compare(&observed);
+
+        assert_eq!(
+            comparison.guest_cpu_policy_comparison().reference(),
+            reference.guest_cpu_policy()
+        );
+        assert_eq!(
+            comparison.guest_cpu_policy_comparison().observed(),
+            observed.guest_cpu_policy()
+        );
+        assert_eq!(
+            comparison.host_msr_model_comparison().reference(),
+            reference.host_msr_model_candidate()
+        );
+        assert_eq!(
+            comparison.host_msr_model_comparison().observed(),
+            observed.host_msr_model_candidate()
+        );
+        assert_eq!(
+            comparison
+                .guest_cpu_policy_comparison()
+                .missing_from_observed()
+                .len(),
+            1
+        );
+        assert_eq!(
+            comparison
+                .guest_cpu_policy_comparison()
+                .extra_in_observed()
+                .len(),
+            1
+        );
+        assert_eq!(
+            comparison
+                .host_msr_model_comparison()
+                .missing_from_observed()
+                .len(),
+            1
+        );
+        assert_eq!(
+            comparison
+                .host_msr_model_comparison()
+                .extra_in_observed()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn comparison_accepts_empty_candidates_and_is_owned() {
+        let policy = guest_policy(Vec::new());
+        let msr = msr_candidate(Vec::new());
+        let reference = CpuModelCandidate::new(&policy, &msr);
+        let observed = CpuModelCandidate::new(&policy, &msr);
+
+        let comparison = reference.compare(&observed);
+        drop(reference);
+        drop(observed);
+
+        assert!(comparison.guest_cpu_policy_comparison().is_exact_match());
+        assert!(comparison.host_msr_model_comparison().is_exact_match());
+        assert_eq!(comparison.clone(), comparison);
     }
 }
