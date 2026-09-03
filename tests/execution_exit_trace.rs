@@ -45,8 +45,14 @@ fn successful_execution_preserves_each_completed_exit_reason_in_order_when_kvm_i
     let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, 2)
         .expect("debug-port guest should reach HLT");
 
-    assert_eq!(execution.exit_reasons(), &[sys::KVM_EXIT_IO, sys::KVM_EXIT_HLT]);
-    assert_eq!(execution.exit_reasons().len(), execution.completed_exits() as usize);
+    assert_eq!(
+        execution.exit_reasons(),
+        &[sys::KVM_EXIT_IO, sys::KVM_EXIT_HLT]
+    );
+    assert_eq!(
+        execution.exit_reasons().len(),
+        execution.completed_exits() as usize
+    );
     assert_eq!(
         execution.exit_reasons().last().copied(),
         Some(execution.report().exit().reason())
