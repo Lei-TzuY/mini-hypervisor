@@ -51,14 +51,12 @@ impl Vcpu {
             return Ok(VcpuMsrValues::from_values(Vec::new()));
         }
 
-        let mut request = prepare_vcpu_msr_request(indices).map_err(|source| {
-            vcpu_operation(self.id, "validate KVM_GET_MSRS request", source)
-        })?;
+        let mut request = prepare_vcpu_msr_request(indices)
+            .map_err(|source| vcpu_operation(self.id, "validate KVM_GET_MSRS request", source))?;
         let returned = sys::get_msrs(self.fd.as_raw_fd(), &mut request)
             .map_err(|source| vcpu_operation(self.id, "KVM_GET_MSRS", source))?;
-        decode_vcpu_msr_response(indices, returned, &request.entries[..indices.len()]).map_err(
-            |source| vcpu_operation(self.id, "validate KVM_GET_MSRS response", source),
-        )
+        decode_vcpu_msr_response(indices, returned, &request.entries[..indices.len()])
+            .map_err(|source| vcpu_operation(self.id, "validate KVM_GET_MSRS response", source))
     }
 }
 
