@@ -124,6 +124,29 @@ impl VcpuRegisterSnapshot {
         }
     }
 
+    const fn to_kvm_regs(self) -> sys::KvmRegs {
+        sys::KvmRegs {
+            rax: self.rax,
+            rbx: self.rbx,
+            rcx: self.rcx,
+            rdx: self.rdx,
+            rsi: self.rsi,
+            rdi: self.rdi,
+            rsp: self.rsp,
+            rbp: self.rbp,
+            r8: self.r8,
+            r9: self.r9,
+            r10: self.r10,
+            r11: self.r11,
+            r12: self.r12,
+            r13: self.r13,
+            r14: self.r14,
+            r15: self.r15,
+            rip: self.rip,
+            rflags: self.rflags,
+        }
+    }
+
     #[must_use]
     pub const fn rax(&self) -> u64 {
         self.rax
@@ -295,6 +318,12 @@ impl Vcpu {
             .map_err(|source| vcpu_operation(self.id, "KVM_GET_REGS", source))?;
         Ok(VcpuRegisterSnapshot::from_kvm_regs(regs))
     }
+
+    pub fn restore_register_snapshot(&self, snapshot: &VcpuRegisterSnapshot) -> Result<(), Error> {
+        let regs = snapshot.to_kvm_regs();
+        sys::set_regs(self.fd.as_raw_fd(), &regs)
+            .map_err(|source| vcpu_operation(self.id, "KVM_SET_REGS", source))
+    }
 }
 
 #[cfg(test)]
@@ -367,6 +396,37 @@ mod tests {
         assert_eq!(snapshot.r15(), 16);
         assert_eq!(snapshot.rip(), 17);
         assert_eq!(snapshot.rflags(), 18);
+    }
+
+    #[test]
+    fn snapshot_serializes_every_general_register_field_exactly() {
+        let snapshot = snapshot([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+        ]);
+
+        assert_eq!(
+            snapshot.to_kvm_regs(),
+            sys::KvmRegs {
+                rax: 1,
+                rbx: 2,
+                rcx: 3,
+                rdx: 4,
+                rsi: 5,
+                rdi: 6,
+                rsp: 7,
+                rbp: 8,
+                r8: 9,
+                r9: 10,
+                r10: 11,
+                r11: 12,
+                r12: 13,
+                r13: 14,
+                r14: 15,
+                r15: 16,
+                rip: 17,
+                rflags: 18,
+            }
+        );
     }
 
     #[test]
