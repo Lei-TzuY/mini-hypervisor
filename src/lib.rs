@@ -15,10 +15,12 @@ pub mod vmexit;
 use config::VmConfig;
 use error::{Error, VmExitError};
 use execution::{run_vcpu_until_stopped, VmExecutionResult};
+use kvm::msr::GuestMsrAccessPolicy;
 use kvm::KvmBackend;
 use loader::FlatGuestImage;
 use memory::{GuestMemory, GuestPhysAddr};
 use portio::PortIoBus;
+use state_snapshot::VcpuStateSnapshotComparison;
 use vcpu::{PortIoExit, VcpuId};
 use vmexit::VmExitReport;
 
@@ -50,6 +52,8 @@ const CPUID_EXIT_BUDGET: u32 = 1;
 const CPUID1_X2APIC: u32 = 1 << 21;
 const CPUID1_TSC_DEADLINE: u32 = 1 << 24;
 const KVM_FEATURE_PV_UNHALT: u32 = 1 << 7;
+const STATE_REFERENCE_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1000);
+const STATE_CHANGED_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1200);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DebugPortGuestResult {
@@ -128,6 +132,24 @@ impl CpuidGuestResult {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateSnapshotRoundTripResult {
+    changed: VcpuStateSnapshotComparison,
+    restored: VcpuStateSnapshotComparison,
+}
+
+impl StateSnapshotRoundTripResult {
+    #[must_use]
+    pub const fn changed(&self) -> &VcpuStateSnapshotComparison {
+        &self.changed
+    }
+
+    #[must_use]
+    pub const fn restored(&self) -> &VcpuStateSnapshotComparison {
+        &self.restored
+    }
+}
+
 pub fn verify_kvm_lifecycle(config: VmConfig) -> Result<(), Error> {
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm()?;
@@ -139,6 +161,32 @@ pub fn verify_kvm_lifecycle(config: VmConfig) -> Result<(), Error> {
     debug_assert_eq!(vcpu.id(), VcpuId::BOOT);
 
     Ok(())
+}
+
+pub fn run_state_snapshot_roundtrip(
+    config: VmConfig,
+) -> Result<StateSnapshotRoundTripResult, Error> {
+    let backend = KvmBackend::open()?;
+    let vm = backend.create_vm()?;
+
+    debug_assert_eq!(config.vcpu_count(), 1);
+    let vcpu = vm.create_vcpu(VcpuId::BOOT)?;
+    let msr_policy = GuestMsrAccessPolicy::from_host(backend.host_msr_indices(), &[])
+        .expect("empty guest MSR policy is valid by construction");
+
+    vcpu.initialize_real_mode(STATE_REFERENCE_ENTRY)?;
+    let reference = vcpu.capture_state_snapshot(&msr_policy)?;
+
+    vcpu.initialize_real_mode(STATE_CHANGED_ENTRY)?;
+    let observed_changed = vcpu.capture_state_snapshot(&msr_policy)?;
+    let changed = reference.compare(&observed_changed);
+    debug_assert!(
+        !changed.is_exact_match(),
+        "the deterministic state round-trip fixture must mutate the captured state before restore"
+    );
+
+    let restored = vcpu.restore_and_verify_state_snapshot(&reference)?;
+    Ok(StateSnapshotRoundTripResult { changed, restored })
 }
 
 pub fn run_hlt_guest(config: VmConfig) -> Result<VmExitReport, Error> {

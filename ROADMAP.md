@@ -12,26 +12,27 @@ The repository currently has typed, owned boundaries for:
 - explicit guest MSR access policy, policy-validated value sets, policy-bound capture, full MSR snapshots, snapshot comparison, bounded non-transactional restore, and restore-and-verify;
 - owned vCPU general-register snapshots, pure 18-field reference-to-observed comparison, snapshot-bound restore, and restore-and-verify;
 - owned vCPU special-register snapshots covering segment, descriptor-table, control-register, EFER, APIC-base, and interrupt-bitmap state without exposing KVM UAPI padding, plus pure deterministic semantic-field comparison, snapshot-bound restore, and restore-and-verify;
-- composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison, bounded non-transactional restore, and restore-and-verify;
+- composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison, bounded non-transactional restore, restore-and-verify, and a deterministic public/CLI round-trip fixture;
 - centralized VM-exit dispatch with typed HLT and legacy shutdown terminal exits, bounded execution budgets, ordered completed-exit reason traces on successful results, budget-exhaustion diagnostics, and unhandled-exit diagnostics, plus the minimal bidirectional debug port-I/O device.
 
-## Phase 47 — user-facing capability documentation reconciliation
+## Phase 48 — deterministic composite state round-trip fixture
 
-The current bounded slice reconciles the public README with the exact Phase 46 implementation state after the CPUID/MSR/state-snapshot and execution-diagnostics work outgrew the older user-facing capability summary. It intentionally changes no production behavior.
+The current bounded slice exposes the already-integrated composite vCPU state capture/compare/restore/restore-and-verify boundary through one deterministic public fixture and CLI command without changing the underlying state semantics or KVM ABI.
 
 Correctness contract:
 
-- the README must no longer claim that guest MSR policy or vCPU snapshots are unimplemented when both are already integrated;
-- the README must describe configured CPUID application/read-back/proof, host/guest MSR modeling, general/special/composite vCPU state capture/compare/restore/restore-and-verify, typed HLT and legacy `KVM_EXIT_SHUTDOWN`, and ordered completed-exit diagnostics without overstating broader VMM capability;
-- state snapshots must be described as owned CPU/MSR state boundaries rather than whole-VM, guest-memory, device-state, checkpoint, migration, or atomic/quiesced snapshots;
-- composite restore must remain explicitly documented as bounded and non-transactional, including the absence of rollback after earlier component writes complete;
-- exit-budget exhaustion must continue to preserve the pending-I/O completion caveat, and successful/budget-exhausted/unhandled paths must accurately describe their ordered completed-exit diagnostics;
-- limitations must still explicitly exclude MMIO, multiple device families, interrupts/in-kernel interrupt-controller support, arbitrary CPU models, virtio, SMP, ELF loading, long-mode/Linux boot, migration orchestration, guest-memory/device snapshots, resumable execution, rollback, and `KVM_EXIT_SYSTEM_EVENT` payload policy;
-- the README must point readers to this file as the authoritative current bounded implementation state and next-slice selector;
-- this slice does not change Rust production code, KVM ABI handling, tests, CLI semantics, execution policy, state-model semantics, or safety assumptions; the normal full CI remains the regression gate for accidental repository breakage.
+- `run_state_snapshot_roundtrip` creates one configured vCPU and deliberately uses an empty `GuestMsrAccessPolicy`, avoiding assumptions that any host-specific MSR exposed by the general capability list is safe to write back in a portable fixture;
+- the fixture initializes real-mode state at RIP `0x1000`, captures one reference composite snapshot, reinitializes state at RIP `0x1200`, captures the changed state, and returns the resulting typed comparison as proof that the fixture actually changed state before restore;
+- the changed comparison must be non-exact in the focused KVM-aware regression; the fixture does not mutate guest memory, execute guest code, or issue `KVM_RUN`;
+- the fixture then calls the existing `restore_and_verify_state_snapshot` boundary exactly once and returns its typed composite comparison without retry, repair, rollback, or new recapture policy beyond that existing API;
+- a successful round-trip regression requires the restored composite comparison and its general-register, special-register, and MSR component comparisons all to be exact;
+- the public result retains both the changed and restored typed comparisons so callers can distinguish proof-of-mutation from proof-of-restoration rather than receiving only a boolean;
+- the `state-roundtrip` CLI command reports the exactness of both comparisons and the three restored components; a mismatch remains a comparison result rather than being redefined as a new error condition;
+- the empty MSR policy means the fixture validates the composite orchestration while intentionally not claiming host-portable write semantics for arbitrary MSRs;
+- this slice does not add whole-VM, guest-memory, device-state, checkpoint, migration, atomic/quiesced snapshot, transaction, rollback, retry, MMIO, interrupt, SMP, long-mode/Linux boot, resumable execution, or `KVM_EXIT_SYSTEM_EVENT` semantics.
 
 ## Next bounded slice
 
 No broader implementation slice is preselected by this commit.
 
-After Phase 47 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, architecture-documentation, or state-model work. In particular, do not infer that `KVM_EXIT_SYSTEM_EVENT`, MMIO, interrupts, long-mode boot, SMP, migration, or resumable execution are automatically next merely because the public README now accurately reflects the accumulated implementation.
+After Phase 48 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, architecture-documentation, or state-model work. Do not infer that `KVM_EXIT_SYSTEM_EVENT`, MMIO, interrupts, long-mode boot, SMP, migration, or resumable execution are automatically next merely because composite state round-trip is now directly executable from the CLI.
