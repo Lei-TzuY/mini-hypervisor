@@ -1,6 +1,8 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::kvm::KvmBackend;
-use mini_hypervisor::{run_debug_port_guest, run_hlt_guest, verify_kvm_lifecycle};
+use mini_hypervisor::{
+    run_debug_port_guest, run_hlt_guest, run_state_snapshot_roundtrip, verify_kvm_lifecycle,
+};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -26,6 +28,24 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
             Ok(())
         }
         Some("lifecycle") => verify_kvm_lifecycle(VmConfig::default()),
+        Some("state-roundtrip") => {
+            let result = run_state_snapshot_roundtrip(VmConfig::default())?;
+            println!("changed exact: {}", result.changed().is_exact_match());
+            println!("restored exact: {}", result.restored().is_exact_match());
+            println!(
+                "restored registers exact: {}",
+                result.restored().registers().is_exact_match()
+            );
+            println!(
+                "restored special registers exact: {}",
+                result.restored().special_registers().is_exact_match()
+            );
+            println!(
+                "restored MSRs exact: {}",
+                result.restored().msrs().is_exact_match()
+            );
+            Ok(())
+        }
         Some("run-hlt") => {
             let report = run_hlt_guest(VmConfig::default())?;
             println!("{report}");
@@ -47,7 +67,9 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
             Ok(())
         }
         Some(other) => {
-            eprintln!("usage: mini-hypervisor [probe|lifecycle|run-hlt|run-debug-port]");
+            eprintln!(
+                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-hlt|run-debug-port]"
+            );
             eprintln!("unknown command: {other}");
             Ok(())
         }
