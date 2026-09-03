@@ -93,6 +93,14 @@ impl Vcpu {
             msrs,
         })
     }
+
+    pub fn restore_state_snapshot(&self, snapshot: &VcpuStateSnapshot) -> Result<(), Error> {
+        restore_components_with(
+            || self.restore_special_register_snapshot(snapshot.special_registers()),
+            || self.restore_register_snapshot(snapshot.registers()),
+            || self.restore_msr_snapshot(snapshot.msrs()),
+        )
+    }
 }
 
 fn capture_components_with<R, S, M, E, FR, FS, FM>(
@@ -125,6 +133,22 @@ where
     let special_registers = compare_special_registers();
     let msrs = compare_msrs();
     (registers, special_registers, msrs)
+}
+
+fn restore_components_with<E, FS, FR, FM>(
+    mut restore_special_registers: FS,
+    mut restore_registers: FR,
+    mut restore_msrs: FM,
+) -> Result<(), E>
+where
+    FS: FnMut() -> Result<(), E>,
+    FR: FnMut() -> Result<(), E>,
+    FM: FnMut() -> Result<(), E>,
+{
+    restore_special_registers()?;
+    restore_registers()?;
+    restore_msrs()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -230,6 +254,107 @@ mod tests {
         assert_eq!(
             &*sequence.borrow(),
             &["registers", "special-registers", "msrs"]
+        );
+    }
+
+    #[test]
+    fn component_restore_uses_dependency_order_exactly_once() {
+        let sequence = RefCell::new(Vec::new());
+
+        restore_components_with(
+            || {
+                sequence.borrow_mut().push("special-registers");
+                Ok::<_, &'static str>(())
+            },
+            || {
+                sequence.borrow_mut().push("registers");
+                Ok::<_, &'static str>(())
+            },
+            || {
+                sequence.borrow_mut().push("msrs");
+                Ok::<_, &'static str>(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            &*sequence.borrow(),
+            &["special-registers", "registers", "msrs"]
+        );
+    }
+
+    #[test]
+    fn special_register_restore_failure_skips_later_components() {
+        let sequence = RefCell::new(Vec::new());
+
+        let error = restore_components_with(
+            || {
+                sequence.borrow_mut().push("special-registers");
+                Err::<(), _>("special-register failure")
+            },
+            || {
+                sequence.borrow_mut().push("registers");
+                Ok::<_, &'static str>(())
+            },
+            || {
+                sequence.borrow_mut().push("msrs");
+                Ok::<_, &'static str>(())
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "special-register failure");
+        assert_eq!(&*sequence.borrow(), &["special-registers"]);
+    }
+
+    #[test]
+    fn register_restore_failure_preserves_prior_write_and_skips_msrs() {
+        let sequence = RefCell::new(Vec::new());
+
+        let error = restore_components_with(
+            || {
+                sequence.borrow_mut().push("special-registers");
+                Ok::<_, &'static str>(())
+            },
+            || {
+                sequence.borrow_mut().push("registers");
+                Err::<(), _>("register failure")
+            },
+            || {
+                sequence.borrow_mut().push("msrs");
+                Ok::<_, &'static str>(())
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "register failure");
+        assert_eq!(&*sequence.borrow(), &["special-registers", "registers"]);
+    }
+
+    #[test]
+    fn msr_restore_failure_propagates_after_prior_components_without_retry() {
+        let sequence = RefCell::new(Vec::new());
+
+        let error = restore_components_with(
+            || {
+                sequence.borrow_mut().push("special-registers");
+                Ok::<_, &'static str>(())
+            },
+            || {
+                sequence.borrow_mut().push("registers");
+                Ok::<_, &'static str>(())
+            },
+            || {
+                sequence.borrow_mut().push("msrs");
+                Err::<(), _>("msr failure")
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "msr failure");
+        assert_eq!(
+            &*sequence.borrow(),
+            &["special-registers", "registers", "msrs"]
         );
     }
 }

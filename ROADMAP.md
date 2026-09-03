@@ -12,27 +12,28 @@ The repository currently has typed, owned boundaries for:
 - explicit guest MSR access policy, policy-validated value sets, policy-bound capture, full MSR snapshots, snapshot comparison, bounded non-transactional restore, and restore-and-verify;
 - owned vCPU general-register snapshots, pure 18-field reference-to-observed comparison, snapshot-bound restore, and restore-and-verify;
 - owned vCPU special-register snapshots covering segment, descriptor-table, control-register, EFER, APIC-base, and interrupt-bitmap state without exposing KVM UAPI padding, plus pure deterministic semantic-field comparison, snapshot-bound restore, and restore-and-verify;
-- read-only composite vCPU state capture that owns the existing general-register, special-register, and policy-bound MSR snapshots together without introducing raw KVM state, plus pure component-preserving composite comparison;
+- composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison and bounded non-transactional restore;
 - centralized VM-exit dispatch, bounded execution budgets, and the minimal bidirectional debug port-I/O device.
 
-## Phase 40 — composite vCPU state snapshot comparison
+## Phase 41 — composite vCPU state snapshot restore
 
-The current bounded slice adds pure `VcpuStateSnapshot::compare()` and an owned `VcpuStateSnapshotComparison` that composes the existing general-register, special-register, and policy-bound MSR comparison boundaries without introducing new mismatch semantics.
+The current bounded slice adds `Vcpu::restore_state_snapshot()` as a thin orchestration boundary over the existing special-register, general-register, and policy-bound MSR restore paths.
 
 Correctness contract:
 
-- comparison is pure Rust over two already-owned `VcpuStateSnapshot` values and performs no KVM operation, retry, mutation, or state recapture;
-- component comparison order is fixed as general registers, special registers, then policy-bound MSRs, with each existing comparison boundary invoked exactly once;
-- the composite result preserves the three existing typed comparison values and exposes them read-only instead of flattening or renumbering component mismatches;
-- general-register field identity and ordering remain owned by `VcpuRegisterSnapshot::compare()`;
-- special-register semantic-field identity and ordering remain owned by `VcpuSpecialRegisterSnapshot::compare()`;
-- MSR policy equality, value mismatch identity, and the rule that policy mismatch suppresses value-level comparison remain owned by `GuestMsrSnapshot::compare()`;
-- `VcpuStateSnapshotComparison::is_exact_match()` is true if and only if all three component comparisons are exact matches;
-- pure sequencing regression locks canonical comparison order, while the KVM-aware regression requires identical composite captures to compare exact and a controlled RIP-only change to surface only through the general-register comparison when KVM is available;
-- this slice does not add composite restore, rollback, migration compatibility, guest-memory/device capture, atomic/quiesced snapshot semantics, long-mode boot, interrupts, MMIO, SMP, or device expansion.
+- restore accepts only an already-owned `VcpuStateSnapshot`; it introduces no raw KVM representation, new state encoding, or new error taxonomy;
+- component restore order is fixed as special registers, general registers, then policy-bound MSRs, matching the repository's existing dependency-aware real-mode initialization order for special versus general registers;
+- each existing component restore boundary is attempted at most once;
+- a special-register restore failure prevents both later restores; a general-register restore failure occurs after the special-register write and prevents MSR restore; an MSR restore failure occurs after both earlier component writes;
+- all component errors propagate unchanged, including existing partial-MSR-write diagnostics;
+- the operation performs no retry, rollback, repair, transaction log, or automatic recapture;
+- successful completion means only that all three existing component restore paths returned success; it does not by itself prove read-back equality;
+- because earlier component writes remain applied when a later component fails, this boundary is explicitly non-transactional and does not claim atomic architectural restore semantics;
+- pure regressions lock restore ordering and failure short-circuit behavior, while a KVM-aware regression requires a captured real-mode composite snapshot to restore through the public path and recapture as an exact composite match when KVM is available;
+- this slice does not add composite restore-and-verify, rollback, migration compatibility, guest-memory/device capture, atomic/quiesced snapshot semantics, long-mode boot, interrupts, MMIO, SMP, or device expansion.
 
 ## Next bounded slice
 
 No broader implementation slice is preselected by this commit.
 
-After Phase 40 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, and this authoritative roadmap before choosing further state-restore, execution, or architecture-documentation work. Do not infer that multi-component restore, migration orchestration, long-mode boot, interrupts, MMIO, SMP, or device expansion is automatically next merely because composite capture and comparison now exist.
+After Phase 41 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, and this authoritative roadmap before choosing further state-verification, execution, or architecture-documentation work. Do not infer that composite restore-and-verify, migration orchestration, long-mode boot, interrupts, MMIO, SMP, or device expansion is automatically next merely because composite capture, comparison, and bounded restore now exist.
