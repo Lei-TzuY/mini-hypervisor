@@ -1,5 +1,5 @@
-use crate::kvm::cpu::GuestCpuPolicy;
-use crate::kvm::msr::HostMsrModelCandidate;
+use crate::kvm::cpu::{GuestCpuPolicy, GuestCpuPolicyComparison};
+use crate::kvm::msr::{HostMsrModelCandidate, HostMsrModelComparison};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuModelCandidate {
@@ -27,6 +27,36 @@ impl CpuModelCandidate {
     #[must_use]
     pub fn host_msr_model_candidate(&self) -> &HostMsrModelCandidate {
         &self.host_msr_model_candidate
+    }
+
+    #[must_use]
+    pub fn compare(&self, observed: &Self) -> CpuModelComparison {
+        CpuModelComparison {
+            guest_cpu_policy_comparison: self
+                .guest_cpu_policy
+                .compare(&observed.guest_cpu_policy),
+            host_msr_model_comparison: self
+                .host_msr_model_candidate
+                .compare(&observed.host_msr_model_candidate),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuModelComparison {
+    guest_cpu_policy_comparison: GuestCpuPolicyComparison,
+    host_msr_model_comparison: HostMsrModelComparison,
+}
+
+impl CpuModelComparison {
+    #[must_use]
+    pub fn guest_cpu_policy_comparison(&self) -> &GuestCpuPolicyComparison {
+        &self.guest_cpu_policy_comparison
+    }
+
+    #[must_use]
+    pub fn host_msr_model_comparison(&self) -> &HostMsrModelComparison {
+        &self.host_msr_model_comparison
     }
 }
 
