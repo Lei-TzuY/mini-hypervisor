@@ -1,5 +1,6 @@
 use super::{vcpu_operation, Vcpu};
 use crate::error::Error;
+use crate::kvm::msr::value_set::GuestMsrSnapshot;
 use crate::kvm::msr::{GuestMsrAccessPolicy, GuestMsrValueSet, MsrIndex};
 use crate::kvm::sys;
 use std::io;
@@ -75,6 +76,20 @@ impl Vcpu {
             .collect();
         materialize_policy_capture(policy, &captured)
             .map_err(|source| vcpu_operation(self.id, "materialize guest MSR capture", source))
+    }
+
+    pub fn capture_msr_snapshot(
+        &self,
+        policy: &GuestMsrAccessPolicy,
+    ) -> Result<GuestMsrSnapshot, Error> {
+        let values = self.capture_msrs(policy)?;
+        GuestMsrSnapshot::from_capture(policy, &values).map_err(|source| {
+            vcpu_operation(
+                self.id,
+                "validate full guest MSR snapshot",
+                io::Error::new(io::ErrorKind::InvalidData, source),
+            )
+        })
     }
 }
 
