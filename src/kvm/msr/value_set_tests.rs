@@ -36,10 +36,7 @@ fn guest_value_set_accepts_authorized_subset_and_preserves_caller_order() {
 #[test]
 fn guest_value_set_rejects_unauthorized_index_without_partial_state() {
     let policy = policy(&[0x10]);
-    let requested = [
-        (MsrIndex::new(0x10), 1),
-        (MsrIndex::new(0x1b), 2),
-    ];
+    let requested = [(MsrIndex::new(0x10), 1), (MsrIndex::new(0x1b), 2)];
 
     assert_eq!(
         GuestMsrValueSet::from_policy(&policy, &requested),
