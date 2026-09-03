@@ -139,6 +139,24 @@ pub enum VmExitError {
         rflags: u64,
         exit_reasons: Vec<u32>,
     },
+    UnsupportedSystemEvent {
+        vcpu_id: u16,
+        event_type: u32,
+        data: Vec<u64>,
+        rip: u64,
+        rflags: u64,
+        exit_reasons: Vec<u32>,
+    },
+    SystemEventPayloadUnavailable {
+        vcpu_id: u16,
+        exit_reason: u32,
+    },
+    InvalidSystemEventDataCount {
+        vcpu_id: u16,
+        ndata: u32,
+        capacity: usize,
+        exit_reasons: Vec<u32>,
+    },
     IoPayloadUnavailable {
         vcpu_id: u16,
         exit_reason: u32,
@@ -424,6 +442,33 @@ impl fmt::Display for VmExitError {
             } => write!(
                 f,
                 "unhandled VM exit on vCPU {vcpu_id}: reason={reason}, rip={rip:#x}, rflags={rflags:#x}"
+            ),
+            Self::UnsupportedSystemEvent {
+                vcpu_id,
+                event_type,
+                data,
+                rip,
+                rflags,
+                ..
+            } => write!(
+                f,
+                "unsupported KVM system event on vCPU {vcpu_id}: type={event_type}, data={data:?}, rip={rip:#x}, rflags={rflags:#x}"
+            ),
+            Self::SystemEventPayloadUnavailable {
+                vcpu_id,
+                exit_reason,
+            } => write!(
+                f,
+                "vCPU {vcpu_id} has no system-event payload for exit reason {exit_reason}"
+            ),
+            Self::InvalidSystemEventDataCount {
+                vcpu_id,
+                ndata,
+                capacity,
+                ..
+            } => write!(
+                f,
+                "vCPU {vcpu_id} reported invalid KVM system-event data count {ndata}; capacity is {capacity}"
             ),
             Self::IoPayloadUnavailable {
                 vcpu_id,
