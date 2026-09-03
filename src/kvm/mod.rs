@@ -324,8 +324,7 @@ fn query_host_msr_feature_indices(fd: &File) -> Result<HostMsrFeatureIndexList, 
     let mut buffer = sys::KvmMsrList::<KVM_MAX_MSR_INDEX_LIST_ENTRIES>::new();
     sys::get_msr_feature_index_list(fd.as_raw_fd(), &mut buffer)
         .map_err(|source| host_io("KVM_GET_MSR_FEATURE_INDEX_LIST", source))?;
-    let count =
-        validate_msr_feature_index_count(buffer.nmsrs, KVM_MAX_MSR_INDEX_LIST_ENTRIES)?;
+    let count = validate_msr_feature_index_count(buffer.nmsrs, KVM_MAX_MSR_INDEX_LIST_ENTRIES)?;
     Ok(HostMsrFeatureIndexList::from_validated_raw(
         &buffer.indices[..count],
     ))
@@ -710,10 +709,7 @@ mod tests {
     fn validates_msr_feature_index_count_against_project_bound() {
         assert_eq!(validate_msr_feature_index_count(0, 1024).unwrap(), 0);
         assert_eq!(validate_msr_feature_index_count(1, 1024).unwrap(), 1);
-        assert_eq!(
-            validate_msr_feature_index_count(1024, 1024).unwrap(),
-            1024
-        );
+        assert_eq!(validate_msr_feature_index_count(1024, 1024).unwrap(), 1024);
         assert!(matches!(
             validate_msr_feature_index_count(1025, 1024),
             Err(Error::HostEnvironment(HostEnvironmentError::Io {
