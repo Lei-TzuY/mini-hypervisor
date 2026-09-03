@@ -508,12 +508,7 @@ impl VcpuSpecialRegisterSnapshot {
                 observed.apic_base,
             ),
         ] {
-            push_mismatch_if_different(
-                &mut mismatches,
-                field,
-                reference_value,
-                observed_value,
-            );
+            push_mismatch_if_different(&mut mismatches, field, reference_value, observed_value);
         }
 
         for word in INTERRUPT_BITMAP_WORDS {
