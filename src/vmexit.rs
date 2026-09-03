@@ -1,6 +1,8 @@
 use crate::error::{Error, VmExitError};
 use crate::portio::{PortIoBus, PortIoService};
-use crate::vcpu::{PortIoExit, Vcpu, VcpuExit, VcpuId, VcpuRegisters};
+use crate::vcpu::{
+    PortIoExit, Vcpu, VcpuExit, VcpuId, VcpuRegisters, VcpuSystemEventType,
+};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +76,16 @@ pub fn dispatch_vcpu_exit(
                 registers,
             )))
         }
+        VcpuExit::SystemEvent => {
+            let event = vcpu.system_event()?;
+            let registers = vcpu.registers()?;
+            Err(unsupported_system_event(
+                vcpu.id(),
+                event.event_type(),
+                event.data(),
+                registers,
+            ))
+        }
         VcpuExit::Unhandled { reason } => {
             let registers = vcpu.registers()?;
             Err(unhandled_exit(vcpu.id(), reason, registers))
@@ -89,6 +101,22 @@ fn stopped_report(vcpu_id: VcpuId, exit: VcpuExit, registers: VcpuRegisters) -> 
         rip: registers.rip,
         rflags: registers.rflags,
     }
+}
+
+fn unsupported_system_event(
+    vcpu_id: VcpuId,
+    event_type: VcpuSystemEventType,
+    data: &[u64],
+    registers: VcpuRegisters,
+) -> Error {
+    Error::VmExit(VmExitError::UnsupportedSystemEvent {
+        vcpu_id: vcpu_id.get(),
+        event_type: event_type.raw(),
+        data: data.to_vec(),
+        rip: registers.rip,
+        rflags: registers.rflags,
+        exit_reasons: vec![VcpuExit::SystemEvent.reason()],
+    })
 }
 
 fn unhandled_exit(vcpu_id: VcpuId, reason: u32, registers: VcpuRegisters) -> Error {
@@ -128,6 +156,28 @@ mod tests {
         assert_eq!(report.exit(), VcpuExit::Shutdown);
         assert_eq!(report.rip(), 0x1001);
         assert_eq!(report.rflags(), 0x2);
+    }
+
+    #[test]
+    fn system_event_dispatch_preserves_payload_register_context_and_local_trace() {
+        let result = unsupported_system_event(
+            VcpuId::new(5),
+            VcpuSystemEventType::Reset,
+            &[0x11, 0x22],
+            REGISTERS,
+        );
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::UnsupportedSystemEvent {
+                vcpu_id: 5,
+                event_type: 2,
+                data,
+                rip: 0x1001,
+                rflags: 0x2,
+                exit_reasons,
+            }) if data == [0x11, 0x22] && exit_reasons == [VcpuExit::SystemEvent.reason()]
+        ));
     }
 
     #[test]
