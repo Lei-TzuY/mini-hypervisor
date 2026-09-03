@@ -6,7 +6,7 @@ use crate::error::{Error, GuestMemoryError, HostEnvironmentError, KvmCapabilityE
 use crate::memory::{GuestMemory, GuestMemoryRegion, GuestPhysAddr, KVM_MEMORY_ALIGNMENT};
 use crate::vcpu::{Vcpu, VcpuId};
 use cpu::{CpuidEntry, GuestCpuPolicy, HostCpuid};
-use msr::HostMsrIndexList;
+use msr::{HostMsrFeatureIndexList, HostMsrIndexList};
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -17,13 +17,14 @@ const KVM_CAP_USER_MEMORY: i32 = 3;
 const KVM_CAP_SET_TSS_ADDR: i32 = 4;
 const KVM_CAP_EXT_CPUID: i32 = 7;
 const KVM_CAP_SET_IDENTITY_MAP_ADDR: i32 = 37;
+const KVM_CAP_GET_MSR_FEATURES: i32 = 153;
 const KVM_IDENTITY_MAP_ADDR: u64 = 0xfeff_c000;
 const KVM_TSS_ADDR: u64 = KVM_IDENTITY_MAP_ADDR + KVM_MEMORY_ALIGNMENT;
 const KVM_RESERVED_X86_SIZE: u64 = 4 * KVM_MEMORY_ALIGNMENT;
 const KVM_MAX_SUPPORTED_CPUID_ENTRIES: usize = 256;
 const KVM_MAX_MSR_INDEX_LIST_ENTRIES: usize = 1024;
 
-const REQUIRED_EXTENSIONS: [(&str, i32); 4] = [
+const REQUIRED_EXTENSIONS: [(&str, i32); 5] = [
     ("KVM_CAP_USER_MEMORY", KVM_CAP_USER_MEMORY),
     ("KVM_CAP_SET_TSS_ADDR", KVM_CAP_SET_TSS_ADDR),
     ("KVM_CAP_EXT_CPUID", KVM_CAP_EXT_CPUID),
@@ -31,6 +32,7 @@ const REQUIRED_EXTENSIONS: [(&str, i32); 4] = [
         "KVM_CAP_SET_IDENTITY_MAP_ADDR",
         KVM_CAP_SET_IDENTITY_MAP_ADDR,
     ),
+    ("KVM_CAP_GET_MSR_FEATURES", KVM_CAP_GET_MSR_FEATURES),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +91,7 @@ pub struct KvmBackend {
     capabilities: HostCapabilities,
     host_cpuid: HostCpuid,
     host_msr_indices: HostMsrIndexList,
+    host_msr_feature_indices: HostMsrFeatureIndexList,
     cpu_policy: GuestCpuPolicy,
 }
 
@@ -122,6 +125,7 @@ impl KvmBackend {
         capabilities.validate()?;
         let host_cpuid = query_host_cpuid(&fd)?;
         let host_msr_indices = query_host_msr_indices(&fd)?;
+        let host_msr_feature_indices = query_host_msr_feature_indices(&fd)?;
         let cpu_policy = GuestCpuPolicy::from_host(&host_cpuid);
 
         Ok(Self {
@@ -129,6 +133,7 @@ impl KvmBackend {
             capabilities,
             host_cpuid,
             host_msr_indices,
+            host_msr_feature_indices,
             cpu_policy,
         })
     }
@@ -146,6 +151,11 @@ impl KvmBackend {
     #[must_use]
     pub fn host_msr_indices(&self) -> &HostMsrIndexList {
         &self.host_msr_indices
+    }
+
+    #[must_use]
+    pub fn host_msr_feature_indices(&self) -> &HostMsrFeatureIndexList {
+        &self.host_msr_feature_indices
     }
 
     #[must_use]
@@ -301,6 +311,25 @@ fn query_host_msr_indices(fd: &File) -> Result<HostMsrIndexList, Error> {
     ))
 }
 
+fn query_host_msr_feature_indices(fd: &File) -> Result<HostMsrFeatureIndexList, Error> {
+    let mut probe = sys::KvmMsrList::<0>::new();
+    match sys::get_msr_feature_index_list(fd.as_raw_fd(), &mut probe) {
+        Err(source) if source.raw_os_error() == Some(libc::E2BIG) => {}
+        Err(source) => return Err(host_io("KVM_GET_MSR_FEATURE_INDEX_LIST probe", source)),
+        Ok(()) => {}
+    }
+
+    validate_msr_feature_index_count(probe.nmsrs, KVM_MAX_MSR_INDEX_LIST_ENTRIES)?;
+
+    let mut buffer = sys::KvmMsrList::<KVM_MAX_MSR_INDEX_LIST_ENTRIES>::new();
+    sys::get_msr_feature_index_list(fd.as_raw_fd(), &mut buffer)
+        .map_err(|source| host_io("KVM_GET_MSR_FEATURE_INDEX_LIST", source))?;
+    let count = validate_msr_feature_index_count(buffer.nmsrs, KVM_MAX_MSR_INDEX_LIST_ENTRIES)?;
+    Ok(HostMsrFeatureIndexList::from_validated_raw(
+        &buffer.indices[..count],
+    ))
+}
+
 fn apply_cpu_policy(policy: &GuestCpuPolicy, id: VcpuId, fd: &OwnedFd) -> Result<(), Error> {
     let mut buffer = sys::KvmCpuid2::<KVM_MAX_SUPPORTED_CPUID_ENTRIES>::new();
     let count = policy.entries().len();
@@ -434,6 +463,25 @@ fn malformed_msr_index_count(reported: u32, capacity: usize) -> Error {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("KVM reported {reported} MSR indices; expected 1..={capacity}"),
+        ),
+    )
+}
+
+fn validate_msr_feature_index_count(reported: u32, capacity: usize) -> Result<usize, Error> {
+    let count = usize::try_from(reported)
+        .map_err(|_| malformed_msr_feature_index_count(reported, capacity))?;
+    if count > capacity {
+        return Err(malformed_msr_feature_index_count(reported, capacity));
+    }
+    Ok(count)
+}
+
+fn malformed_msr_feature_index_count(reported: u32, capacity: usize) -> Error {
+    host_io(
+        "validate KVM_GET_MSR_FEATURE_INDEX_LIST response",
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("KVM reported {reported} MSR feature indices; expected 0..={capacity}"),
         ),
     )
 }
@@ -573,6 +621,21 @@ mod tests {
     }
 
     #[test]
+    fn rejects_missing_msr_feature_support() {
+        let mut capabilities = valid_capabilities();
+        capabilities
+            .extensions
+            .retain(|capability| capability.id != KVM_CAP_GET_MSR_FEATURES);
+        assert!(matches!(
+            capabilities.validate(),
+            Err(Error::KvmCapability(KvmCapabilityError::MissingExtension {
+                name: "KVM_CAP_GET_MSR_FEATURES",
+                id: KVM_CAP_GET_MSR_FEATURES,
+            }))
+        ));
+    }
+
+    #[test]
     fn rejects_disabled_required_extension() {
         let mut capabilities = valid_capabilities();
         capabilities
@@ -637,6 +700,20 @@ mod tests {
             validate_msr_index_count(1025, 1024),
             Err(Error::HostEnvironment(HostEnvironmentError::Io {
                 operation: "validate KVM_GET_MSR_INDEX_LIST response",
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn validates_msr_feature_index_count_against_project_bound() {
+        assert_eq!(validate_msr_feature_index_count(0, 1024).unwrap(), 0);
+        assert_eq!(validate_msr_feature_index_count(1, 1024).unwrap(), 1);
+        assert_eq!(validate_msr_feature_index_count(1024, 1024).unwrap(), 1024);
+        assert!(matches!(
+            validate_msr_feature_index_count(1025, 1024),
+            Err(Error::HostEnvironment(HostEnvironmentError::Io {
+                operation: "validate KVM_GET_MSR_FEATURE_INDEX_LIST response",
                 ..
             }))
         ));

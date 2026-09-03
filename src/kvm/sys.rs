@@ -7,6 +7,7 @@ pub const KVM_GET_MSR_INDEX_LIST: libc::c_ulong = 0xC004_AE02;
 pub const KVM_CHECK_EXTENSION: libc::c_ulong = 0xAE03;
 pub const KVM_GET_VCPU_MMAP_SIZE: libc::c_ulong = 0xAE04;
 pub const KVM_GET_SUPPORTED_CPUID: libc::c_ulong = 0xC008_AE05;
+pub const KVM_GET_MSR_FEATURE_INDEX_LIST: libc::c_ulong = 0xC004_AE0A;
 pub const KVM_CREATE_VCPU: libc::c_ulong = 0xAE41;
 pub const KVM_SET_USER_MEMORY_REGION: libc::c_ulong = 0x4020_AE46;
 pub const KVM_SET_TSS_ADDR: libc::c_ulong = 0xAE47;
@@ -240,6 +241,16 @@ pub fn get_msr_index_list<const N: usize>(fd: RawFd, list: &mut KvmMsrList<N>) -
     cvt_ioctl(result).map(|_| ())
 }
 
+pub fn get_msr_feature_index_list<const N: usize>(
+    fd: RawFd,
+    list: &mut KvmMsrList<N>,
+) -> io::Result<()> {
+    // SAFETY: this ioctl uses the same variable-length kvm_msr_list ABI as the general index
+    // query. `nmsrs` is initialized to N and bounds writes to the trailing u32 array.
+    let result = unsafe { libc::ioctl(fd, KVM_GET_MSR_FEATURE_INDEX_LIST, list) };
+    cvt_ioctl(result).map(|_| ())
+}
+
 pub fn get_supported_cpuid<const N: usize>(fd: RawFd, cpuid: &mut KvmCpuid2<N>) -> io::Result<()> {
     // SAFETY: `cpuid` is one contiguous repr(C) header plus N entries. KVM uses `nent` to bound
     // writes to the trailing variable-length array, and the caller initializes it to N.
@@ -372,11 +383,12 @@ mod tests {
     }
 
     #[test]
-    fn msr_index_list_matches_x86_64_kvm_uapi_layout() {
+    fn msr_index_lists_match_x86_64_kvm_uapi_layout() {
         assert_eq!(std::mem::size_of::<KvmMsrList<0>>(), 4);
         assert_eq!(std::mem::size_of::<KvmMsrList<1>>(), 8);
         assert_eq!(std::mem::offset_of!(KvmMsrList<1>, indices), 4);
         assert_eq!(KVM_GET_MSR_INDEX_LIST, 0xC004_AE02);
+        assert_eq!(KVM_GET_MSR_FEATURE_INDEX_LIST, 0xC004_AE0A);
     }
 
     #[test]

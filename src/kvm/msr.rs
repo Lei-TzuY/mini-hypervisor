@@ -15,6 +15,16 @@ impl MsrIndex {
     }
 }
 
+fn normalize_indices(indices: &[u32]) -> Vec<MsrIndex> {
+    let mut seen = HashSet::with_capacity(indices.len());
+    indices
+        .iter()
+        .copied()
+        .map(MsrIndex::new)
+        .filter(|index| seen.insert(*index))
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostMsrIndexList {
     indices: Vec<MsrIndex>,
@@ -23,14 +33,27 @@ pub struct HostMsrIndexList {
 impl HostMsrIndexList {
     pub(crate) fn from_validated_raw(indices: &[u32]) -> Self {
         debug_assert!(!indices.is_empty());
-        let mut seen = HashSet::with_capacity(indices.len());
-        let indices = indices
-            .iter()
-            .copied()
-            .map(MsrIndex::new)
-            .filter(|index| seen.insert(*index))
-            .collect();
-        Self { indices }
+        Self {
+            indices: normalize_indices(indices),
+        }
+    }
+
+    #[must_use]
+    pub fn indices(&self) -> &[MsrIndex] {
+        &self.indices
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostMsrFeatureIndexList {
+    indices: Vec<MsrIndex>,
+}
+
+impl HostMsrFeatureIndexList {
+    pub(crate) fn from_validated_raw(indices: &[u32]) -> Self {
+        Self {
+            indices: normalize_indices(indices),
+        }
     }
 
     #[must_use]
@@ -67,6 +90,26 @@ mod tests {
                 MsrIndex::new(0xc000_0080),
             ]
         );
+    }
+
+    #[test]
+    fn feature_indices_reuse_typed_values_and_preserve_order() {
+        let snapshot =
+            HostMsrFeatureIndexList::from_validated_raw(&[0x3a, 0x10a, 0x3a, 0x48, 0x10a]);
+        assert_eq!(
+            snapshot.indices(),
+            &[
+                MsrIndex::new(0x3a),
+                MsrIndex::new(0x10a),
+                MsrIndex::new(0x48),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_feature_index_list_is_valid() {
+        let snapshot = HostMsrFeatureIndexList::from_validated_raw(&[]);
+        assert!(snapshot.indices().is_empty());
     }
 
     #[test]
