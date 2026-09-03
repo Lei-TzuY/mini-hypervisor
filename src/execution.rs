@@ -7,6 +7,7 @@ use crate::vmexit::{dispatch_vcpu_exit, VmExitDisposition, VmExitReport};
 pub struct VmExecutionResult {
     report: VmExitReport,
     io_exits: Vec<PortIoExit>,
+    exit_reasons: Vec<u32>,
     completed_exits: u32,
 }
 
@@ -22,6 +23,11 @@ impl VmExecutionResult {
     }
 
     #[must_use]
+    pub fn exit_reasons(&self) -> &[u32] {
+        &self.exit_reasons
+    }
+
+    #[must_use]
     pub const fn completed_exits(&self) -> u32 {
         self.completed_exits
     }
@@ -34,23 +40,33 @@ pub fn run_vcpu_until_stopped(
 ) -> Result<VmExecutionResult, Error> {
     let mut budget = ExitBudget::new(vcpu.id(), exit_budget);
     let mut io_exits = Vec::new();
+    let mut exit_reasons = Vec::new();
 
     loop {
         budget.ensure_run_allowed()?;
         let exit = vcpu.run_once()?;
-        budget.record(exit.reason());
+        record_completed_exit(&mut budget, &mut exit_reasons, exit.reason());
 
         match dispatch_vcpu_exit(vcpu, exit, port_io)? {
             VmExitDisposition::Continue(io) => io_exits.push(io),
             VmExitDisposition::Stopped(report) => {
+                debug_assert_eq!(exit_reasons.len(), budget.completed() as usize);
+                debug_assert_eq!(exit_reasons.last().copied(), Some(report.exit().reason()));
                 return Ok(VmExecutionResult {
                     report,
                     io_exits,
+                    exit_reasons,
                     completed_exits: budget.completed(),
                 });
             }
         }
     }
+}
+
+fn record_completed_exit(budget: &mut ExitBudget, exit_reasons: &mut Vec<u32>, reason: u32) {
+    budget.record(reason);
+    exit_reasons.push(reason);
+    debug_assert_eq!(exit_reasons.len(), budget.completed() as usize);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,5 +168,19 @@ mod tests {
                 last_exit_reason: Some(sys::KVM_EXIT_IO),
             }))
         ));
+    }
+
+    #[test]
+    fn completed_exit_recording_keeps_budget_and_trace_in_lockstep() {
+        let mut budget = ExitBudget::new(VcpuId::BOOT, 2);
+        let mut exit_reasons = Vec::new();
+
+        budget.ensure_run_allowed().unwrap();
+        record_completed_exit(&mut budget, &mut exit_reasons, sys::KVM_EXIT_IO);
+        budget.ensure_run_allowed().unwrap();
+        record_completed_exit(&mut budget, &mut exit_reasons, sys::KVM_EXIT_HLT);
+
+        assert_eq!(exit_reasons, [sys::KVM_EXIT_IO, sys::KVM_EXIT_HLT]);
+        assert_eq!(exit_reasons.len(), budget.completed() as usize);
     }
 }
