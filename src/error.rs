@@ -142,6 +142,16 @@ pub enum VmExitError {
         count: u32,
         mapping_size: usize,
     },
+    IoResponseForNonInput {
+        vcpu_id: u16,
+        direction: u8,
+    },
+    InvalidIoResponseLength {
+        vcpu_id: u16,
+        port: u16,
+        expected: usize,
+        actual: usize,
+    },
     UnexpectedSequence {
         stage: &'static str,
         expected_reason: u32,
@@ -397,6 +407,19 @@ impl fmt::Display for VmExitError {
             } => write!(
                 f,
                 "vCPU {vcpu_id} reported invalid KVM port-I/O data range: offset={data_offset:#x}, size={size}, count={count}, mapping_size={mapping_size}"
+            ),
+            Self::IoResponseForNonInput { vcpu_id, direction } => write!(
+                f,
+                "cannot write a port-I/O response for vCPU {vcpu_id} direction {direction}"
+            ),
+            Self::InvalidIoResponseLength {
+                vcpu_id,
+                port,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "invalid port-I/O input response for vCPU {vcpu_id} port {port:#x}: expected {expected} bytes, got {actual}"
             ),
             Self::UnexpectedSequence {
                 stage,
