@@ -23,6 +23,7 @@ KvmBackend
        └─ vCPU creation
               ├─ KVM_CREATE_VCPU
               ├─ GuestCpuPolicy → KVM_SET_CPUID2
+              ├─ bounded KVM_GET_CPUID2 → typed exact verification
               ↓
              Vcpu
               ├─ explicit real-mode register setup
@@ -46,7 +47,7 @@ The KVM UAPI details live in `src/kvm/sys.rs`. Higher layers call typed Rust met
 
 The backend requires KVM API version 12 plus `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, `KVM_CAP_EXT_CPUID`, and `KVM_CAP_SET_IDENTITY_MAP_ADDR`.
 
-After fixed host capability validation, `KvmBackend` performs `KVM_GET_SUPPORTED_CPUID` through a fixed 256-entry `repr(C)` `KvmCpuid2<N>` buffer. The header remains the exact 8-byte KVM ABI header and each trailing `KvmCpuidEntry2` is the exact 40-byte x86 entry. Pure tests lock header size, entry size, entry offset, and both CPUID ioctl request numbers.
+After fixed host capability validation, `KvmBackend` performs `KVM_GET_SUPPORTED_CPUID` through a fixed 256-entry `repr(C)` `KvmCpuid2<N>` buffer. The header remains the exact 8-byte KVM ABI header and each trailing `KvmCpuidEntry2` is the exact 40-byte x86 entry. Pure tests lock header size, entry size, entry offset, and the supported/set/get CPUID ioctl request numbers.
 
 The kernel-returned `nent` is not trusted as a Rust slice length. It must be non-zero and no greater than the fixed capacity before the entry prefix is converted into owned `CpuidEntry` values. Reserved KVM padding is intentionally absent from the typed representation, and conversion back to KVM UAPI always writes zero padding.
 
@@ -54,9 +55,9 @@ Host discovery and guest policy are separate states. `HostCpuid` preserves the v
 
 The current interrupt model has no in-kernel LAPIC or IRQ chip. Linux KVM documents x2APIC, TSC-deadline, and `KVM_FEATURE_PV_UNHALT` as depending on that model, so `GuestCpuPolicy` removes those three bits. No additional CPU feature is synthesized. This remains a host-derived runtime contract, not a migration-stable named CPU model.
 
-`KvmBackend` retains both the discovered `HostCpuid` and derived `GuestCpuPolicy`. A `Vm` receives only the guest policy. `Vm::create_vcpu` performs `KVM_CREATE_VCPU`, immediately serializes the policy into a fresh zero-padded KVM buffer, applies it with `KVM_SET_CPUID2`, and only then constructs/returns `Vcpu`. A failed CPUID application closes the fresh descriptor through `OwnedFd` drop. Therefore every vCPU reachable through the public lifecycle has an explicit guest policy before `KVM_RUN` can occur.
+`KvmBackend` retains both the discovered `HostCpuid` and derived `GuestCpuPolicy`. A `Vm` receives only the guest policy. `Vm::create_vcpu` performs `KVM_CREATE_VCPU`, serializes the policy into a fresh zero-padded KVM buffer, applies it with `KVM_SET_CPUID2`, then immediately reads the created vCPU contract back through a second fixed 256-entry buffer using `KVM_GET_CPUID2`. The read-back `nent` is independently validated before any slice is formed; entries are converted into owned `CpuidEntry` values and must exactly match the submitted policy in count, order, function, index, flags, and architectural registers. Only after that verification does the method construct/return `Vcpu`. SET, GET, count-validation, or comparison failures close the fresh descriptor through `OwnedFd` drop.
 
-The deterministic CPUID fixture proves the configured contract from inside the guest rather than trusting host-side policy construction alone. In real mode it executes `CPUID(1)`, stores ECX at guest physical `0x2000`, executes `CPUID(0x40000001)`, stores EAX at `0x2004`, then halts. After the terminal exit, host code reads the checked eight-byte result range and exposes the observations through `CpuidGuestResult`. The integration regression requires x2APIC, TSC-deadline, and PV-unhalt to remain clear in guest-observed state.
+The deterministic CPUID fixture proves the configured contract from inside the guest rather than trusting host-side policy construction and read-back alone. In real mode it executes `CPUID(1)`, stores ECX at guest physical `0x2000`, executes `CPUID(0x40000001)`, stores EAX at `0x2004`, then halts. After the terminal exit, host code reads the checked eight-byte result range and exposes the observations through `CpuidGuestResult`. The integration regression requires x2APIC, TSC-deadline, and PV-unhalt to remain clear in guest-observed state.
 
 ## x86 VM setup
 
@@ -129,7 +130,7 @@ Unknown ports become `PortIoError::UnhandledPort`. Wider or multi-count operatio
 
 ## Ownership and lifetime
 
-`KvmBackend` owns `/dev/kvm`, validated host capabilities, the typed `HostCpuid` discovery snapshot, and the derived `GuestCpuPolicy`. `Vm` owns the VM descriptor, a clone of only the guest policy, and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`. `PortIoBus` owns its optional debug device, configured input byte, and accepted output bytes. `VmExecutionResult` and `CpuidGuestResult` own only copied safe Rust data and reports; neither contains a pointer or borrow into KVM shared memory or guest RAM.
+`KvmBackend` owns `/dev/kvm`, validated host capabilities, the typed `HostCpuid` discovery snapshot, and the derived `GuestCpuPolicy`. `Vm` owns the VM descriptor, a clone of only the guest policy, and its optional registered guest RAM. CPUID read-back buffers and decoded comparison entries are temporary data inside vCPU construction; neither is retained after exact verification. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`. `PortIoBus` owns its optional debug device, configured input byte, and accepted output bytes. `VmExecutionResult` and `CpuidGuestResult` own only copied safe Rust data and reports; neither contains a pointer or borrow into KVM shared memory or guest RAM.
 
 Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
@@ -137,7 +138,7 @@ Rust ownership is used for normal cleanup; explicit KVM slot removal protects th
 
 Errors are categorized as:
 
-- `HostEnvironment`: host file/device/I/O failures, malformed host KVM variable-length responses, and named VM/vCPU ioctls including CPUID query/application;
+- `HostEnvironment`: host file/device/I/O failures, malformed host KVM variable-length responses, named VM/vCPU ioctls including CPUID query/application/read-back, and CPUID read-back policy mismatches;
 - `KvmCapability`: incompatible API version, absent required extension, or invalid kernel-reported mapping size;
 - `Configuration`: unsupported VMM configuration or current real-mode entry limits;
 - `GuestMemory`: invalid guest ranges, reserved-range overlap, mapping failures, bounds violations, or KVM RAM-registration failures;
@@ -151,7 +152,7 @@ Future MMIO, interrupt, snapshot, and stronger invariant categories will be adde
 
 There is no generic hypervisor backend trait yet. KVM is the only implementation, and an abstraction would not have a second consumer. The KVM-specific plumbing is nevertheless isolated so a later raw-VMX research backend would not require leaking ioctls into VM policy.
 
-There is no configurable or migration-stable CPU model yet. The current boundary distinguishes discovered host support from a derived guest policy, but there is still exactly one built-in policy: host/KVM-supported entries with conservative masking for the absent LAPIC model. The existing CPUID fixture verifies that policy from guest-observed state.
+There is no configurable or migration-stable CPU model yet. The current boundary distinguishes discovered host support from a derived guest policy, but there is still exactly one built-in policy: host/KVM-supported entries with conservative masking for the absent LAPIC model. The vCPU creation path now also requires KVM to report back exactly that submitted typed CPUID policy, and the existing CPUID fixture independently verifies selected architectural bits from guest-observed state.
 
 There is also no multi-region memory map yet. `GuestMemoryRegion::overlaps` exists to make range semantics explicit and tested, but the VM intentionally supports only slot 0 in this milestone.
 
@@ -161,4 +162,4 @@ The execution loop is not a scheduler. It owns no vCPU, thread, timer, or interr
 
 ## Next architectural milestone
 
-The next bounded slice should verify that the policy submitted with `KVM_SET_CPUID2` is the policy KVM reports back for the created vCPU through a bounded `KVM_GET_CPUID2` read-back path. It should compare typed entries without exposing raw variable-length buffers above the KVM boundary and preserve the existing guest-visible CPUID proof. It should not add a named/migration-stable CPU model, MSR policy, long-mode boot, interrupts, MMIO, SMP, or device expansion in the same slice.
+The next bounded slice should begin the complementary x86 MSR capability boundary with bounded `KVM_GET_MSR_INDEX_LIST` discovery. It should validate the variable-length kernel count before forming Rust slices, convert indices into an owned typed host snapshot, and add pure count/dedup/order regressions without reading or writing guest MSR values yet. It should not add a named/migration-stable CPU model, long-mode boot, interrupts, MMIO, SMP, or device expansion in the same slice.
