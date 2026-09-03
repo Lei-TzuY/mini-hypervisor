@@ -1,4 +1,5 @@
 use crate::error::{Error, HostEnvironmentError};
+use crate::kvm::msr::value_set::GuestMsrSnapshot;
 use crate::kvm::msr::GuestMsrValueSet;
 use crate::kvm::sys;
 use crate::vcpu::{vcpu_operation, Vcpu, VcpuId};
@@ -19,6 +20,17 @@ impl Vcpu {
             .map_err(|source| vcpu_operation(self.id, "KVM_SET_MSRS", source))?;
         validate_vcpu_msr_write_completion(self.id, values, processed)
     }
+
+    pub fn restore_msr_snapshot(&self, snapshot: &GuestMsrSnapshot) -> Result<(), Error> {
+        restore_msr_snapshot_with(snapshot, |values| self.set_msrs(values))
+    }
+}
+
+fn restore_msr_snapshot_with<F>(snapshot: &GuestMsrSnapshot, mut write: F) -> Result<(), Error>
+where
+    F: FnMut(&GuestMsrValueSet) -> Result<(), Error>,
+{
+    write(snapshot.values())
 }
 
 fn prepare_vcpu_msr_write_request(
@@ -104,6 +116,109 @@ mod tests {
             .map(|(index, value)| (MsrIndex::new(index), value))
             .collect();
         GuestMsrValueSet::from_policy(&policy, &requested).unwrap()
+    }
+
+    fn snapshot(indices: &[u32], values: &[(u32, u64)]) -> GuestMsrSnapshot {
+        let policy = policy(indices);
+        let requested: Vec<(MsrIndex, u64)> = values
+            .iter()
+            .copied()
+            .map(|(index, value)| (MsrIndex::new(index), value))
+            .collect();
+        let values = GuestMsrValueSet::from_policy(&policy, &requested).unwrap();
+        GuestMsrSnapshot::from_capture(&policy, &values).unwrap()
+    }
+
+    fn empty_snapshot() -> GuestMsrSnapshot {
+        let host = HostMsrIndexList::from_validated_raw(&[0x10]);
+        let policy = GuestMsrAccessPolicy::from_host(&host, &[]).unwrap();
+        let values = GuestMsrValueSet::from_policy(&policy, &[]).unwrap();
+        GuestMsrSnapshot::from_capture(&policy, &values).unwrap()
+    }
+
+    #[test]
+    fn snapshot_restore_delegates_exactly_once_with_snapshot_value_order() {
+        let snapshot = snapshot(
+            &[0xc000_0080, 0x10],
+            &[
+                (0xc000_0080, 0xaaaa_bbbb_cccc_dddd),
+                (0x10, 0x1111_2222_3333_4444),
+            ],
+        );
+        let mut calls = 0;
+
+        restore_msr_snapshot_with(&snapshot, |values| {
+            calls += 1;
+            assert_eq!(values, snapshot.values());
+            assert_eq!(values.values()[0].index(), MsrIndex::new(0xc000_0080));
+            assert_eq!(values.values()[0].value(), 0xaaaa_bbbb_cccc_dddd);
+            assert_eq!(values.values()[1].index(), MsrIndex::new(0x10));
+            assert_eq!(values.values()[1].value(), 0x1111_2222_3333_4444);
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn empty_snapshot_restore_still_delegates_once_to_existing_empty_write_path() {
+        let snapshot = empty_snapshot();
+        let mut calls = 0;
+
+        restore_msr_snapshot_with(&snapshot, |values| {
+            calls += 1;
+            assert!(values.values().is_empty());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn snapshot_restore_propagates_partial_write_diagnostics_unchanged() {
+        let snapshot = snapshot(&[0x10, 0x1b], &[(0x10, 1), (0x1b, 2)]);
+
+        let error = restore_msr_snapshot_with(&snapshot, |_values| {
+            Err(Error::HostEnvironment(
+                HostEnvironmentError::VcpuMsrPartialWrite {
+                    id: 7,
+                    requested: 2,
+                    processed: 1,
+                    first_unwritten_index: 0x1b,
+                },
+            ))
+        })
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::HostEnvironment(HostEnvironmentError::VcpuMsrPartialWrite {
+                id: 7,
+                requested: 2,
+                processed: 1,
+                first_unwritten_index: 0x1b,
+            })
+        ));
+    }
+
+    #[test]
+    fn snapshot_restore_remains_valid_after_capture_inputs_are_dropped() {
+        let snapshot = {
+            let policy = policy(&[0x10, 0x1b]);
+            let requested = [(MsrIndex::new(0x10), 11), (MsrIndex::new(0x1b), 22)];
+            let values = GuestMsrValueSet::from_policy(&policy, &requested).unwrap();
+            GuestMsrSnapshot::from_capture(&policy, &values).unwrap()
+        };
+
+        restore_msr_snapshot_with(&snapshot, |values| {
+            assert_eq!(values.values().len(), 2);
+            assert_eq!(values.values()[0].value(), 11);
+            assert_eq!(values.values()[1].value(), 22);
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
