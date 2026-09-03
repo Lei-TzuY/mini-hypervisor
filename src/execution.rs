@@ -101,7 +101,10 @@ fn attach_completed_exit_trace(error: Error, exit_reasons: &[u32]) -> Error {
             })
         }
         Error::VmExit(VmExitError::InternalError {
-            vcpu_id, suberror, ..
+            vcpu_id,
+            suberror,
+            data,
+            ..
         }) => {
             debug_assert_eq!(
                 exit_reasons.last().copied(),
@@ -110,6 +113,26 @@ fn attach_completed_exit_trace(error: Error, exit_reasons: &[u32]) -> Error {
             Error::VmExit(VmExitError::InternalError {
                 vcpu_id,
                 suberror,
+                data,
+                exit_reasons: exit_reasons.to_vec(),
+            })
+        }
+        Error::VmExit(VmExitError::InvalidInternalErrorDataCount {
+            vcpu_id,
+            suberror,
+            ndata,
+            capacity,
+            ..
+        }) => {
+            debug_assert_eq!(
+                exit_reasons.last().copied(),
+                Some(VcpuExit::InternalError.reason())
+            );
+            Error::VmExit(VmExitError::InvalidInternalErrorDataCount {
+                vcpu_id,
+                suberror,
+                ndata,
+                capacity,
                 exit_reasons: exit_reasons.to_vec(),
             })
         }
@@ -339,6 +362,7 @@ mod tests {
         let error = Error::VmExit(VmExitError::InternalError {
             vcpu_id: 5,
             suberror: 4,
+            data: Some(vec![0x11, 0x22]),
             exit_reasons: vec![internal_error_reason],
         });
 
@@ -349,6 +373,33 @@ mod tests {
             Error::VmExit(VmExitError::InternalError {
                 vcpu_id: 5,
                 suberror: 4,
+                data: Some(data),
+                exit_reasons,
+            }) if data == [0x11, 0x22]
+                && exit_reasons == [sys::KVM_EXIT_IO, internal_error_reason]
+        ));
+    }
+
+    #[test]
+    fn malformed_internal_error_trace_is_replaced_with_complete_execution_trace() {
+        let internal_error_reason = VcpuExit::InternalError.reason();
+        let error = Error::VmExit(VmExitError::InvalidInternalErrorDataCount {
+            vcpu_id: 6,
+            suberror: 4,
+            ndata: 17,
+            capacity: 16,
+            exit_reasons: vec![internal_error_reason],
+        });
+
+        let result = attach_completed_exit_trace(error, &[sys::KVM_EXIT_IO, internal_error_reason]);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::InvalidInternalErrorDataCount {
+                vcpu_id: 6,
+                suberror: 4,
+                ndata: 17,
+                capacity: 16,
                 exit_reasons,
             }) if exit_reasons == [sys::KVM_EXIT_IO, internal_error_reason]
         ));
