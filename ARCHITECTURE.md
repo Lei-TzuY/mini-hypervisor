@@ -23,6 +23,7 @@ KvmBackend
               ├─ explicit real-mode register setup
               ├─ kvm_run mapping
               ├─ checked KVM_EXIT_IO metadata/payload extraction
+              ├─ checked KVM_EXIT_IO_IN response write-back
               └─ KVM_RUN → VcpuExit
                          ↓
                  vmexit::dispatch_vcpu_exit
@@ -53,7 +54,7 @@ See [docs/memory-map.md](docs/memory-map.md).
 
 `FlatGuestImage` is deliberately narrower than a general executable loader. Construction requires a non-empty byte slice, rejects load-address overflow, and requires the entry point to lie inside the loaded image. Loading still goes through `GuestMemory::write`, so a valid image description cannot escape the configured RAM region.
 
-The HLT fixture contains only `HLT` at guest physical address `0x1000`. The debug-port fixture contains `MOV AL, 'K'; OUT 0xe9, AL; HLT` at the same entry. ELF parsing and Linux boot conventions are intentionally absent.
+The HLT fixture contains only `HLT` at guest physical address `0x1000`. The port-output fixture contains `MOV AL, 'K'; OUT 0xe9, AL; HLT`. The port-input fixture contains `IN AL, 0xe9; MOV [0x2000], AL; HLT`. All use entry `0x1000`. ELF parsing and Linux boot conventions are intentionally absent.
 
 ## vCPU execution
 
@@ -63,35 +64,38 @@ The current CS=0 fixture deliberately limits its real-mode RIP to `0xffff`. Broa
 
 `Vcpu::run_once` retries an interrupted host syscall, performs one completed `KVM_RUN`, reads the tested x86 prefix of `kvm_run`, and returns a typed `VcpuExit`. HLT and I/O are classified explicitly; unknown reasons retain the exact raw reason.
 
-For `KVM_EXIT_IO`, `Vcpu::port_io_exit` is the only layer allowed to inspect the I/O union and referenced data area. It validates direction, converts and checks `data_offset`, computes `size * count` with checked arithmetic, validates the complete range against the mmap length, and copies OUT bytes into owned Rust memory. IN buffers are not read in this milestone. No pointer into `kvm_run` leaves the vCPU layer.
+For `KVM_EXIT_IO`, `Vcpu::port_io_exit` is the only layer allowed to inspect the I/O union and referenced data area. It validates direction, converts and checks `data_offset`, computes `size * count` with checked arithmetic, validates the complete range against the mmap length, and copies OUT bytes into owned Rust memory. IN requests expose metadata but no borrowed mmap data. No pointer into `kvm_run` leaves the vCPU layer.
+
+For `KVM_EXIT_IO_IN`, `Vcpu::write_port_io_input` re-reads the current I/O metadata, requires IN direction, recomputes the checked mmap range, requires the device response length to match that range exactly, and only then copies the owned response bytes into `kvm_run`. A response can therefore neither target an OUT exit nor be truncated or overrun the mapped structure.
 
 ## VM-exit dispatch
 
 `vmexit::dispatch_vcpu_exit` is the single policy boundary for vCPU exits.
 
 - HLT snapshots RIP/RFLAGS and becomes `VmExitDisposition::Stopped(VmExitReport)`.
-- Port I/O is parsed into an owned `PortIoExit`, routed through `PortIoBus`, and becomes `VmExitDisposition::Continue` only when the bus actually services it.
+- Port I/O is parsed into an owned `PortIoExit` and routed through `PortIoBus`.
+- An OUT service records/captures device output and becomes `Continue` without writing the run mapping.
+- An IN service returns owned response bytes; the dispatcher asks the vCPU layer to validate and write those bytes into the pending KVM input range before returning `Continue`.
 - Unsupported raw exit reasons become `VmExitError::Unhandled` with vCPU id and register diagnostics.
 
-The dispatcher deliberately does **not** snapshot registers for an in-flight KVM I/O exit. KVM defines port-I/O operations as pending until userspace re-enters `KVM_RUN`; register state used as a completed-operation diagnostic is therefore taken only on a later terminal exit. The deterministic debug-port fixture services the OUT, re-enters KVM, and then reaches HLT at RIP `0x1005`.
+The dispatcher deliberately does **not** snapshot registers for an in-flight KVM I/O exit. KVM defines port-I/O operations as pending until userspace re-enters `KVM_RUN`; register state used as a completed-operation diagnostic is therefore taken only on a later terminal exit.
+
+The deterministic output fixture services OUT, re-enters KVM, and reaches HLT at RIP `0x1005`. The deterministic input fixture services IN with byte `R`, re-enters KVM so KVM transfers that byte into AL, executes `MOV [0x2000], AL`, and reaches HLT at RIP `0x1006`. Host code then reads guest RAM at `0x2000` and requires that it contains `R`, proving the guest consumed the input rather than merely validating a host buffer.
 
 ## Port-I/O bus and debug device
 
-`PortIoBus` is intentionally minimal. It may contain one exact debug-port device at port `0xe9`; it is not yet a general dynamic device registry.
+`PortIoBus` is intentionally minimal. It may contain one exact debug-port device at port `0xe9`; it is not yet a general dynamic device registry or port-range resolver.
 
-The debug device accepts only:
+The debug device accepts only byte-wide, single-count accesses at `0xe9`:
 
-- direction: OUT;
-- width: 1 byte;
-- count: 1;
-- port: `0xe9`;
-- copied payload length: exactly 1 byte.
+- OUT requires a copied payload length of exactly 1 byte and appends that byte to the device output buffer.
+- IN returns exactly one configured byte as owned response data.
 
-Unknown ports become `PortIoError::UnhandledPort`. IN, wider accesses, and multi-count operations to `0xe9` become `PortIoError::UnsupportedDebugAccess`. A payload-length mismatch is also an explicit error. No request is silently truncated, widened, repeated, or redirected.
+Unknown ports become `PortIoError::UnhandledPort`. Wider or multi-count operations to `0xe9` become `PortIoError::UnsupportedDebugAccess`. An OUT payload-length mismatch is explicit. The vCPU layer independently rejects an IN response whose length does not exactly match the checked KVM data range. No request is silently truncated, widened, repeated, or redirected.
 
 ## Ownership and lifetime
 
-`KvmBackend` owns the `/dev/kvm` descriptor. `Vm` owns the VM descriptor and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and a `KvmRunMapping`. `PortIoBus` owns its optional debug device and the bytes that device has accepted. Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
+`KvmBackend` owns the `/dev/kvm` descriptor. `Vm` owns the VM descriptor and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and a `KvmRunMapping`. `PortIoBus` owns its optional debug device, its configured input byte, and the output bytes that device has accepted. Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
 ## Error boundary
 
@@ -102,7 +106,7 @@ Errors are categorized as:
 - `Configuration`: unsupported VMM configuration or current real-mode entry limits;
 - `GuestMemory`: invalid guest ranges, reserved-range overlap, mapping failures, bounds violations, or KVM RAM-registration failures;
 - `GuestImage`: malformed or overflowing flat-image descriptions;
-- `VmExit`: unsupported exits, malformed KVM I/O metadata/ranges, or deterministic fixture sequence failures;
+- `VmExit`: unsupported exits, malformed KVM I/O metadata/ranges, invalid IN response direction/length, or deterministic fixture sequence failures;
 - `PortIo`: unknown ports or unsupported/malformed device accesses.
 
 Future MMIO, interrupt, snapshot, and stronger invariant categories will be added only when those responsibilities exist.
@@ -113,8 +117,8 @@ There is no generic hypervisor backend trait yet. KVM is the only implementation
 
 There is also no multi-region memory map yet. `GuestMemoryRegion::overlaps` exists to make range semantics explicit and tested, but the VM intentionally supports only slot 0 in this milestone.
 
-The port bus is not a trait-object registry yet. One exact device is enough to prove the exit → typed request → bus → device → re-entry boundary without introducing registration/range-resolution machinery prematurely.
+The port bus is not a trait-object registry yet. One exact bidirectional device is enough to prove OUT copying and IN response write-back without introducing registration/range-resolution machinery prematurely.
 
 ## Next architectural milestone
 
-The next bounded slice should exercise one deterministic port-input (`KVM_EXIT_IO_IN`) path. It should validate and write the exact response bytes back into the checked `kvm_run` data range, re-enter KVM to complete the pending IN operation, and verify the guest consumed the value. It should not add MMIO, interrupts, or a second device family.
+The next bounded slice should replace fixture-specific two-step execution with one bounded vCPU execution loop that repeatedly runs, dispatches serviceable exits, and stops only on a terminal report or an explicit exit-budget limit. The loop should preserve the current pending-I/O completion semantics and return a structured error when the budget is exhausted. It should not add MMIO, interrupts, new devices, SMP, or scheduler machinery.
