@@ -94,6 +94,14 @@ impl Vcpu {
         })
     }
 
+    pub fn verify_state_snapshot(
+        &self,
+        snapshot: &VcpuStateSnapshot,
+    ) -> Result<VcpuStateSnapshotComparison, Error> {
+        let observed = self.capture_state_snapshot(snapshot.msrs().policy())?;
+        Ok(snapshot.compare(&observed))
+    }
+
     pub fn restore_state_snapshot(&self, snapshot: &VcpuStateSnapshot) -> Result<(), Error> {
         restore_components_with(
             || self.restore_special_register_snapshot(snapshot.special_registers()),
