@@ -74,6 +74,10 @@ pub fn dispatch_vcpu_exit(
                 registers,
             )))
         }
+        VcpuExit::KvmUnknown => {
+            let unknown = vcpu.kvm_unknown_exit()?;
+            Err(kvm_unknown_exit(vcpu.id(), unknown.hardware_exit_reason()))
+        }
         VcpuExit::FailEntry => {
             let failure = vcpu.fail_entry()?;
             Err(entry_failure(
@@ -115,6 +119,14 @@ fn stopped_report(vcpu_id: VcpuId, exit: VcpuExit, registers: VcpuRegisters) -> 
         rip: registers.rip,
         rflags: registers.rflags,
     }
+}
+
+fn kvm_unknown_exit(vcpu_id: VcpuId, hardware_exit_reason: u64) -> Error {
+    Error::VmExit(VmExitError::KvmUnknownExit {
+        vcpu_id: vcpu_id.get(),
+        hardware_exit_reason,
+        exit_reasons: vec![VcpuExit::KvmUnknown.reason()],
+    })
 }
 
 fn entry_failure(vcpu_id: VcpuId, hardware_entry_failure_reason: u64, cpu: u32) -> Error {
@@ -188,6 +200,20 @@ mod tests {
         assert_eq!(report.exit(), VcpuExit::Shutdown);
         assert_eq!(report.rip(), 0x1001);
         assert_eq!(report.rflags(), 0x2);
+    }
+
+    #[test]
+    fn kvm_unknown_dispatch_preserves_hardware_reason_and_local_trace_without_register_context() {
+        let result = kvm_unknown_exit(VcpuId::new(6), 0xfeed_face_dead_beef);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::KvmUnknownExit {
+                vcpu_id: 6,
+                hardware_exit_reason: 0xfeed_face_dead_beef,
+                exit_reasons,
+            }) if exit_reasons == [VcpuExit::KvmUnknown.reason()]
+        ));
     }
 
     #[test]
