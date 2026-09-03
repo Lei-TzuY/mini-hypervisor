@@ -84,7 +84,11 @@ pub fn dispatch_vcpu_exit(
         }
         VcpuExit::InternalError => {
             let internal = vcpu.internal_error()?;
-            Err(internal_error(vcpu.id(), internal.suberror()))
+            Err(internal_error(
+                vcpu.id(),
+                internal.suberror(),
+                internal.data(),
+            ))
         }
         VcpuExit::SystemEvent => {
             let event = vcpu.system_event()?;
@@ -122,10 +126,11 @@ fn entry_failure(vcpu_id: VcpuId, hardware_entry_failure_reason: u64, cpu: u32) 
     })
 }
 
-fn internal_error(vcpu_id: VcpuId, suberror: u32) -> Error {
+fn internal_error(vcpu_id: VcpuId, suberror: u32, data: Option<&[u64]>) -> Error {
     Error::VmExit(VmExitError::InternalError {
         vcpu_id: vcpu_id.get(),
         suberror,
+        data: data.map(<[u64]>::to_vec),
         exit_reasons: vec![VcpuExit::InternalError.reason()],
     })
 }
@@ -201,16 +206,32 @@ mod tests {
     }
 
     #[test]
-    fn internal_error_dispatch_preserves_suberror_and_local_trace_without_register_context() {
-        let result = internal_error(VcpuId::new(8), 4);
+    fn internal_error_dispatch_preserves_absent_optional_data_and_local_trace() {
+        let result = internal_error(VcpuId::new(8), 4, None);
 
         assert!(matches!(
             result,
             Error::VmExit(VmExitError::InternalError {
                 vcpu_id: 8,
                 suberror: 4,
+                data: None,
                 exit_reasons,
             }) if exit_reasons == [VcpuExit::InternalError.reason()]
+        ));
+    }
+
+    #[test]
+    fn internal_error_dispatch_owns_capability_gated_optional_data() {
+        let result = internal_error(VcpuId::new(8), 2, Some(&[0x11, 0x22]));
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::InternalError {
+                vcpu_id: 8,
+                suberror: 2,
+                data: Some(data),
+                exit_reasons,
+            }) if data == [0x11, 0x22] && exit_reasons == [VcpuExit::InternalError.reason()]
         ));
     }
 
