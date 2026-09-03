@@ -76,10 +76,7 @@ pub fn dispatch_vcpu_exit(
         }
         VcpuExit::KvmUnknown => {
             let unknown = vcpu.kvm_unknown_exit()?;
-            Err(kvm_unknown_exit(
-                vcpu.id(),
-                unknown.hardware_exit_reason(),
-            ))
+            Err(kvm_unknown_exit(vcpu.id(), unknown.hardware_exit_reason()))
         }
         VcpuExit::FailEntry => {
             let failure = vcpu.fail_entry()?;
