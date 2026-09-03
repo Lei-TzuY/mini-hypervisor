@@ -15,6 +15,8 @@ impl MsrIndex {
     }
 }
 
+pub const MSR_IA32_UCODE_REV: MsrIndex = MsrIndex::new(0x0000_008b);
+
 fn normalize_indices(indices: &[u32]) -> Vec<MsrIndex> {
     let mut seen = HashSet::with_capacity(indices.len());
     indices
@@ -63,14 +65,33 @@ impl HostMsrFeatureIndexList {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MsrFeatureStability {
+    ModelImmutable,
+    HostMutable,
+}
+
+const fn classify_feature_stability(index: MsrIndex) -> MsrFeatureStability {
+    if index.get() == MSR_IA32_UCODE_REV.get() {
+        MsrFeatureStability::HostMutable
+    } else {
+        MsrFeatureStability::ModelImmutable
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MsrFeatureValue {
     index: MsrIndex,
     value: u64,
+    stability: MsrFeatureStability,
 }
 
 impl MsrFeatureValue {
     pub(crate) const fn new(index: MsrIndex, value: u64) -> Self {
-        Self { index, value }
+        Self {
+            index,
+            value,
+            stability: classify_feature_stability(index),
+        }
     }
 
     #[must_use]
@@ -81,6 +102,11 @@ impl MsrFeatureValue {
     #[must_use]
     pub const fn value(self) -> u64 {
         self.value
+    }
+
+    #[must_use]
+    pub const fn stability(self) -> MsrFeatureStability {
+        self.stability
     }
 }
 
@@ -97,6 +123,18 @@ impl HostMsrFeatureValues {
     #[must_use]
     pub fn values(&self) -> &[MsrFeatureValue] {
         &self.values
+    }
+
+    pub fn model_immutable_values(&self) -> impl Iterator<Item = &MsrFeatureValue> {
+        self.values
+            .iter()
+            .filter(|value| value.stability == MsrFeatureStability::ModelImmutable)
+    }
+
+    pub fn host_mutable_values(&self) -> impl Iterator<Item = &MsrFeatureValue> {
+        self.values
+            .iter()
+            .filter(|value| value.stability == MsrFeatureStability::HostMutable)
     }
 }
 
@@ -151,26 +189,69 @@ mod tests {
     }
 
     #[test]
-    fn feature_values_preserve_index_order_and_data() {
+    fn feature_values_preserve_index_order_data_and_stability() {
         let snapshot = HostMsrFeatureValues::from_values(vec![
             MsrFeatureValue::new(MsrIndex::new(0x3a), 0x1111_2222_3333_4444),
-            MsrFeatureValue::new(MsrIndex::new(0x10a), 0xaaaa_bbbb_cccc_dddd),
+            MsrFeatureValue::new(MSR_IA32_UCODE_REV, 0xaaaa_bbbb_cccc_dddd),
         ]);
         assert_eq!(
             snapshot.values(),
             &[
                 MsrFeatureValue::new(MsrIndex::new(0x3a), 0x1111_2222_3333_4444),
-                MsrFeatureValue::new(MsrIndex::new(0x10a), 0xaaaa_bbbb_cccc_dddd),
+                MsrFeatureValue::new(MSR_IA32_UCODE_REV, 0xaaaa_bbbb_cccc_dddd),
             ]
         );
         assert_eq!(snapshot.values()[0].index(), MsrIndex::new(0x3a));
+        assert_eq!(snapshot.values()[0].stability(), MsrFeatureStability::ModelImmutable);
         assert_eq!(snapshot.values()[1].value(), 0xaaaa_bbbb_cccc_dddd);
+        assert_eq!(snapshot.values()[1].stability(), MsrFeatureStability::HostMutable);
     }
 
     #[test]
-    fn empty_feature_value_snapshot_is_valid() {
+    fn ucode_revision_index_matches_x86_architecture() {
+        assert_eq!(MSR_IA32_UCODE_REV.get(), 0x8b);
+    }
+
+    #[test]
+    fn only_ucode_revision_is_classified_host_mutable() {
+        assert_eq!(
+            MsrFeatureValue::new(MSR_IA32_UCODE_REV, 1).stability(),
+            MsrFeatureStability::HostMutable
+        );
+        assert_eq!(
+            MsrFeatureValue::new(MsrIndex::new(0x3a), 1).stability(),
+            MsrFeatureStability::ModelImmutable
+        );
+        assert_eq!(
+            MsrFeatureValue::new(MsrIndex::new(0x10a), 1).stability(),
+            MsrFeatureStability::ModelImmutable
+        );
+    }
+
+    #[test]
+    fn stability_partitions_preserve_order_and_exclude_the_other_class() {
+        let immutable_a = MsrFeatureValue::new(MsrIndex::new(0x3a), 1);
+        let mutable = MsrFeatureValue::new(MSR_IA32_UCODE_REV, 2);
+        let immutable_b = MsrFeatureValue::new(MsrIndex::new(0x10a), 3);
+        let snapshot =
+            HostMsrFeatureValues::from_values(vec![immutable_a, mutable, immutable_b]);
+
+        assert_eq!(
+            snapshot.model_immutable_values().copied().collect::<Vec<_>>(),
+            vec![immutable_a, immutable_b]
+        );
+        assert_eq!(
+            snapshot.host_mutable_values().copied().collect::<Vec<_>>(),
+            vec![mutable]
+        );
+    }
+
+    #[test]
+    fn empty_feature_value_snapshot_has_empty_stability_partitions() {
         let snapshot = HostMsrFeatureValues::from_values(Vec::new());
         assert!(snapshot.values().is_empty());
+        assert_eq!(snapshot.model_immutable_values().count(), 0);
+        assert_eq!(snapshot.host_mutable_values().count(), 0);
     }
 
     #[test]
