@@ -23,6 +23,7 @@ pub const KVM_SET_CPUID2: libc::c_ulong = 0x4008_AE90;
 pub const KVM_GET_CPUID2: libc::c_ulong = 0xC008_AE91;
 pub const KVM_EXIT_IO: u32 = 2;
 pub const KVM_EXIT_HLT: u32 = 5;
+pub const KVM_EXIT_SHUTDOWN: u32 = 8;
 pub const KVM_EXIT_IO_IN: u8 = 0;
 pub const KVM_EXIT_IO_OUT: u8 = 1;
 
@@ -520,6 +521,7 @@ mod tests {
         assert_eq!(std::mem::offset_of!(KvmRunHeader, exit_reason), 8);
         assert_eq!(KVM_RUN, 0xAE80);
         assert_eq!(KVM_EXIT_HLT, 5);
+        assert_eq!(KVM_EXIT_SHUTDOWN, 8);
     }
 
     #[test]
