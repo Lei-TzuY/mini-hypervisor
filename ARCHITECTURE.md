@@ -26,10 +26,13 @@ KvmBackend
               ├─ checked KVM_EXIT_IO_IN response write-back
               └─ KVM_RUN → VcpuExit
                          ↓
-                 vmexit::dispatch_vcpu_exit
-                  ├─ HLT → VmExitReport
-                  ├─ IO  → PortIoBus → debug port 0xe9 → Continue
-                  └─ other → VmExitError
+             execution::run_vcpu_until_stopped
+              ├─ explicit completed-exit budget
+              ├─ records serviced typed I/O exits
+              └─ vmexit::dispatch_vcpu_exit
+                   ├─ HLT → VmExitReport → stop
+                   ├─ IO  → PortIoBus → debug port 0xe9 → continue
+                   └─ other → VmExitError
 ```
 
 The KVM UAPI details live in `src/kvm/sys.rs`. Higher layers call typed Rust methods and do not issue raw `ioctl` operations directly.
@@ -66,11 +69,21 @@ The current CS=0 fixture deliberately limits its real-mode RIP to `0xffff`. Broa
 
 For `KVM_EXIT_IO`, `Vcpu::port_io_exit` is the only layer allowed to inspect the I/O union and referenced data area. It validates direction, converts and checks `data_offset`, computes `size * count` with checked arithmetic, validates the complete range against the mmap length, and copies OUT bytes into owned Rust memory. IN requests expose metadata but no borrowed mmap data. No pointer into `kvm_run` leaves the vCPU layer.
 
-For `KVM_EXIT_IO_IN`, `Vcpu::write_port_io_input` re-reads the current I/O metadata, requires IN direction, recomputes the checked mmap range, requires the device response length to match that range exactly, and only then copies the owned response bytes into `kvm_run`. A response can therefore neither target an OUT exit nor be truncated or overrun the mapped structure.
+For `KVM_EXIT_IO_IN`, `Vcpu::write_port_io_input` re-reads the current I/O metadata, requires IN direction, recomputes the checked mmap range, requires the device response length to match that range exactly, and only then copies the owned response bytes into `kvm_run`.
+
+## Bounded execution loop
+
+`execution::run_vcpu_until_stopped` is the single reusable run-loop boundary for the current one-vCPU model. Before each `KVM_RUN` it checks an explicit completed-exit budget. A successful `KVM_RUN` consumes exactly one budget unit; host-side failures that do not produce a completed VM exit consume none.
+
+Each completed exit is sent through `vmexit::dispatch_vcpu_exit`. Serviceable I/O is recorded as an owned `PortIoExit` and execution continues while budget remains. A terminal HLT returns `VmExecutionResult`, which contains the terminal `VmExitReport`, every serviced typed I/O exit, and the exact completed-exit count.
+
+A zero budget fails before any guest run. When the budget has been fully consumed, the next run attempt fails with `VmExitError::ExitBudgetExhausted`, preserving vCPU id, configured budget, completed count, and the last completed raw exit reason when available. Exhaustion is not reported as guest termination. In particular, if the final permitted exit was serviceable port I/O, userspace may have prepared the service response but the VMM does not claim the pending KVM operation completed because no further `KVM_RUN` was permitted.
+
+The HLT fixture uses budget 1. Both deterministic port fixtures use budget 2, so their successful sequence is exactly one serviceable I/O exit followed by terminal HLT. Extra serviceable exits cannot be silently accepted: they consume the budget and prevent a terminal success report.
 
 ## VM-exit dispatch
 
-`vmexit::dispatch_vcpu_exit` is the single policy boundary for vCPU exits.
+`vmexit::dispatch_vcpu_exit` is the single policy boundary for one completed vCPU exit.
 
 - HLT snapshots RIP/RFLAGS and becomes `VmExitDisposition::Stopped(VmExitReport)`.
 - Port I/O is parsed into an owned `PortIoExit` and routed through `PortIoBus`.
@@ -80,7 +93,7 @@ For `KVM_EXIT_IO_IN`, `Vcpu::write_port_io_input` re-reads the current I/O metad
 
 The dispatcher deliberately does **not** snapshot registers for an in-flight KVM I/O exit. KVM defines port-I/O operations as pending until userspace re-enters `KVM_RUN`; register state used as a completed-operation diagnostic is therefore taken only on a later terminal exit.
 
-The deterministic output fixture services OUT, re-enters KVM, and reaches HLT at RIP `0x1005`. The deterministic input fixture services IN with byte `R`, re-enters KVM so KVM transfers that byte into AL, executes `MOV [0x2000], AL`, and reaches HLT at RIP `0x1006`. Host code then reads guest RAM at `0x2000` and requires that it contains `R`, proving the guest consumed the input rather than merely validating a host buffer.
+The deterministic output fixture reaches HLT at RIP `0x1005`. The deterministic input fixture receives byte `R`, re-enters KVM so KVM transfers that byte into AL, executes `MOV [0x2000], AL`, and reaches HLT at RIP `0x1006`. Host code then reads guest RAM at `0x2000` and requires that it contains `R`.
 
 ## Port-I/O bus and debug device
 
@@ -95,7 +108,7 @@ Unknown ports become `PortIoError::UnhandledPort`. Wider or multi-count operatio
 
 ## Ownership and lifetime
 
-`KvmBackend` owns the `/dev/kvm` descriptor. `Vm` owns the VM descriptor and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and a `KvmRunMapping`. `PortIoBus` owns its optional debug device, its configured input byte, and the output bytes that device has accepted. Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
+`KvmBackend` owns the `/dev/kvm` descriptor. `Vm` owns the VM descriptor and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and a `KvmRunMapping`. `PortIoBus` owns its optional debug device, its configured input byte, and accepted output bytes. `VmExecutionResult` owns only safe copied exit metadata and the terminal report. Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
 ## Error boundary
 
@@ -106,7 +119,7 @@ Errors are categorized as:
 - `Configuration`: unsupported VMM configuration or current real-mode entry limits;
 - `GuestMemory`: invalid guest ranges, reserved-range overlap, mapping failures, bounds violations, or KVM RAM-registration failures;
 - `GuestImage`: malformed or overflowing flat-image descriptions;
-- `VmExit`: unsupported exits, malformed KVM I/O metadata/ranges, invalid IN response direction/length, or deterministic fixture sequence failures;
+- `VmExit`: unsupported exits, malformed KVM I/O metadata/ranges, invalid IN response direction/length, execution-budget exhaustion, or deterministic fixture sequence failures;
 - `PortIo`: unknown ports or unsupported/malformed device accesses.
 
 Future MMIO, interrupt, snapshot, and stronger invariant categories will be added only when those responsibilities exist.
@@ -119,6 +132,8 @@ There is also no multi-region memory map yet. `GuestMemoryRegion::overlaps` exis
 
 The port bus is not a trait-object registry yet. One exact bidirectional device is enough to prove OUT copying and IN response write-back without introducing registration/range-resolution machinery prematurely.
 
+The execution loop is not a scheduler. It owns no vCPU, thread, timer, or interrupt state; it only bounds repeated execution of one already-created vCPU.
+
 ## Next architectural milestone
 
-The next bounded slice should replace fixture-specific two-step execution with one bounded vCPU execution loop that repeatedly runs, dispatches serviceable exits, and stops only on a terminal report or an explicit exit-budget limit. The loop should preserve the current pending-I/O completion semantics and return a structured error when the budget is exhausted. It should not add MMIO, interrupts, new devices, SMP, or scheduler machinery.
+The next bounded slice should make the x86 guest CPU capability contract explicit before execution: retrieve a bounded supported-CPUID set from KVM, validate the variable-length UAPI data, and apply it to vCPU 0 with `KVM_SET_CPUID2` before `KVM_RUN`. It should add focused layout/count tests and keep MSR policy, long-mode boot, interrupts, MMIO, SMP, and device expansion out of scope.
