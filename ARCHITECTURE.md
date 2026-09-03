@@ -18,6 +18,8 @@ KvmBackend
  │    └─ HostMsrFeatureIndexList
  │         └─ bounded system KVM_GET_MSRS
  │              └─ HostMsrFeatureValues
+ │                   ├─ ModelImmutable
+ │                   └─ HostMutable (MSR_IA32_UCODE_REV)
  └─ VM creation
        ├─ x86 identity-map/TSS setup before vCPUs
        ↓
@@ -79,9 +81,11 @@ The backend then reads the normalized feature indices through the system form of
 
 `KVM_GET_MSRS` returns the number of entries successfully processed rather than rewriting `nmsrs` as a completion count. The backend therefore requires the returned count to equal the complete requested feature-index count. A partial result is rejected as malformed host-discovery state and identifies the first unread feature index when one exists; a returned count greater than requested is also rejected. Before any data becomes typed state, each returned entry index must still equal the requested index at the same position. Only a complete index-stable response becomes owned `MsrFeatureValue` entries inside `HostMsrFeatureValues`. An empty feature-index snapshot produces an empty value snapshot without issuing the value ioctl.
 
-`HostMsrFeatureValues` is a host/KVM capability observation, not a guest MSR configuration and not a migration-stable CPU model. In particular, KVM documents the microcode revision feature MSR as an exception to the otherwise immutable feature-MSR set, so callers must not infer that every captured value is temporally stable merely because it is owned Rust data.
+Every `MsrFeatureValue` now carries an `MsrFeatureStability` assigned inside its crate-private constructor, so callers cannot attach inconsistent stability metadata. Linux KVM treats feature MSRs as immutable once the vCPU model is defined except for `MSR_IA32_UCODE_REV`, which tracks the currently loaded microcode patch. The exact architectural index `0x8b` is therefore classified `HostMutable`; every other value returned through the current KVM feature-MSR contract is classified `ModelImmutable`. `HostMsrFeatureValues::model_immutable_values` and `host_mutable_values` expose order-preserving, mutually exclusive views over the same owned snapshot, and focused tests lock the `0x8b` constant plus partition behavior.
 
-The general-index, feature-index, and feature-value snapshots remain owned only by `KvmBackend` and are exposed read-only. None is copied into `Vm` or `Vcpu`; no guest MSR allow/deny/value policy is derived from them; this slice issues no vCPU `KVM_GET_MSRS` and no `KVM_SET_MSRS`.
+`ModelImmutable` is deliberately a narrow KVM-model statement, not a migration guarantee. It means KVM treats that feature MSR as immutable after the vCPU model is defined; it does not claim that two hosts, kernel versions, CPU revisions, or VMM configurations will expose the same value. `HostMutable` makes the microcode-revision exception explicit so it cannot be silently consumed as though it belonged to an immutable model-capability set.
+
+The general-index, feature-index, and feature-value snapshots remain owned only by `KvmBackend` and are exposed read-only. None is copied into `Vm` or `Vcpu`; no guest MSR allow/deny/value policy is derived from them; this slice issues no additional ioctl, no vCPU `KVM_GET_MSRS`, and no `KVM_SET_MSRS`.
 
 ## x86 VM setup
 
@@ -154,7 +158,7 @@ Unknown ports become `PortIoError::UnhandledPort`. Wider or multi-count operatio
 
 ## Ownership and lifetime
 
-`KvmBackend` owns `/dev/kvm`, validated host capabilities, the typed `HostCpuid`, `HostMsrIndexList`, `HostMsrFeatureIndexList`, and `HostMsrFeatureValues` discovery snapshots, and the derived `GuestCpuPolicy`. `Vm` owns the VM descriptor, a clone of only the guest CPUID policy, and its optional registered guest RAM. CPUID read-back buffers and decoded comparison entries are temporary data inside vCPU construction; neither is retained after exact verification. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`. `PortIoBus` owns its optional debug device, configured input byte, and accepted output bytes. `VmExecutionResult` and `CpuidGuestResult` own only copied safe Rust data and reports; neither contains a pointer or borrow into KVM shared memory or guest RAM.
+`KvmBackend` owns `/dev/kvm`, validated host capabilities, the typed `HostCpuid`, `HostMsrIndexList`, `HostMsrFeatureIndexList`, and stability-annotated `HostMsrFeatureValues` discovery snapshots, and the derived `GuestCpuPolicy`. `Vm` owns the VM descriptor, a clone of only the guest CPUID policy, and its optional registered guest RAM. CPUID read-back buffers and decoded comparison entries are temporary data inside vCPU construction; neither is retained after exact verification. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`. `PortIoBus` owns its optional debug device, configured input byte, and accepted output bytes. `VmExecutionResult` and `CpuidGuestResult` own only copied safe Rust data and reports; neither contains a pointer or borrow into KVM shared memory or guest RAM.
 
 Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
@@ -176,7 +180,7 @@ Future MMIO, interrupt, snapshot, and stronger invariant categories will be adde
 
 There is no generic hypervisor backend trait yet. KVM is the only implementation, and an abstraction would not have a second consumer. The KVM-specific plumbing is nevertheless isolated so a later raw-VMX research backend would not require leaking ioctls into VM policy.
 
-There is no configurable or migration-stable CPU model yet. The current boundary distinguishes discovered host support from a derived guest CPUID policy, but there is still exactly one built-in CPUID policy: host/KVM-supported entries with conservative masking for the absent LAPIC model. The vCPU creation path requires KVM to report back exactly that submitted typed CPUID policy, and the existing CPUID fixture independently verifies selected architectural bits from guest-observed state. `HostMsrIndexList`, `HostMsrFeatureIndexList`, and `HostMsrFeatureValues` are host discovery state only; there is no guest MSR policy or guest MSR value lifecycle yet.
+There is no configurable or migration-stable CPU model yet. The current boundary distinguishes discovered host support from a derived guest CPUID policy, but there is still exactly one built-in CPUID policy: host/KVM-supported entries with conservative masking for the absent LAPIC model. The vCPU creation path requires KVM to report back exactly that submitted typed CPUID policy, and the existing CPUID fixture independently verifies selected architectural bits from guest-observed state. `HostMsrIndexList`, `HostMsrFeatureIndexList`, and stability-annotated `HostMsrFeatureValues` remain host discovery state only; `ModelImmutable` is not promoted into a cross-host stability guarantee, and there is still no guest MSR policy or guest MSR value lifecycle.
 
 There is also no multi-region memory map yet. `GuestMemoryRegion::overlaps` exists to make range semantics explicit and tested, but the VM intentionally supports only slot 0 in this milestone.
 
@@ -186,4 +190,4 @@ The execution loop is not a scheduler. It owns no vCPU, thread, timer, or interr
 
 ## Next architectural milestone
 
-The next bounded slice should make feature-value stability explicit before any guest MSR policy is derived. KVM treats the feature-MSR set as effectively immutable after the vCPU model is defined except for the microcode revision feature, which tracks the currently loaded microcode. A bounded follow-up should represent that stability distinction in typed host discovery state, prove that volatile values are not silently treated as migration-stable capability data, and keep all MSR state host-only. It should not add vCPU `KVM_GET_MSRS`, `KVM_SET_MSRS`, guest MSR policy/application, a named migration-stable CPU model, long-mode boot, interrupts, MMIO, SMP, or device expansion in the same slice.
+The next bounded slice should materialize an owned immutable-only host MSR model-candidate snapshot from the already-classified `ModelImmutable` feature values, with explicit provenance back to the complete `HostMsrFeatureValues` observation and a hard guarantee that `HostMutable` values such as `MSR_IA32_UCODE_REV` cannot enter that model-candidate type. It should remain host-only and should not yet derive or apply a guest MSR policy, issue vCPU `KVM_GET_MSRS`, call `KVM_SET_MSRS`, define a named migration-stable CPU model, or add long-mode boot, interrupts, MMIO, SMP, or device expansion in the same slice.
