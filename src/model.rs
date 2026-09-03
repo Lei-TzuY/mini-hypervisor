@@ -32,9 +32,7 @@ impl CpuModelCandidate {
     #[must_use]
     pub fn compare(&self, observed: &Self) -> CpuModelComparison {
         CpuModelComparison {
-            guest_cpu_policy_comparison: self
-                .guest_cpu_policy
-                .compare(&observed.guest_cpu_policy),
+            guest_cpu_policy_comparison: self.guest_cpu_policy.compare(&observed.guest_cpu_policy),
             host_msr_model_comparison: self
                 .host_msr_model_candidate
                 .compare(&observed.host_msr_model_candidate),
@@ -254,9 +252,7 @@ mod tests {
                 .host_msr_model_comparison()
                 .reference()
                 .source_observation(),
-            reference
-                .host_msr_model_candidate()
-                .source_observation()
+            reference.host_msr_model_candidate().source_observation()
         );
         assert_eq!(
             comparison
@@ -271,10 +267,8 @@ mod tests {
     fn comparison_preserves_direction_when_both_components_drift() {
         let reference_policy = guest_policy(vec![cpuid_entry(7, 0, 1)]);
         let observed_policy = guest_policy(vec![cpuid_entry(7, 1, 1)]);
-        let reference_msr =
-            msr_candidate(vec![MsrFeatureValue::new(MsrIndex::new(0x3a), 1)]);
-        let observed_msr =
-            msr_candidate(vec![MsrFeatureValue::new(MsrIndex::new(0x10a), 2)]);
+        let reference_msr = msr_candidate(vec![MsrFeatureValue::new(MsrIndex::new(0x3a), 1)]);
+        let observed_msr = msr_candidate(vec![MsrFeatureValue::new(MsrIndex::new(0x10a), 2)]);
         let reference = CpuModelCandidate::new(&reference_policy, &reference_msr);
         let observed = CpuModelCandidate::new(&observed_policy, &observed_msr);
 
