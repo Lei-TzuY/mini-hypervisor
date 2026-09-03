@@ -40,6 +40,17 @@ pub enum HostEnvironmentError {
         operation: &'static str,
         source: io::Error,
     },
+    VcpuMsrPartialWrite {
+        id: u16,
+        requested: usize,
+        processed: usize,
+        first_unwritten_index: u32,
+    },
+    VcpuMsrInvalidWriteCompletion {
+        id: u16,
+        requested: usize,
+        processed: usize,
+    },
     Io {
         operation: &'static str,
         source: io::Error,
@@ -230,6 +241,23 @@ impl fmt::Display for HostEnvironmentError {
             Self::VcpuOperation { id, operation, .. } => {
                 write!(f, "KVM vCPU {id} operation {operation} failed")
             }
+            Self::VcpuMsrPartialWrite {
+                id,
+                requested,
+                processed,
+                first_unwritten_index,
+            } => write!(
+                f,
+                "KVM_SET_MSRS partially updated vCPU {id}: processed {processed} of {requested} MSRs; first unwritten index {first_unwritten_index:#x}"
+            ),
+            Self::VcpuMsrInvalidWriteCompletion {
+                id,
+                requested,
+                processed,
+            } => write!(
+                f,
+                "KVM_SET_MSRS returned invalid processed count {processed} for vCPU {id} after {requested} requested MSRs"
+            ),
             Self::Io { operation, .. } => write!(f, "host I/O failure during {operation}"),
         }
     }
@@ -246,6 +274,8 @@ impl std::error::Error for HostEnvironmentError {
             | Self::VcpuRunMapping { source, .. }
             | Self::VcpuOperation { source, .. }
             | Self::Io { source, .. } => Some(source),
+            Self::VcpuMsrPartialWrite { .. }
+            | Self::VcpuMsrInvalidWriteCompletion { .. } => None,
         }
     }
 }
