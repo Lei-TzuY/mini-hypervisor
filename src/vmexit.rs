@@ -66,9 +66,13 @@ pub fn dispatch_vcpu_exit(
             }
             Ok(VmExitDisposition::Continue(io))
         }
-        VcpuExit::Hlt => {
+        VcpuExit::Hlt | VcpuExit::Shutdown => {
             let registers = vcpu.registers()?;
-            Ok(VmExitDisposition::Stopped(hlt_report(vcpu.id(), registers)))
+            Ok(VmExitDisposition::Stopped(stopped_report(
+                vcpu.id(),
+                exit,
+                registers,
+            )))
         }
         VcpuExit::Unhandled { reason } => {
             let registers = vcpu.registers()?;
@@ -77,10 +81,11 @@ pub fn dispatch_vcpu_exit(
     }
 }
 
-fn hlt_report(vcpu_id: VcpuId, registers: VcpuRegisters) -> VmExitReport {
+fn stopped_report(vcpu_id: VcpuId, exit: VcpuExit, registers: VcpuRegisters) -> VmExitReport {
+    debug_assert!(matches!(exit, VcpuExit::Hlt | VcpuExit::Shutdown));
     VmExitReport {
         vcpu_id,
-        exit: VcpuExit::Hlt,
+        exit,
         rip: registers.rip,
         rflags: registers.rflags,
     }
@@ -105,11 +110,21 @@ mod tests {
     };
 
     #[test]
-    fn hlt_dispatch_produces_structured_report() {
-        let report = hlt_report(VcpuId::BOOT, REGISTERS);
+    fn terminal_dispatch_reports_hlt_context() {
+        let report = stopped_report(VcpuId::BOOT, VcpuExit::Hlt, REGISTERS);
 
         assert_eq!(report.vcpu_id(), VcpuId::BOOT);
         assert_eq!(report.exit(), VcpuExit::Hlt);
+        assert_eq!(report.rip(), 0x1001);
+        assert_eq!(report.rflags(), 0x2);
+    }
+
+    #[test]
+    fn terminal_dispatch_reports_shutdown_context() {
+        let report = stopped_report(VcpuId::new(3), VcpuExit::Shutdown, REGISTERS);
+
+        assert_eq!(report.vcpu_id(), VcpuId::new(3));
+        assert_eq!(report.exit(), VcpuExit::Shutdown);
         assert_eq!(report.rip(), 0x1001);
         assert_eq!(report.rflags(), 0x2);
     }

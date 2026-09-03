@@ -49,6 +49,7 @@ impl VcpuId {
 pub enum VcpuExit {
     Hlt,
     Io,
+    Shutdown,
     Unhandled { reason: u32 },
 }
 
@@ -58,6 +59,7 @@ impl VcpuExit {
         match reason {
             sys::KVM_EXIT_IO => Self::Io,
             sys::KVM_EXIT_HLT => Self::Hlt,
+            sys::KVM_EXIT_SHUTDOWN => Self::Shutdown,
             _ => Self::Unhandled { reason },
         }
     }
@@ -67,6 +69,7 @@ impl VcpuExit {
         match self {
             Self::Io => sys::KVM_EXIT_IO,
             Self::Hlt => sys::KVM_EXIT_HLT,
+            Self::Shutdown => sys::KVM_EXIT_SHUTDOWN,
             Self::Unhandled { reason } => reason,
         }
     }
@@ -444,9 +447,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classifies_hlt_io_and_preserves_unknown_reason() {
+    fn classifies_hlt_io_shutdown_and_preserves_unknown_reason() {
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_HLT), VcpuExit::Hlt);
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_IO), VcpuExit::Io);
+        assert_eq!(
+            VcpuExit::from_raw(sys::KVM_EXIT_SHUTDOWN),
+            VcpuExit::Shutdown
+        );
         assert_eq!(
             VcpuExit::from_raw(0xfeed_beef),
             VcpuExit::Unhandled {
@@ -459,6 +466,7 @@ mod tests {
     fn exit_reason_round_trips_typed_classification() {
         assert_eq!(VcpuExit::Hlt.reason(), sys::KVM_EXIT_HLT);
         assert_eq!(VcpuExit::Io.reason(), sys::KVM_EXIT_IO);
+        assert_eq!(VcpuExit::Shutdown.reason(), sys::KVM_EXIT_SHUTDOWN);
         assert_eq!(VcpuExit::Unhandled { reason: 0x1234 }.reason(), 0x1234);
     }
 
