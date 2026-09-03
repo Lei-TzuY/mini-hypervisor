@@ -42,7 +42,9 @@ fn component_snapshot_verification_is_read_only_when_kvm_is_available() {
     let real_mode_special = vcpu
         .capture_special_register_snapshot()
         .expect("real-mode special-register capture should succeed");
-    assert!(!pre_init_special.compare(&real_mode_special).is_exact_match());
+    assert!(!pre_init_special
+        .compare(&real_mode_special)
+        .is_exact_match());
     let special_mismatch = vcpu
         .verify_special_register_snapshot(&pre_init_special)
         .expect("mismatching special-register verification should still succeed");
@@ -67,7 +69,9 @@ fn component_snapshot_verification_is_read_only_when_kvm_is_available() {
     let changed_registers = vcpu
         .capture_register_snapshot()
         .expect("changed register capture should succeed");
-    assert!(!register_reference.compare(&changed_registers).is_exact_match());
+    assert!(!register_reference
+        .compare(&changed_registers)
+        .is_exact_match());
     let register_mismatch = vcpu
         .verify_register_snapshot(&register_reference)
         .expect("mismatching register verification should still succeed");
@@ -93,5 +97,7 @@ fn component_snapshot_verification_is_read_only_when_kvm_is_available() {
     let msrs_after_verify = vcpu
         .capture_msr_snapshot(&policy)
         .expect("post-verification MSR capture should succeed");
-    assert!(msrs_before_verify.compare(&msrs_after_verify).is_exact_match());
+    assert!(msrs_before_verify
+        .compare(&msrs_after_verify)
+        .is_exact_match());
 }
