@@ -94,12 +94,7 @@ impl KvmRunMapping {
             // by this crate, KVM places `struct kvm_run` at offset zero, and mmap returns suitably
             // aligned memory. This base view intentionally ends after the always-available
             // `suberror` field and does not read capability-dependent `ndata` or `data` fields.
-            let prefix = unsafe {
-                &*self
-                    .ptr
-                    .as_ptr()
-                    .cast::<KvmRunInternalErrorBasePrefix>()
-            };
+            let prefix = unsafe { &*self.ptr.as_ptr().cast::<KvmRunInternalErrorBasePrefix>() };
             return Ok(decode_internal_error_base(prefix.internal));
         }
 
@@ -127,15 +122,13 @@ fn decode_internal_error_with_data(
 ) -> Result<VcpuInternalError, Error> {
     let data_count = usize::try_from(raw.ndata).expect("u32 internal-error count fits usize");
     if data_count > KVM_INTERNAL_ERROR_DATA_CAPACITY {
-        return Err(Error::VmExit(
-            VmExitError::InvalidInternalErrorDataCount {
-                vcpu_id: id.get(),
-                suberror: raw.suberror,
-                ndata: raw.ndata,
-                capacity: KVM_INTERNAL_ERROR_DATA_CAPACITY,
-                exit_reasons: vec![KVM_EXIT_INTERNAL_ERROR],
-            },
-        ));
+        return Err(Error::VmExit(VmExitError::InvalidInternalErrorDataCount {
+            vcpu_id: id.get(),
+            suberror: raw.suberror,
+            ndata: raw.ndata,
+            capacity: KVM_INTERNAL_ERROR_DATA_CAPACITY,
+            exit_reasons: vec![KVM_EXIT_INTERNAL_ERROR],
+        }));
     }
 
     let mut data = [0; KVM_INTERNAL_ERROR_DATA_CAPACITY];
@@ -194,11 +187,8 @@ mod tests {
 
     #[test]
     fn capability_enabled_zero_count_is_distinct_from_unavailable_data() {
-        let decoded = decode_internal_error_with_data(
-            VcpuId::BOOT,
-            raw_internal_error(1, 0, &[]),
-        )
-        .unwrap();
+        let decoded =
+            decode_internal_error_with_data(VcpuId::BOOT, raw_internal_error(1, 0, &[])).unwrap();
 
         assert_eq!(decoded.data(), Some([].as_slice()));
     }
@@ -208,11 +198,7 @@ mod tests {
         let values: Vec<u64> = (0..KVM_INTERNAL_ERROR_DATA_CAPACITY as u64).collect();
         let decoded = decode_internal_error_with_data(
             VcpuId::BOOT,
-            raw_internal_error(
-                3,
-                KVM_INTERNAL_ERROR_DATA_CAPACITY as u32,
-                &values,
-            ),
+            raw_internal_error(3, KVM_INTERNAL_ERROR_DATA_CAPACITY as u32, &values),
         )
         .unwrap();
 
@@ -223,11 +209,7 @@ mod tests {
     fn rejects_optional_internal_error_data_count_above_capacity() {
         let error = decode_internal_error_with_data(
             VcpuId::new(9),
-            raw_internal_error(
-                4,
-                KVM_INTERNAL_ERROR_DATA_CAPACITY as u32 + 1,
-                &[],
-            ),
+            raw_internal_error(4, KVM_INTERNAL_ERROR_DATA_CAPACITY as u32 + 1, &[]),
         )
         .unwrap_err();
 
