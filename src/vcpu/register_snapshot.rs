@@ -324,6 +324,15 @@ impl Vcpu {
         sys::set_regs(self.fd.as_raw_fd(), &regs)
             .map_err(|source| vcpu_operation(self.id, "KVM_SET_REGS", source))
     }
+
+    pub fn restore_and_verify_register_snapshot(
+        &self,
+        snapshot: &VcpuRegisterSnapshot,
+    ) -> Result<VcpuRegisterSnapshotComparison, Error> {
+        self.restore_register_snapshot(snapshot)?;
+        let observed = self.capture_register_snapshot()?;
+        Ok(snapshot.compare(&observed))
+    }
 }
 
 #[cfg(test)]
