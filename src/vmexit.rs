@@ -82,6 +82,10 @@ pub fn dispatch_vcpu_exit(
                 failure.cpu(),
             ))
         }
+        VcpuExit::InternalError => {
+            let internal = vcpu.internal_error()?;
+            Err(internal_error(vcpu.id(), internal.suberror()))
+        }
         VcpuExit::SystemEvent => {
             let event = vcpu.system_event()?;
             let registers = vcpu.registers()?;
@@ -115,6 +119,14 @@ fn entry_failure(vcpu_id: VcpuId, hardware_entry_failure_reason: u64, cpu: u32) 
         hardware_entry_failure_reason,
         cpu,
         exit_reasons: vec![VcpuExit::FailEntry.reason()],
+    })
+}
+
+fn internal_error(vcpu_id: VcpuId, suberror: u32) -> Error {
+    Error::VmExit(VmExitError::InternalError {
+        vcpu_id: vcpu_id.get(),
+        suberror,
+        exit_reasons: vec![VcpuExit::InternalError.reason()],
     })
 }
 
@@ -185,6 +197,20 @@ mod tests {
                 cpu: 11,
                 exit_reasons,
             }) if exit_reasons == [VcpuExit::FailEntry.reason()]
+        ));
+    }
+
+    #[test]
+    fn internal_error_dispatch_preserves_suberror_and_local_trace_without_register_context() {
+        let result = internal_error(VcpuId::new(8), 4);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::InternalError {
+                vcpu_id: 8,
+                suberror: 4,
+                exit_reasons,
+            }) if exit_reasons == [VcpuExit::InternalError.reason()]
         ));
     }
 
