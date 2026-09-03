@@ -27,7 +27,7 @@ mod fail_entry;
 pub use fail_entry::VcpuFailEntry;
 
 mod internal_error;
-pub use internal_error::VcpuInternalError;
+pub use internal_error::{VcpuInternalError, VcpuInternalErrorSuberror};
 
 mod system_event;
 pub use system_event::{VcpuSystemEvent, VcpuSystemEventType};
