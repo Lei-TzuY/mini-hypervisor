@@ -6,6 +6,7 @@ pub mod execution;
 pub mod kvm;
 pub mod loader;
 pub mod memory;
+pub mod model;
 pub mod portio;
 pub mod vcpu;
 pub mod vmexit;
