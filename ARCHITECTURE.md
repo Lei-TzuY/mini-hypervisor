@@ -14,6 +14,8 @@ KvmBackend
  │         └─ GuestCpuPolicy::from_host
  ├─ bounded KVM_GET_MSR_INDEX_LIST
  │    └─ HostMsrIndexList
+ ├─ bounded KVM_GET_MSR_FEATURE_INDEX_LIST
+ │    └─ HostMsrFeatureIndexList
  └─ VM creation
        ├─ x86 identity-map/TSS setup before vCPUs
        ↓
@@ -47,7 +49,7 @@ The KVM UAPI details live in `src/kvm/sys.rs`. Higher layers call typed Rust met
 
 ## x86 host and CPU capability contract
 
-The backend requires KVM API version 12 plus `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, `KVM_CAP_EXT_CPUID`, and `KVM_CAP_SET_IDENTITY_MAP_ADDR`.
+The backend requires KVM API version 12 plus `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, `KVM_CAP_EXT_CPUID`, `KVM_CAP_SET_IDENTITY_MAP_ADDR`, and `KVM_CAP_GET_MSR_FEATURES`.
 
 After fixed host capability validation, `KvmBackend` performs `KVM_GET_SUPPORTED_CPUID` through a fixed 256-entry `repr(C)` `KvmCpuid2<N>` buffer. The header remains the exact 8-byte KVM ABI header and each trailing `KvmCpuidEntry2` is the exact 40-byte x86 entry. Pure tests lock header size, entry size, entry offset, and the supported/set/get CPUID ioctl request numbers.
 
@@ -61,15 +63,17 @@ The current interrupt model has no in-kernel LAPIC or IRQ chip. Linux KVM docume
 
 The deterministic CPUID fixture proves the configured contract from inside the guest rather than trusting host-side policy construction and read-back alone. In real mode it executes `CPUID(1)`, stores ECX at guest physical `0x2000`, executes `CPUID(0x40000001)`, stores EAX at `0x2004`, then halts. After the terminal exit, host code reads the checked eight-byte result range and exposes the observations through `CpuidGuestResult`. The integration regression requires x2APIC, TSC-deadline, and PV-unhalt to remain clear in guest-observed state.
 
-### Host MSR-index capability snapshot
+### Host MSR-index capability snapshots
 
-`KVM_GET_MSR_INDEX_LIST` is a system ioctl over the variable-length `struct kvm_msr_list` ABI: a 4-byte `nmsrs` header followed by `u32` indices. Pure tests lock the header size, trailing-index offset, and exact ioctl request value. The list describes MSR indices KVM exposes through its MSR access interface; this milestone treats it only as host capability discovery, not as a guest MSR policy.
+Both MSR discovery paths are system ioctls over the same variable-length `struct kvm_msr_list` ABI: a 4-byte `nmsrs` header followed by `u32` indices. Pure tests lock the header size, trailing-index offset, and the exact request values for `KVM_GET_MSR_INDEX_LIST` and `KVM_GET_MSR_FEATURE_INDEX_LIST`.
 
-Discovery is deliberately two-stage. First, `KvmBackend` submits a zero-capacity `KvmMsrList<0>` probe. KVM writes the required count back into `nmsrs` before returning `E2BIG` when the supplied capacity is insufficient, so `E2BIG` is accepted only for this probe. The reported count must be in `1..=1024`, where 1024 is this project's defensive bound rather than a claim about a Linux ABI maximum. The backend then issues a second query with a fixed 1024-entry `repr(C)` buffer and independently validates the final returned count before any Rust slice is formed.
+`KVM_GET_MSR_INDEX_LIST` describes the general MSR indices KVM exposes through its MSR access interface. Discovery is deliberately two-stage. First, `KvmBackend` submits a zero-capacity `KvmMsrList<0>` probe. KVM writes the required count back into `nmsrs` before returning `E2BIG` when the supplied capacity is insufficient, so `E2BIG` is accepted only for this probe. The reported count must be in `1..=1024`, where 1024 is this project's defensive bound rather than a claim about a Linux ABI maximum. The backend then issues a second query with a fixed 1024-entry `repr(C)` buffer and independently validates the final returned count before any Rust slice is formed.
 
-Validated raw indices are copied into the owned typed `HostMsrIndexList`. `MsrIndex` wraps each raw `u32`; repeated kernel indices are normalized by keeping the first occurrence while preserving the kernel's reported order for all retained entries. Pure tests lock order preservation and duplicate normalization. The raw variable-length KVM buffer does not escape the KVM module.
+`KVM_GET_MSR_FEATURE_INDEX_LIST` is a separate capability-discovery contract guarded by `KVM_CAP_GET_MSR_FEATURES`. It reports the feature-MSR indices that may be supplied to the system-level `KVM_GET_MSRS` interface for host/KVM feature probing. It uses the same zero-capacity probe and fixed 1024-entry second query, but its validated count is `0..=1024`: an empty feature list is a valid capability snapshot and is not treated as malformed. The second returned count is independently checked before slicing just like the general list.
 
-The MSR-index snapshot remains owned only by `KvmBackend` and is exposed read-only through `host_msr_indices()`. It is not copied into `Vm` or `Vcpu`, no guest MSR allow/deny policy is derived from it, and this slice issues neither `KVM_GET_MSRS` nor `KVM_SET_MSRS`.
+Validated raw indices are copied into distinct owned typed snapshots. Both lists reuse `MsrIndex`, and both normalize repeated kernel indices by keeping the first occurrence while preserving the kernel's reported order for retained entries. `HostMsrIndexList` represents the general index set; `HostMsrFeatureIndexList` represents the feature-probing index set. Keeping these types separate prevents the two kernel contracts from becoming interchangeable merely because their wire representation is identical. Pure tests lock order preservation, duplicate normalization, typed reuse, and the valid empty feature-list case. Raw variable-length KVM buffers do not escape the KVM module.
+
+Both MSR snapshots remain owned only by `KvmBackend` and are exposed read-only. Neither is copied into `Vm` or `Vcpu`, no guest MSR allow/deny policy is derived from either list, and this slice issues neither system/vCPU `KVM_GET_MSRS` nor `KVM_SET_MSRS`.
 
 ## x86 VM setup
 
@@ -142,7 +146,7 @@ Unknown ports become `PortIoError::UnhandledPort`. Wider or multi-count operatio
 
 ## Ownership and lifetime
 
-`KvmBackend` owns `/dev/kvm`, validated host capabilities, the typed `HostCpuid` and `HostMsrIndexList` discovery snapshots, and the derived `GuestCpuPolicy`. `Vm` owns the VM descriptor, a clone of only the guest CPUID policy, and its optional registered guest RAM. CPUID read-back buffers and decoded comparison entries are temporary data inside vCPU construction; neither is retained after exact verification. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`. `PortIoBus` owns its optional debug device, configured input byte, and accepted output bytes. `VmExecutionResult` and `CpuidGuestResult` own only copied safe Rust data and reports; neither contains a pointer or borrow into KVM shared memory or guest RAM.
+`KvmBackend` owns `/dev/kvm`, validated host capabilities, the typed `HostCpuid`, `HostMsrIndexList`, and `HostMsrFeatureIndexList` discovery snapshots, and the derived `GuestCpuPolicy`. `Vm` owns the VM descriptor, a clone of only the guest CPUID policy, and its optional registered guest RAM. CPUID read-back buffers and decoded comparison entries are temporary data inside vCPU construction; neither is retained after exact verification. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`. `PortIoBus` owns its optional debug device, configured input byte, and accepted output bytes. `VmExecutionResult` and `CpuidGuestResult` own only copied safe Rust data and reports; neither contains a pointer or borrow into KVM shared memory or guest RAM.
 
 Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
@@ -150,7 +154,7 @@ Rust ownership is used for normal cleanup; explicit KVM slot removal protects th
 
 Errors are categorized as:
 
-- `HostEnvironment`: host file/device/I/O failures, malformed host KVM variable-length responses including CPUID and MSR-index counts, named VM/vCPU ioctls including CPUID query/application/read-back, and CPUID read-back policy mismatches;
+- `HostEnvironment`: host file/device/I/O failures, malformed host KVM variable-length responses including CPUID, general MSR-index, and MSR-feature-index counts, named VM/vCPU ioctls including CPUID query/application/read-back, and CPUID read-back policy mismatches;
 - `KvmCapability`: incompatible API version, absent required extension, or invalid kernel-reported mapping size;
 - `Configuration`: unsupported VMM configuration or current real-mode entry limits;
 - `GuestMemory`: invalid guest ranges, reserved-range overlap, mapping failures, bounds violations, or KVM RAM-registration failures;
@@ -164,7 +168,7 @@ Future MMIO, interrupt, snapshot, and stronger invariant categories will be adde
 
 There is no generic hypervisor backend trait yet. KVM is the only implementation, and an abstraction would not have a second consumer. The KVM-specific plumbing is nevertheless isolated so a later raw-VMX research backend would not require leaking ioctls into VM policy.
 
-There is no configurable or migration-stable CPU model yet. The current boundary distinguishes discovered host support from a derived guest CPUID policy, but there is still exactly one built-in CPUID policy: host/KVM-supported entries with conservative masking for the absent LAPIC model. The vCPU creation path requires KVM to report back exactly that submitted typed CPUID policy, and the existing CPUID fixture independently verifies selected architectural bits from guest-observed state. `HostMsrIndexList` is only discovery state; there is no guest MSR policy or MSR value lifecycle yet.
+There is no configurable or migration-stable CPU model yet. The current boundary distinguishes discovered host support from a derived guest CPUID policy, but there is still exactly one built-in CPUID policy: host/KVM-supported entries with conservative masking for the absent LAPIC model. The vCPU creation path requires KVM to report back exactly that submitted typed CPUID policy, and the existing CPUID fixture independently verifies selected architectural bits from guest-observed state. `HostMsrIndexList` and `HostMsrFeatureIndexList` are discovery state only; there is no guest MSR policy or MSR value lifecycle yet.
 
 There is also no multi-region memory map yet. `GuestMemoryRegion::overlaps` exists to make range semantics explicit and tested, but the VM intentionally supports only slot 0 in this milestone.
 
@@ -174,4 +178,4 @@ The execution loop is not a scheduler. It owns no vCPU, thread, timer, or interr
 
 ## Next architectural milestone
 
-The next bounded slice should discover the complementary KVM MSR-feature index list through bounded `KVM_GET_MSR_FEATURE_INDEX_LIST`, keeping it separate from the general `KVM_GET_MSR_INDEX_LIST` snapshot. It should reuse the typed MSR-index representation, validate all variable-length counts before slicing, define deterministic duplicate/order semantics, and remain host-capability discovery only. It should not read or write guest MSR values, derive a guest MSR policy, add a named/migration-stable CPU model, or add long-mode boot, interrupts, MMIO, SMP, or device expansion in the same slice.
+The next bounded slice should read the already-discovered feature-MSR indices through the system-level `KVM_GET_MSRS` interface into an owned typed host feature-value snapshot. It should add the exact bounded `kvm_msrs`/`kvm_msr_entry` UAPI representation, validate requested and returned-entry semantics explicitly, and define deterministic handling for partial results before exposing any typed values. It should remain host-capability discovery only: no vCPU `KVM_GET_MSRS`, no `KVM_SET_MSRS`, no guest MSR policy, no named/migration-stable CPU model, and no long-mode boot, interrupts, MMIO, SMP, or device expansion in the same slice.
