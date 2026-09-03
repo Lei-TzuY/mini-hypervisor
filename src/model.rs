@@ -1,3 +1,35 @@
+use crate::kvm::cpu::GuestCpuPolicy;
+use crate::kvm::msr::HostMsrModelCandidate;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuModelCandidate {
+    guest_cpu_policy: GuestCpuPolicy,
+    host_msr_model_candidate: HostMsrModelCandidate,
+}
+
+impl CpuModelCandidate {
+    #[must_use]
+    pub fn new(
+        guest_cpu_policy: &GuestCpuPolicy,
+        host_msr_model_candidate: &HostMsrModelCandidate,
+    ) -> Self {
+        Self {
+            guest_cpu_policy: guest_cpu_policy.clone(),
+            host_msr_model_candidate: host_msr_model_candidate.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn guest_cpu_policy(&self) -> &GuestCpuPolicy {
+        &self.guest_cpu_policy
+    }
+
+    #[must_use]
+    pub fn host_msr_model_candidate(&self) -> &HostMsrModelCandidate {
+        &self.host_msr_model_candidate
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
