@@ -12,28 +12,28 @@ The repository currently has typed, owned boundaries for:
 - explicit guest MSR access policy, policy-validated value sets, policy-bound capture, full MSR snapshots, snapshot comparison, bounded non-transactional restore, and restore-and-verify;
 - owned vCPU general-register snapshots, pure 18-field reference-to-observed comparison, snapshot-bound restore, and restore-and-verify;
 - owned vCPU special-register snapshots covering segment, descriptor-table, control-register, EFER, APIC-base, and interrupt-bitmap state without exposing KVM UAPI padding, plus pure deterministic semantic-field comparison, snapshot-bound restore, and restore-and-verify;
-- composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison and bounded non-transactional restore;
+- composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison, bounded non-transactional restore, and restore-and-verify;
 - centralized VM-exit dispatch, bounded execution budgets, and the minimal bidirectional debug port-I/O device.
 
-## Phase 41 — composite vCPU state snapshot restore
+## Phase 42 — composite vCPU state snapshot restore-and-verify
 
-The current bounded slice adds `Vcpu::restore_state_snapshot()` as a thin orchestration boundary over the existing special-register, general-register, and policy-bound MSR restore paths.
+The current bounded slice adds `Vcpu::restore_and_verify_state_snapshot()` by composing the existing composite restore, composite capture, and pure composite comparison boundaries.
 
 Correctness contract:
 
-- restore accepts only an already-owned `VcpuStateSnapshot`; it introduces no raw KVM representation, new state encoding, or new error taxonomy;
-- component restore order is fixed as special registers, general registers, then policy-bound MSRs, matching the repository's existing dependency-aware real-mode initialization order for special versus general registers;
-- each existing component restore boundary is attempted at most once;
-- a special-register restore failure prevents both later restores; a general-register restore failure occurs after the special-register write and prevents MSR restore; an MSR restore failure occurs after both earlier component writes;
-- all component errors propagate unchanged, including existing partial-MSR-write diagnostics;
-- the operation performs no retry, rollback, repair, transaction log, or automatic recapture;
-- successful completion means only that all three existing component restore paths returned success; it does not by itself prove read-back equality;
-- because earlier component writes remain applied when a later component fails, this boundary is explicitly non-transactional and does not claim atomic architectural restore semantics;
-- pure regressions lock restore ordering and failure short-circuit behavior, while a KVM-aware regression requires a captured real-mode composite snapshot to restore through the public path and recapture as an exact composite match when KVM is available;
-- this slice does not add composite restore-and-verify, rollback, migration compatibility, guest-memory/device capture, atomic/quiesced snapshot semantics, long-mode boot, interrupts, MMIO, SMP, or device expansion.
+- verification accepts only an already-owned `VcpuStateSnapshot`; it introduces no raw KVM representation, new state encoding, or new error taxonomy;
+- verification first invokes the existing `restore_state_snapshot()` exactly once, preserving its dependency-aware special-register, general-register, then MSR restore order and non-transactional failure semantics;
+- any restore failure prevents recapture and propagates unchanged, including existing partial-MSR-write diagnostics; no retry, rollback, or repair is attempted;
+- only after restore succeeds, verification performs one `capture_state_snapshot()` using the MSR access policy already owned by the reference snapshot rather than caller-supplied or widened authority;
+- any recapture failure propagates unchanged and prevents comparison; no second capture or rollback is attempted;
+- successful restore and recapture are compared only through the existing pure `VcpuStateSnapshot::compare()` boundary, preserving typed component comparison and mismatch semantics;
+- a non-exact comparison is returned as data rather than converted into an error, and does not trigger retry, repair, or a second restore;
+- pure regressions lock restore-before-capture sequencing, restore/capture failure short-circuit behavior, and mismatch-report-only behavior; a KVM-aware regression requires a changed real-mode vCPU to restore and verify as an exact composite match when KVM is available;
+- successful exact verification does not turn the underlying sequential capture or non-transactional restore into an atomic/quiesced architectural state operation;
+- this slice does not add rollback, migration compatibility, guest-memory/device capture, atomic/quiesced snapshot semantics, long-mode boot, interrupts, MMIO, SMP, or device expansion.
 
 ## Next bounded slice
 
 No broader implementation slice is preselected by this commit.
 
-After Phase 41 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, and this authoritative roadmap before choosing further state-verification, execution, or architecture-documentation work. Do not infer that composite restore-and-verify, migration orchestration, long-mode boot, interrupts, MMIO, SMP, or device expansion is automatically next merely because composite capture, comparison, and bounded restore now exist.
+After Phase 42 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, and this authoritative roadmap before choosing further execution, architecture-documentation, or state-model work. Do not infer that migration orchestration, guest-memory/device capture, long-mode boot, interrupts, MMIO, SMP, or device expansion is automatically next merely because composite capture, comparison, restore, and restore-and-verify now exist.
