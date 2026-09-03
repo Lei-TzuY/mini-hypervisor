@@ -1,4 +1,5 @@
-use mini_hypervisor::kvm::{Capability, HostCapabilities};
+use mini_hypervisor::error::{Error, HostEnvironmentError};
+use mini_hypervisor::kvm::{Capability, HostCapabilities, KvmBackend};
 
 const KVM_API_VERSION: i32 = 12;
 const KVM_CAP_USER_MEMORY: i32 = 3;
@@ -55,4 +56,27 @@ fn optional_internal_error_data_support_does_not_become_required() {
     capabilities.extensions.last_mut().unwrap().value = 1;
     assert!(capabilities.validate().is_ok());
     assert!(capabilities.supports_internal_error_data());
+}
+
+#[test]
+fn backend_records_optional_internal_error_data_observation_when_kvm_is_available() {
+    let backend = match KvmBackend::open() {
+        Ok(backend) => backend,
+        Err(Error::HostEnvironment(
+            HostEnvironmentError::KvmUnavailable { .. }
+            | HostEnvironmentError::PermissionDenied { .. },
+        )) => return,
+        Err(error) => panic!("unexpected KVM backend failure: {error}"),
+    };
+
+    let capability = backend
+        .capabilities()
+        .internal_error_data_capability()
+        .expect("backend must record the optional KVM_CAP_INTERNAL_ERROR_DATA observation");
+    assert_eq!(capability.name, "KVM_CAP_INTERNAL_ERROR_DATA");
+    assert_eq!(capability.id, KVM_CAP_INTERNAL_ERROR_DATA);
+    assert_eq!(
+        backend.capabilities().supports_internal_error_data(),
+        capability.value > 0
+    );
 }
