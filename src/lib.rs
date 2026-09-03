@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod error;
+pub mod execution;
 pub mod kvm;
 pub mod loader;
 pub mod memory;
@@ -11,19 +12,22 @@ pub mod vmexit;
 
 use config::VmConfig;
 use error::{Error, VmExitError};
+use execution::{run_vcpu_until_stopped, VmExecutionResult};
 use kvm::KvmBackend;
 use loader::FlatGuestImage;
 use memory::{GuestMemory, GuestPhysAddr};
 use portio::PortIoBus;
 use vcpu::{PortIoExit, VcpuId};
-use vmexit::{dispatch_vcpu_exit, VmExitDisposition, VmExitReport};
+use vmexit::VmExitReport;
 
 const LIFECYCLE_RAM_BASE: GuestPhysAddr = GuestPhysAddr::new(0);
 const LIFECYCLE_RAM_SIZE: u64 = 2 * 1024 * 1024;
 const HLT_GUEST_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1000);
 const HLT_GUEST_BYTES: [u8; 1] = [0xf4];
+const HLT_EXIT_BUDGET: u32 = 1;
 const DEBUG_PORT_GUEST_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1000);
 const DEBUG_PORT_GUEST_BYTES: [u8; 5] = [0xb0, b'K', 0xe6, 0xe9, 0xf4];
+const DEBUG_PORT_EXIT_BUDGET: u32 = 2;
 const DEBUG_PORT_INPUT_GUEST_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1000);
 const DEBUG_PORT_INPUT_RESULT: GuestPhysAddr = GuestPhysAddr::new(0x2000);
 const DEBUG_PORT_INPUT_VALUE: u8 = b'R';
@@ -101,18 +105,12 @@ pub fn run_hlt_guest(config: VmConfig) -> Result<VmExitReport, Error> {
     debug_assert_eq!(config.vcpu_count(), 1);
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
     vcpu.initialize_real_mode(image.entry())?;
-    let exit = vcpu.run_once()?;
-    let actual_reason = exit.reason();
     let mut port_io = PortIoBus::empty();
+    let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, HLT_EXIT_BUDGET)?;
 
-    match dispatch_vcpu_exit(&mut vcpu, exit, &mut port_io)? {
-        VmExitDisposition::Stopped(report) => Ok(report),
-        VmExitDisposition::Continue(_) => Err(Error::VmExit(VmExitError::UnexpectedSequence {
-            stage: "deterministic HLT guest",
-            expected_reason: kvm::sys::KVM_EXIT_HLT,
-            actual_reason,
-        })),
-    }
+    debug_assert_eq!(execution.completed_exits(), 1);
+    debug_assert!(execution.io_exits().is_empty());
+    Ok(execution.report())
 }
 
 pub fn run_debug_port_guest(config: VmConfig) -> Result<DebugPortGuestResult, Error> {
@@ -131,37 +129,16 @@ pub fn run_debug_port_guest(config: VmConfig) -> Result<DebugPortGuestResult, Er
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
     vcpu.initialize_real_mode(image.entry())?;
     let mut port_io = PortIoBus::with_debug_port();
+    let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, DEBUG_PORT_EXIT_BUDGET)?;
+    let io = required_single_io(&execution, "debug-port output")?;
 
-    let first_exit = vcpu.run_once()?;
-    let first_reason = first_exit.reason();
-    let io = match dispatch_vcpu_exit(&mut vcpu, first_exit, &mut port_io)? {
-        VmExitDisposition::Continue(io) => io,
-        VmExitDisposition::Stopped(_) => {
-            return Err(Error::VmExit(VmExitError::UnexpectedSequence {
-                stage: "debug-port output",
-                expected_reason: kvm::sys::KVM_EXIT_IO,
-                actual_reason: first_reason,
-            }));
-        }
-    };
-
-    // KVM documents port-I/O exits as pending until userspace re-enters KVM_RUN. The second run
-    // first completes the serviced OUT operation, then continues guest execution to the HLT.
-    let second_exit = vcpu.run_once()?;
-    let second_reason = second_exit.reason();
-    let report = match dispatch_vcpu_exit(&mut vcpu, second_exit, &mut port_io)? {
-        VmExitDisposition::Stopped(report) => report,
-        VmExitDisposition::Continue(_) => {
-            return Err(Error::VmExit(VmExitError::UnexpectedSequence {
-                stage: "debug-port termination",
-                expected_reason: kvm::sys::KVM_EXIT_HLT,
-                actual_reason: second_reason,
-            }));
-        }
-    };
-
+    debug_assert_eq!(execution.completed_exits(), 2);
     let output = port_io.debug_output().unwrap_or(&[]).to_vec();
-    Ok(DebugPortGuestResult { io, output, report })
+    Ok(DebugPortGuestResult {
+        io,
+        output,
+        report: execution.report(),
+    })
 }
 
 pub fn run_debug_port_input_guest(config: VmConfig) -> Result<DebugPortInputGuestResult, Error> {
@@ -180,35 +157,10 @@ pub fn run_debug_port_input_guest(config: VmConfig) -> Result<DebugPortInputGues
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
     vcpu.initialize_real_mode(image.entry())?;
     let mut port_io = PortIoBus::with_debug_port_input(DEBUG_PORT_INPUT_VALUE);
+    let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, DEBUG_PORT_EXIT_BUDGET)?;
+    let io = required_single_io(&execution, "debug-port input")?;
 
-    let first_exit = vcpu.run_once()?;
-    let first_reason = first_exit.reason();
-    let io = match dispatch_vcpu_exit(&mut vcpu, first_exit, &mut port_io)? {
-        VmExitDisposition::Continue(io) => io,
-        VmExitDisposition::Stopped(_) => {
-            return Err(Error::VmExit(VmExitError::UnexpectedSequence {
-                stage: "debug-port input",
-                expected_reason: kvm::sys::KVM_EXIT_IO,
-                actual_reason: first_reason,
-            }));
-        }
-    };
-
-    // Re-entry first completes the pending IN by transferring the response byte into AL. Guest
-    // code then stores AL at 0x2000 and halts, allowing host RAM inspection to prove consumption.
-    let second_exit = vcpu.run_once()?;
-    let second_reason = second_exit.reason();
-    let report = match dispatch_vcpu_exit(&mut vcpu, second_exit, &mut port_io)? {
-        VmExitDisposition::Stopped(report) => report,
-        VmExitDisposition::Continue(_) => {
-            return Err(Error::VmExit(VmExitError::UnexpectedSequence {
-                stage: "debug-port input termination",
-                expected_reason: kvm::sys::KVM_EXIT_HLT,
-                actual_reason: second_reason,
-            }));
-        }
-    };
-
+    debug_assert_eq!(execution.completed_exits(), 2);
     let mut observed = [0_u8; 1];
     vm.guest_memory()
         .expect("registered guest memory remains owned by the VM")
@@ -217,6 +169,22 @@ pub fn run_debug_port_input_guest(config: VmConfig) -> Result<DebugPortInputGues
     Ok(DebugPortInputGuestResult {
         io,
         value: observed[0],
-        report,
+        report: execution.report(),
     })
+}
+
+fn required_single_io(
+    execution: &VmExecutionResult,
+    stage: &'static str,
+) -> Result<PortIoExit, Error> {
+    let Some(io) = execution.io_exits().first() else {
+        return Err(Error::VmExit(VmExitError::UnexpectedSequence {
+            stage,
+            expected_reason: kvm::sys::KVM_EXIT_IO,
+            actual_reason: execution.report().exit().reason(),
+        }));
+    };
+
+    debug_assert_eq!(execution.io_exits().len(), 1);
+    Ok(io.clone())
 }
