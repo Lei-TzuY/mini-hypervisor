@@ -4,6 +4,165 @@ use crate::kvm::sys;
 use std::os::fd::AsRawFd;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcpuSegmentRegister {
+    Cs,
+    Ds,
+    Es,
+    Fs,
+    Gs,
+    Ss,
+    Tr,
+    Ldt,
+}
+
+const SEGMENT_REGISTERS: [VcpuSegmentRegister; 8] = [
+    VcpuSegmentRegister::Cs,
+    VcpuSegmentRegister::Ds,
+    VcpuSegmentRegister::Es,
+    VcpuSegmentRegister::Fs,
+    VcpuSegmentRegister::Gs,
+    VcpuSegmentRegister::Ss,
+    VcpuSegmentRegister::Tr,
+    VcpuSegmentRegister::Ldt,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcpuSegmentField {
+    Base,
+    Limit,
+    Selector,
+    SegmentType,
+    Present,
+    Dpl,
+    Db,
+    S,
+    L,
+    G,
+    Avl,
+    Unusable,
+}
+
+const SEGMENT_FIELDS: [VcpuSegmentField; 12] = [
+    VcpuSegmentField::Base,
+    VcpuSegmentField::Limit,
+    VcpuSegmentField::Selector,
+    VcpuSegmentField::SegmentType,
+    VcpuSegmentField::Present,
+    VcpuSegmentField::Dpl,
+    VcpuSegmentField::Db,
+    VcpuSegmentField::S,
+    VcpuSegmentField::L,
+    VcpuSegmentField::G,
+    VcpuSegmentField::Avl,
+    VcpuSegmentField::Unusable,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcpuDescriptorTableRegister {
+    Gdt,
+    Idt,
+}
+
+const DESCRIPTOR_TABLE_REGISTERS: [VcpuDescriptorTableRegister; 2] = [
+    VcpuDescriptorTableRegister::Gdt,
+    VcpuDescriptorTableRegister::Idt,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcpuDescriptorTableField {
+    Base,
+    Limit,
+}
+
+const DESCRIPTOR_TABLE_FIELDS: [VcpuDescriptorTableField; 2] = [
+    VcpuDescriptorTableField::Base,
+    VcpuDescriptorTableField::Limit,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcpuInterruptBitmapWord {
+    Word0,
+    Word1,
+    Word2,
+    Word3,
+}
+
+const INTERRUPT_BITMAP_WORDS: [VcpuInterruptBitmapWord; 4] = [
+    VcpuInterruptBitmapWord::Word0,
+    VcpuInterruptBitmapWord::Word1,
+    VcpuInterruptBitmapWord::Word2,
+    VcpuInterruptBitmapWord::Word3,
+];
+
+impl VcpuInterruptBitmapWord {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Word0 => 0,
+            Self::Word1 => 1,
+            Self::Word2 => 2,
+            Self::Word3 => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcpuSpecialRegisterField {
+    Segment {
+        register: VcpuSegmentRegister,
+        field: VcpuSegmentField,
+    },
+    DescriptorTable {
+        register: VcpuDescriptorTableRegister,
+        field: VcpuDescriptorTableField,
+    },
+    Cr0,
+    Cr2,
+    Cr3,
+    Cr4,
+    Cr8,
+    Efer,
+    ApicBase,
+    InterruptBitmap(VcpuInterruptBitmapWord),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VcpuSpecialRegisterMismatch {
+    field: VcpuSpecialRegisterField,
+    reference_value: u64,
+    observed_value: u64,
+}
+
+impl VcpuSpecialRegisterMismatch {
+    const fn new(
+        field: VcpuSpecialRegisterField,
+        reference_value: u64,
+        observed_value: u64,
+    ) -> Self {
+        Self {
+            field,
+            reference_value,
+            observed_value,
+        }
+    }
+
+    #[must_use]
+    pub const fn field(self) -> VcpuSpecialRegisterField {
+        self.field
+    }
+
+    #[must_use]
+    pub const fn reference_value(self) -> u64 {
+        self.reference_value
+    }
+
+    #[must_use]
+    pub const fn observed_value(self) -> u64 {
+        self.observed_value
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VcpuSegmentState {
     base: u64,
     limit: u32,
@@ -34,6 +193,23 @@ impl VcpuSegmentState {
             g: segment.g,
             avl: segment.avl,
             unusable: segment.unusable,
+        }
+    }
+
+    const fn value(self, field: VcpuSegmentField) -> u64 {
+        match field {
+            VcpuSegmentField::Base => self.base,
+            VcpuSegmentField::Limit => self.limit as u64,
+            VcpuSegmentField::Selector => self.selector as u64,
+            VcpuSegmentField::SegmentType => self.segment_type as u64,
+            VcpuSegmentField::Present => self.present as u64,
+            VcpuSegmentField::Dpl => self.dpl as u64,
+            VcpuSegmentField::Db => self.db as u64,
+            VcpuSegmentField::S => self.s as u64,
+            VcpuSegmentField::L => self.l as u64,
+            VcpuSegmentField::G => self.g as u64,
+            VcpuSegmentField::Avl => self.avl as u64,
+            VcpuSegmentField::Unusable => self.unusable as u64,
         }
     }
 
@@ -112,6 +288,13 @@ impl VcpuDescriptorTableState {
         }
     }
 
+    const fn value(self, field: VcpuDescriptorTableField) -> u64 {
+        match field {
+            VcpuDescriptorTableField::Base => self.base,
+            VcpuDescriptorTableField::Limit => self.limit as u64,
+        }
+    }
+
     #[must_use]
     pub const fn base(&self) -> u64 {
         self.base
@@ -166,6 +349,29 @@ impl VcpuSpecialRegisterSnapshot {
             efer: sregs.efer,
             apic_base: sregs.apic_base,
             interrupt_bitmap: sregs.interrupt_bitmap,
+        }
+    }
+
+    const fn segment(self, register: VcpuSegmentRegister) -> VcpuSegmentState {
+        match register {
+            VcpuSegmentRegister::Cs => self.cs,
+            VcpuSegmentRegister::Ds => self.ds,
+            VcpuSegmentRegister::Es => self.es,
+            VcpuSegmentRegister::Fs => self.fs,
+            VcpuSegmentRegister::Gs => self.gs,
+            VcpuSegmentRegister::Ss => self.ss,
+            VcpuSegmentRegister::Tr => self.tr,
+            VcpuSegmentRegister::Ldt => self.ldt,
+        }
+    }
+
+    const fn descriptor_table(
+        self,
+        register: VcpuDescriptorTableRegister,
+    ) -> VcpuDescriptorTableState {
+        match register {
+            VcpuDescriptorTableRegister::Gdt => self.gdt,
+            VcpuDescriptorTableRegister::Idt => self.idt,
         }
     }
 
@@ -258,6 +464,118 @@ impl VcpuSpecialRegisterSnapshot {
     pub const fn interrupt_bitmap(&self) -> &[u64; 4] {
         &self.interrupt_bitmap
     }
+
+    #[must_use]
+    pub fn compare(&self, observed: &Self) -> VcpuSpecialRegisterSnapshotComparison {
+        let mut mismatches = Vec::new();
+
+        for register in SEGMENT_REGISTERS {
+            let reference_segment = self.segment(register);
+            let observed_segment = observed.segment(register);
+            for field in SEGMENT_FIELDS {
+                push_mismatch_if_different(
+                    &mut mismatches,
+                    VcpuSpecialRegisterField::Segment { register, field },
+                    reference_segment.value(field),
+                    observed_segment.value(field),
+                );
+            }
+        }
+
+        for register in DESCRIPTOR_TABLE_REGISTERS {
+            let reference_table = self.descriptor_table(register);
+            let observed_table = observed.descriptor_table(register);
+            for field in DESCRIPTOR_TABLE_FIELDS {
+                push_mismatch_if_different(
+                    &mut mismatches,
+                    VcpuSpecialRegisterField::DescriptorTable { register, field },
+                    reference_table.value(field),
+                    observed_table.value(field),
+                );
+            }
+        }
+
+        for (field, reference_value, observed_value) in [
+            (VcpuSpecialRegisterField::Cr0, self.cr0, observed.cr0),
+            (VcpuSpecialRegisterField::Cr2, self.cr2, observed.cr2),
+            (VcpuSpecialRegisterField::Cr3, self.cr3, observed.cr3),
+            (VcpuSpecialRegisterField::Cr4, self.cr4, observed.cr4),
+            (VcpuSpecialRegisterField::Cr8, self.cr8, observed.cr8),
+            (VcpuSpecialRegisterField::Efer, self.efer, observed.efer),
+            (
+                VcpuSpecialRegisterField::ApicBase,
+                self.apic_base,
+                observed.apic_base,
+            ),
+        ] {
+            push_mismatch_if_different(
+                &mut mismatches,
+                field,
+                reference_value,
+                observed_value,
+            );
+        }
+
+        for word in INTERRUPT_BITMAP_WORDS {
+            let index = word.index();
+            push_mismatch_if_different(
+                &mut mismatches,
+                VcpuSpecialRegisterField::InterruptBitmap(word),
+                self.interrupt_bitmap[index],
+                observed.interrupt_bitmap[index],
+            );
+        }
+
+        VcpuSpecialRegisterSnapshotComparison {
+            reference: *self,
+            observed: *observed,
+            mismatches,
+        }
+    }
+}
+
+fn push_mismatch_if_different(
+    mismatches: &mut Vec<VcpuSpecialRegisterMismatch>,
+    field: VcpuSpecialRegisterField,
+    reference_value: u64,
+    observed_value: u64,
+) {
+    if reference_value != observed_value {
+        mismatches.push(VcpuSpecialRegisterMismatch::new(
+            field,
+            reference_value,
+            observed_value,
+        ));
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcpuSpecialRegisterSnapshotComparison {
+    reference: VcpuSpecialRegisterSnapshot,
+    observed: VcpuSpecialRegisterSnapshot,
+    mismatches: Vec<VcpuSpecialRegisterMismatch>,
+}
+
+impl VcpuSpecialRegisterSnapshotComparison {
+    #[must_use]
+    pub const fn reference(&self) -> &VcpuSpecialRegisterSnapshot {
+        &self.reference
+    }
+
+    #[must_use]
+    pub const fn observed(&self) -> &VcpuSpecialRegisterSnapshot {
+        &self.observed
+    }
+
+    #[must_use]
+    pub fn mismatches(&self) -> &[VcpuSpecialRegisterMismatch] {
+        &self.mismatches
+    }
+
+    #[must_use]
+    pub fn is_exact_match(&self) -> bool {
+        self.mismatches.is_empty()
+    }
 }
 
 impl Vcpu {
@@ -298,6 +616,29 @@ mod tests {
         }
     }
 
+    fn special_registers() -> sys::KvmSregs {
+        sys::KvmSregs {
+            cs: segment(1, 0xa1),
+            ds: segment(2, 0xa2),
+            es: segment(3, 0xa3),
+            fs: segment(4, 0xa4),
+            gs: segment(5, 0xa5),
+            ss: segment(6, 0xa6),
+            tr: segment(7, 0xa7),
+            ldt: segment(8, 0xa8),
+            gdt: dtable(0x1111, [1, 2, 3]),
+            idt: dtable(0x2222, [4, 5, 6]),
+            cr0: 0x10,
+            cr2: 0x20,
+            cr3: 0x30,
+            cr4: 0x40,
+            cr8: 0x80,
+            efer: 0xe0,
+            apic_base: 0xa0,
+            interrupt_bitmap: [0x1, 0x2, 0x3, 0x4],
+        }
+    }
+
     #[test]
     fn segment_snapshot_copies_semantic_fields_and_ignores_uapi_padding() {
         let a = segment(3, 0xaa);
@@ -334,27 +675,7 @@ mod tests {
 
     #[test]
     fn special_register_snapshot_preserves_every_slot_and_scalar() {
-        let raw = sys::KvmSregs {
-            cs: segment(1, 0xa1),
-            ds: segment(2, 0xa2),
-            es: segment(3, 0xa3),
-            fs: segment(4, 0xa4),
-            gs: segment(5, 0xa5),
-            ss: segment(6, 0xa6),
-            tr: segment(7, 0xa7),
-            ldt: segment(8, 0xa8),
-            gdt: dtable(0x1111, [1, 2, 3]),
-            idt: dtable(0x2222, [4, 5, 6]),
-            cr0: 0x10,
-            cr2: 0x20,
-            cr3: 0x30,
-            cr4: 0x40,
-            cr8: 0x80,
-            efer: 0xe0,
-            apic_base: 0xa0,
-            interrupt_bitmap: [0x1, 0x2, 0x3, 0x4],
-        };
-
+        let raw = special_registers();
         let snapshot = VcpuSpecialRegisterSnapshot::from_kvm_sregs(raw);
 
         assert_eq!(snapshot.cs(), VcpuSegmentState::from_kvm_segment(raw.cs));
@@ -381,5 +702,99 @@ mod tests {
         assert_eq!(snapshot.efer(), 0xe0);
         assert_eq!(snapshot.apic_base(), 0xa0);
         assert_eq!(snapshot.interrupt_bitmap(), &[0x1, 0x2, 0x3, 0x4]);
+    }
+
+    #[test]
+    fn identical_special_register_snapshots_compare_as_exact_match() {
+        let reference = VcpuSpecialRegisterSnapshot::from_kvm_sregs(special_registers());
+        let observed = reference;
+
+        let comparison = reference.compare(&observed);
+
+        assert!(comparison.is_exact_match());
+        assert!(comparison.mismatches().is_empty());
+        assert_eq!(comparison.reference(), &reference);
+        assert_eq!(comparison.observed(), &observed);
+    }
+
+    #[test]
+    fn nested_segment_difference_reports_typed_field_and_both_values() {
+        let reference_raw = special_registers();
+        let mut observed_raw = reference_raw;
+        observed_raw.fs.dpl = 0xfe;
+
+        let reference = VcpuSpecialRegisterSnapshot::from_kvm_sregs(reference_raw);
+        let observed = VcpuSpecialRegisterSnapshot::from_kvm_sregs(observed_raw);
+        let comparison = reference.compare(&observed);
+
+        assert_eq!(comparison.mismatches().len(), 1);
+        let mismatch = comparison.mismatches()[0];
+        assert_eq!(
+            mismatch.field(),
+            VcpuSpecialRegisterField::Segment {
+                register: VcpuSegmentRegister::Fs,
+                field: VcpuSegmentField::Dpl,
+            }
+        );
+        assert_eq!(mismatch.reference_value(), reference_raw.fs.dpl as u64);
+        assert_eq!(mismatch.observed_value(), 0xfe);
+    }
+
+    #[test]
+    fn multiple_differences_follow_canonical_semantic_field_order() {
+        let reference_raw = special_registers();
+        let mut observed_raw = reference_raw;
+        observed_raw.cs.base = 0xcafe;
+        observed_raw.tr.unusable = 0xee;
+        observed_raw.gdt.limit = 0xbeef;
+        observed_raw.cr3 = 0xfeed;
+        observed_raw.interrupt_bitmap[1] = 0xdead;
+
+        let reference = VcpuSpecialRegisterSnapshot::from_kvm_sregs(reference_raw);
+        let observed = VcpuSpecialRegisterSnapshot::from_kvm_sregs(observed_raw);
+        let fields: Vec<VcpuSpecialRegisterField> = reference
+            .compare(&observed)
+            .mismatches()
+            .iter()
+            .map(|mismatch| mismatch.field())
+            .collect();
+
+        assert_eq!(
+            fields,
+            vec![
+                VcpuSpecialRegisterField::Segment {
+                    register: VcpuSegmentRegister::Cs,
+                    field: VcpuSegmentField::Base,
+                },
+                VcpuSpecialRegisterField::Segment {
+                    register: VcpuSegmentRegister::Tr,
+                    field: VcpuSegmentField::Unusable,
+                },
+                VcpuSpecialRegisterField::DescriptorTable {
+                    register: VcpuDescriptorTableRegister::Gdt,
+                    field: VcpuDescriptorTableField::Limit,
+                },
+                VcpuSpecialRegisterField::Cr3,
+                VcpuSpecialRegisterField::InterruptBitmap(VcpuInterruptBitmapWord::Word1),
+            ]
+        );
+    }
+
+    #[test]
+    fn comparison_owns_complete_source_snapshots_and_is_cloneable() {
+        let comparison = {
+            let reference = VcpuSpecialRegisterSnapshot::from_kvm_sregs(special_registers());
+            let mut observed_raw = special_registers();
+            observed_raw.idt.base = 0x4444;
+            let observed = VcpuSpecialRegisterSnapshot::from_kvm_sregs(observed_raw);
+            reference.compare(&observed)
+        };
+
+        let cloned = comparison.clone();
+
+        assert_eq!(cloned, comparison);
+        assert_eq!(comparison.reference().cr4(), 0x40);
+        assert_eq!(comparison.observed().idt().base(), 0x4444);
+        assert_eq!(comparison.mismatches().len(), 1);
     }
 }
