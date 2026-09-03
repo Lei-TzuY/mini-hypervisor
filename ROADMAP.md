@@ -14,26 +14,28 @@ The repository currently has typed, owned boundaries for:
 - owned vCPU general-register snapshots, pure 18-field reference-to-observed comparison, read-only snapshot-bound verification, snapshot-bound restore, and restore-and-verify;
 - owned vCPU special-register snapshots covering segment, descriptor-table, control-register, EFER, APIC-base, and interrupt-bitmap state without exposing KVM UAPI padding, plus pure deterministic semantic-field comparison, read-only snapshot-bound verification, snapshot-bound restore, and restore-and-verify;
 - composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison, read-only snapshot-bound verification, bounded non-transactional restore, restore-and-verify, and a deterministic public/CLI round-trip fixture;
-- centralized VM-exit dispatch with typed HLT and legacy shutdown terminal exits, typed `KVM_EXIT_FAIL_ENTRY` and `KVM_EXIT_SYSTEM_EVENT` payload diagnostics, bounded execution budgets, ordered completed-exit reason traces on successful results, budget-exhaustion, unhandled-exit, fail-entry, and system-event diagnostics, plus the minimal bidirectional debug port-I/O device;
+- centralized VM-exit dispatch with typed HLT and legacy shutdown terminal exits, typed `KVM_EXIT_FAIL_ENTRY`, base `KVM_EXIT_INTERNAL_ERROR`, and `KVM_EXIT_SYSTEM_EVENT` diagnostics, bounded execution budgets, ordered completed-exit reason traces on successful results, budget-exhaustion, unhandled-exit, fail-entry, internal-error, and system-event diagnostics, plus the minimal bidirectional debug port-I/O device;
 - deterministic CLI command dispatch that preserves structured hypervisor failures for known commands and rejects unknown commands with a usage failure before any KVM access;
-- public README, architecture, and safety documentation synchronized through the Phase 57 documentation pass with the integrated Phase 56 state and Phase 55 fail-entry contracts.
+- public README synchronized through the Phase 58 internal-error base-diagnostic boundary; architecture and safety documentation remain synchronized through the Phase 57 documentation pass.
 
-## Phase 57 — architecture and safety documentation synchronization
+## Phase 58 — typed KVM internal-error base diagnostics
 
-The current bounded slice reconciles the architecture and safety documentation with the already integrated Phase 55 typed fail-entry diagnostics and Phase 56 read-only component snapshot verification. It changes no Rust source, tests, KVM ABI behavior, execution policy, state mutation, or guest lifecycle semantics.
+The current bounded slice classifies `KVM_EXIT_INTERNAL_ERROR` as a typed exit and preserves its always-available `suberror` field as owned structured diagnostic state. It deliberately does not introduce optional-capability plumbing or consume capability-dependent internal-error data.
 
 Correctness contract:
 
-- the architecture map and execution narrative include typed `KVM_EXIT_FAIL_ENTRY` payload extraction, structured `EntryFailure` dispatch, and ordered completed-exit trace preservation without implying retry or recovery behavior;
-- fail-entry documentation preserves the tested fixed payload boundary, owned `hardware_entry_failure_reason`/`cpu` diagnostics, and the deliberate absence of a secondary `KVM_GET_REGS` or other vCPU ioctl during dispatch;
-- general-register, special-register, and guest-MSR documentation includes the Phase 56 read-only snapshot-bound verification APIs as exactly one fresh capture followed by the existing pure comparison;
-- MSR verification remains bound to the reference snapshot's own `GuestMsrAccessPolicy`, while all component verification paths remain free of setters, restore, retry, repair, or rollback;
-- the safety boundary includes the fail-entry `kvm_run` prefix in mapping-size reasoning and makes owned fail-entry/system-event payload lifetime semantics explicit;
-- the documents continue to state that whole-VM/guest-memory/device snapshots, atomic/quiesced capture, migration, resumable execution, fail-entry retry/CPU-placement/recovery policy, internal-error capability plumbing, MMIO, interrupts, SMP, long-mode/Linux boot, and system-event lifecycle policy are not implemented;
-- this slice changes documentation only; no production source, test source, workflow, or runtime behavior is modified, and repository CI remains the unchanged Format/Clippy/Test gate.
+- raw exit reason `17` maps to `VcpuExit::InternalError`, and `VcpuExit::InternalError.reason()` round-trips to `17`;
+- `Vcpu::internal_error` is available only when the current shared `kvm_run` exit reason is `KVM_EXIT_INTERNAL_ERROR`; any other reason returns a structured payload-unavailable error;
+- the tested x86 base view reads only the union-offset `suberror: u32` field and copies it into owned `VcpuInternalError` state;
+- the decoder does not read, validate, copy, or expose `ndata` or `data[16]`, and therefore does not require or imply `KVM_CAP_INTERNAL_ERROR_DATA`;
+- dispatch converts the typed exit into `VmExitError::InternalError` containing vCPU id, raw suberror, and a local one-element reason trace without issuing `KVM_GET_REGS` or another secondary vCPU ioctl;
+- the common execution loop replaces that local trace with the complete ordered completed-exit trace, preserving reason `17` exactly once as the final completed exit;
+- no additional `KVM_RUN`, retry, emulation recovery, replacement execution, architecture-specific suberror policy, optional internal-error data decoding, CPU placement, lifecycle action, or resumable execution is introduced;
+- existing HLT, I/O, legacy shutdown, fail-entry, system-event, unknown-exit, budget, state-snapshot, CPU/MSR policy, memory, and CLI semantics remain unchanged;
+- focused public and pure regressions lock typed classification, raw round-trip, x86 union offset/base-prefix size, exact suberror copying, dispatch ownership, and execution-trace replacement.
 
 ## Next bounded slice
 
 No broader implementation slice is preselected by this commit.
 
-After Phase 57 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, CPU-model, state-model, memory, CLI, lifecycle-policy, capability, or architecture work. Do not infer internal-error capability plumbing, fail-entry retry/placement policy, system-event reset/reboot/crash policy, MMIO, interrupts, long-mode boot, SMP, migration, resumable execution, guest-memory/device snapshots, or another CLI command automatically from this documentation synchronization pass.
+After Phase 58 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, CPU-model, state-model, memory, CLI, lifecycle-policy, capability, or architecture work. Do not infer `KVM_CAP_INTERNAL_ERROR_DATA` support, optional internal-error payload decoding, internal-error recovery/retry, fail-entry retry/placement policy, system-event reset/reboot/crash policy, MMIO, interrupts, long-mode boot, SMP, migration, resumable execution, guest-memory/device snapshots, or another CLI command automatically from this base diagnostic boundary.
