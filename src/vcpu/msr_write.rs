@@ -1,3 +1,86 @@
+use crate::error::{Error, HostEnvironmentError};
+use crate::kvm::msr::GuestMsrValueSet;
+use crate::kvm::sys;
+use crate::vcpu::{vcpu_operation, Vcpu, VcpuId};
+use std::io;
+use std::os::fd::AsRawFd;
+
+const VCPU_MSR_WRITE_CAPACITY: usize = 1024;
+
+impl Vcpu {
+    pub fn set_msrs(&self, values: &GuestMsrValueSet) -> Result<(), Error> {
+        let Some(request) = prepare_vcpu_msr_write_request(values)
+            .map_err(|source| vcpu_operation(self.id, "validate KVM_SET_MSRS request", source))?
+        else {
+            return Ok(());
+        };
+
+        let processed = sys::set_msrs(self.fd.as_raw_fd(), &request)
+            .map_err(|source| vcpu_operation(self.id, "KVM_SET_MSRS", source))?;
+        validate_vcpu_msr_write_completion(self.id, values, processed)
+    }
+}
+
+fn prepare_vcpu_msr_write_request(
+    values: &GuestMsrValueSet,
+) -> io::Result<Option<sys::KvmMsrs<VCPU_MSR_WRITE_CAPACITY>>> {
+    let values = values.values();
+    if values.is_empty() {
+        return Ok(None);
+    }
+    if values.len() > VCPU_MSR_WRITE_CAPACITY {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "vCPU KVM_SET_MSRS request count {} exceeds bounded capacity {}",
+                values.len(),
+                VCPU_MSR_WRITE_CAPACITY
+            ),
+        ));
+    }
+
+    let mut request = sys::KvmMsrs::<VCPU_MSR_WRITE_CAPACITY>::new();
+    request.nmsrs =
+        u32::try_from(values.len()).expect("bounded vCPU MSR write count always fits u32");
+    for (entry, value) in request.entries[..values.len()]
+        .iter_mut()
+        .zip(values.iter().copied())
+    {
+        entry.index = value.index().get();
+        entry.data = value.value();
+    }
+    Ok(Some(request))
+}
+
+fn validate_vcpu_msr_write_completion(
+    id: VcpuId,
+    values: &GuestMsrValueSet,
+    processed: usize,
+) -> Result<(), Error> {
+    let requested = values.values().len();
+    if processed == requested {
+        return Ok(());
+    }
+    if processed < requested {
+        return Err(Error::HostEnvironment(
+            HostEnvironmentError::VcpuMsrPartialWrite {
+                id: id.get(),
+                requested,
+                processed,
+                first_unwritten_index: values.values()[processed].index().get(),
+            },
+        ));
+    }
+
+    Err(Error::HostEnvironment(
+        HostEnvironmentError::VcpuMsrInvalidWriteCompletion {
+            id: id.get(),
+            requested,
+            processed,
+        },
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
