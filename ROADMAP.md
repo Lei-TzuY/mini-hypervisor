@@ -13,25 +13,25 @@ The repository currently has typed, owned boundaries for:
 - owned vCPU general-register snapshots, pure 18-field reference-to-observed comparison, snapshot-bound restore, and restore-and-verify;
 - owned vCPU special-register snapshots covering segment, descriptor-table, control-register, EFER, APIC-base, and interrupt-bitmap state without exposing KVM UAPI padding, plus pure deterministic semantic-field comparison, snapshot-bound restore, and restore-and-verify;
 - composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison, bounded non-transactional restore, and restore-and-verify;
-- centralized VM-exit dispatch with typed HLT and shutdown terminal exits, bounded execution budgets, ordered completed-exit reason traces on successful results, budget-exhaustion diagnostics, and unhandled-exit diagnostics, plus the minimal bidirectional debug port-I/O device.
+- centralized VM-exit dispatch with typed HLT and legacy shutdown terminal exits, bounded execution budgets, ordered completed-exit reason traces on successful results, budget-exhaustion diagnostics, and unhandled-exit diagnostics, plus the minimal bidirectional debug port-I/O device.
 
-## Phase 46 — unhandled-exit completed trace diagnostics
+## Phase 47 — user-facing capability documentation reconciliation
 
-The current bounded slice extends `VmExitError::Unhandled` with an owned ordered `exit_reasons` trace so an unsupported VM exit no longer discards the successful KVM exits observed before dispatch rejected the current reason.
+The current bounded slice reconciles the public README with the exact Phase 46 implementation state after the CPUID/MSR/state-snapshot and execution-diagnostics work outgrew the older user-facing capability summary. It intentionally changes no production behavior.
 
 Correctness contract:
 
-- `VmExitError::Unhandled` owns an `exit_reasons: Vec<u32>` while preserving the existing vCPU id, raw reason, RIP, RFLAGS, and display text;
-- direct dispatch of one unknown `VcpuExit` produces a local trace containing exactly that raw reason, because that exit has already completed before dispatch begins;
-- `run_vcpu_until_stopped` continues recording each successful `Vcpu::run_once()` result before dispatch and, only when dispatch returns `Unhandled`, replaces the local one-element trace with the execution loop's complete ordered trace;
-- the execution trace contains every successful KVM exit exactly once, including the current unhandled reason as its final entry; no failed KVM run can appear in it;
-- trace attachment does not issue another `KVM_RUN`, retry dispatch, alter exit-budget accounting, service or replay port I/O, or change HLT/shutdown terminal behavior;
-- non-`Unhandled` dispatch errors are propagated unchanged and do not gain this trace in this slice;
-- focused public-surface and pure regressions lock owned trace storage, direct-dispatch local trace behavior, full-trace replacement, and unchanged propagation of other dispatch errors;
-- this slice does not add `KVM_EXIT_SYSTEM_EVENT` payload handling, MMIO, interrupts, long-mode boot, SMP, device expansion, migration orchestration, resumable execution, guest-memory/device snapshots, or rollback semantics.
+- the README must no longer claim that guest MSR policy or vCPU snapshots are unimplemented when both are already integrated;
+- the README must describe configured CPUID application/read-back/proof, host/guest MSR modeling, general/special/composite vCPU state capture/compare/restore/restore-and-verify, typed HLT and legacy `KVM_EXIT_SHUTDOWN`, and ordered completed-exit diagnostics without overstating broader VMM capability;
+- state snapshots must be described as owned CPU/MSR state boundaries rather than whole-VM, guest-memory, device-state, checkpoint, migration, or atomic/quiesced snapshots;
+- composite restore must remain explicitly documented as bounded and non-transactional, including the absence of rollback after earlier component writes complete;
+- exit-budget exhaustion must continue to preserve the pending-I/O completion caveat, and successful/budget-exhausted/unhandled paths must accurately describe their ordered completed-exit diagnostics;
+- limitations must still explicitly exclude MMIO, multiple device families, interrupts/in-kernel interrupt-controller support, arbitrary CPU models, virtio, SMP, ELF loading, long-mode/Linux boot, migration orchestration, guest-memory/device snapshots, resumable execution, rollback, and `KVM_EXIT_SYSTEM_EVENT` payload policy;
+- the README must point readers to this file as the authoritative current bounded implementation state and next-slice selector;
+- this slice does not change Rust production code, KVM ABI handling, tests, CLI semantics, execution policy, state-model semantics, or safety assumptions; the normal full CI remains the regression gate for accidental repository breakage.
 
 ## Next bounded slice
 
 No broader implementation slice is preselected by this commit.
 
-After Phase 46 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, and this authoritative roadmap before choosing further execution, architecture-documentation, or state-model work. Do not infer that `KVM_EXIT_SYSTEM_EVENT`, MMIO, interrupts, long-mode boot, SMP, migration, or resumable execution are automatically next merely because successful, budget-exhausted, and unhandled execution paths now retain ordered completed-exit diagnostics.
+After Phase 47 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, architecture-documentation, or state-model work. In particular, do not infer that `KVM_EXIT_SYSTEM_EVENT`, MMIO, interrupts, long-mode boot, SMP, migration, or resumable execution are automatically next merely because the public README now accurately reflects the accumulated implementation.
