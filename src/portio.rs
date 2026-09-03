@@ -3,6 +3,12 @@ use crate::vcpu::{PortIoDirection, PortIoExit};
 
 pub const DEBUG_PORT: u16 = 0x00e9;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PortIoService {
+    Output,
+    Input(Vec<u8>),
+}
+
 #[derive(Debug, Default)]
 pub struct PortIoBus {
     debug_port: Option<DebugPort>,
@@ -21,7 +27,17 @@ impl PortIoBus {
         }
     }
 
-    pub fn dispatch(&mut self, io: &PortIoExit) -> Result<(), Error> {
+    #[must_use]
+    pub fn with_debug_port_input(input_byte: u8) -> Self {
+        Self {
+            debug_port: Some(DebugPort {
+                input_byte,
+                ..DebugPort::default()
+            }),
+        }
+    }
+
+    pub fn dispatch(&mut self, io: &PortIoExit) -> Result<PortIoService, Error> {
         match self.debug_port.as_mut() {
             Some(device) if io.port() == DEBUG_PORT => device.handle(io).map_err(Error::PortIo),
             _ => Err(Error::PortIo(PortIoError::UnhandledPort {
@@ -42,11 +58,12 @@ impl PortIoBus {
 #[derive(Debug, Default)]
 struct DebugPort {
     bytes: Vec<u8>,
+    input_byte: u8,
 }
 
 impl DebugPort {
-    fn handle(&mut self, io: &PortIoExit) -> Result<(), PortIoError> {
-        if io.direction() != PortIoDirection::Out || io.size() != 1 || io.count() != 1 {
+    fn handle(&mut self, io: &PortIoExit) -> Result<PortIoService, PortIoError> {
+        if io.size() != 1 || io.count() != 1 {
             return Err(PortIoError::UnsupportedDebugAccess {
                 port: io.port(),
                 direction: io.direction().raw(),
@@ -55,16 +72,21 @@ impl DebugPort {
             });
         }
 
-        if io.output_data().len() != 1 {
-            return Err(PortIoError::InvalidOutputPayload {
-                port: io.port(),
-                expected: 1,
-                actual: io.output_data().len(),
-            });
-        }
+        match io.direction() {
+            PortIoDirection::Out => {
+                if io.output_data().len() != 1 {
+                    return Err(PortIoError::InvalidOutputPayload {
+                        port: io.port(),
+                        expected: 1,
+                        actual: io.output_data().len(),
+                    });
+                }
 
-        self.bytes.push(io.output_data()[0]);
-        Ok(())
+                self.bytes.push(io.output_data()[0]);
+                Ok(PortIoService::Output)
+            }
+            PortIoDirection::In => Ok(PortIoService::Input(vec![self.input_byte])),
+        }
     }
 
     fn bytes(&self) -> &[u8] {
@@ -80,14 +102,26 @@ mod tests {
         PortIoExit::new(PortIoDirection::Out, size, port, count, bytes.to_vec())
     }
 
+    fn input(port: u16, size: u8, count: u32) -> PortIoExit {
+        PortIoExit::new(PortIoDirection::In, size, port, count, Vec::new())
+    }
+
     #[test]
     fn debug_port_captures_one_byte_output() {
         let mut bus = PortIoBus::with_debug_port();
         let io = output(DEBUG_PORT, 1, 1, b"K");
 
-        bus.dispatch(&io).unwrap();
-
+        assert_eq!(bus.dispatch(&io).unwrap(), PortIoService::Output);
         assert_eq!(bus.debug_output(), Some(&b"K"[..]));
+    }
+
+    #[test]
+    fn debug_port_returns_configured_one_byte_input() {
+        let mut bus = PortIoBus::with_debug_port_input(b'R');
+        let io = input(DEBUG_PORT, 1, 1);
+
+        assert_eq!(bus.dispatch(&io).unwrap(), PortIoService::Input(vec![b'R']));
+        assert_eq!(bus.debug_output(), Some(&[][..]));
     }
 
     #[test]
@@ -107,9 +141,25 @@ mod tests {
     }
 
     #[test]
-    fn rejects_debug_port_input() {
-        let mut bus = PortIoBus::with_debug_port();
-        let io = PortIoExit::new(PortIoDirection::In, 1, DEBUG_PORT, 1, Vec::new());
+    fn rejects_debug_port_wide_input() {
+        let mut bus = PortIoBus::with_debug_port_input(b'R');
+        let io = input(DEBUG_PORT, 2, 1);
+
+        assert!(matches!(
+            bus.dispatch(&io),
+            Err(Error::PortIo(PortIoError::UnsupportedDebugAccess {
+                port: DEBUG_PORT,
+                direction: 0,
+                size: 2,
+                count: 1,
+            }))
+        ));
+    }
+
+    #[test]
+    fn rejects_debug_port_multi_count_input() {
+        let mut bus = PortIoBus::with_debug_port_input(b'R');
+        let io = input(DEBUG_PORT, 1, 2);
 
         assert!(matches!(
             bus.dispatch(&io),
@@ -117,7 +167,7 @@ mod tests {
                 port: DEBUG_PORT,
                 direction: 0,
                 size: 1,
-                count: 1,
+                count: 2,
             }))
         ));
     }
