@@ -192,9 +192,7 @@ impl GuestCpuPolicy {
                     .entries
                     .iter()
                     .find(|candidate| candidate.key() == reference.key())
-                    .and_then(|candidate| {
-                        CpuidPolicyEntryMismatch::between(*reference, *candidate)
-                    })
+                    .and_then(|candidate| CpuidPolicyEntryMismatch::between(*reference, *candidate))
             })
             .collect();
 
@@ -518,10 +516,7 @@ mod tests {
         let observed = policy(vec![extra_a, mismatch_observed, shared, extra_b]);
         let comparison = reference.compare(&observed);
 
-        assert_eq!(
-            comparison.missing_from_observed(),
-            &[missing_a, missing_b]
-        );
+        assert_eq!(comparison.missing_from_observed(), &[missing_a, missing_b]);
         assert_eq!(comparison.extra_in_observed(), &[extra_a, extra_b]);
         assert_eq!(comparison.entry_mismatches().len(), 1);
         assert_eq!(
