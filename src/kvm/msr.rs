@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MsrIndex(u32);
@@ -630,3 +630,107 @@ mod tests {
         assert_eq!(index.get(), 0xdead_beef);
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MsrAccessAuthority {
+    ReadWrite,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GuestMsrAccess {
+    index: MsrIndex,
+    authority: MsrAccessAuthority,
+}
+
+impl GuestMsrAccess {
+    const fn new(index: MsrIndex, authority: MsrAccessAuthority) -> Self {
+        Self { index, authority }
+    }
+
+    #[must_use]
+    pub const fn index(self) -> MsrIndex {
+        self.index
+    }
+
+    #[must_use]
+    pub const fn authority(self) -> MsrAccessAuthority {
+        self.authority
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuestMsrAccessPolicy {
+    entries: Vec<GuestMsrAccess>,
+}
+
+impl GuestMsrAccessPolicy {
+    pub fn from_host(
+        host: &HostMsrIndexList,
+        requested: &[MsrIndex],
+    ) -> Result<Self, GuestMsrPolicyError> {
+        let mut seen = HashMap::with_capacity(requested.len());
+        let mut entries = Vec::with_capacity(requested.len());
+
+        for (position, index) in requested.iter().copied().enumerate() {
+            if let Some(first_position) = seen.get(&index).copied() {
+                return Err(GuestMsrPolicyError::DuplicateIndex {
+                    index,
+                    first_position,
+                    duplicate_position: position,
+                });
+            }
+            if !host.indices().contains(&index) {
+                return Err(GuestMsrPolicyError::UnsupportedIndex { index, position });
+            }
+            seen.insert(index, position);
+            entries.push(GuestMsrAccess::new(index, MsrAccessAuthority::ReadWrite));
+        }
+
+        Ok(Self { entries })
+    }
+
+    #[must_use]
+    pub fn entries(&self) -> &[GuestMsrAccess] {
+        &self.entries
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuestMsrPolicyError {
+    UnsupportedIndex {
+        index: MsrIndex,
+        position: usize,
+    },
+    DuplicateIndex {
+        index: MsrIndex,
+        first_position: usize,
+        duplicate_position: usize,
+    },
+}
+
+impl std::fmt::Display for GuestMsrPolicyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedIndex { index, position } => write!(
+                f,
+                "guest MSR policy index {:#x} at position {position} is not present in KVM_GET_MSR_INDEX_LIST",
+                index.get()
+            ),
+            Self::DuplicateIndex {
+                index,
+                first_position,
+                duplicate_position,
+            } => write!(
+                f,
+                "guest MSR policy index {:#x} is duplicated at positions {first_position} and {duplicate_position}",
+                index.get()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for GuestMsrPolicyError {}
+
+#[cfg(test)]
+#[path = "msr/policy_tests.rs"]
+mod policy_tests;
