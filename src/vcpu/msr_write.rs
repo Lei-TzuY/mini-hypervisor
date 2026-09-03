@@ -340,3 +340,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "msr_restore_verify_tests.rs"]
+mod msr_restore_verify_tests;
