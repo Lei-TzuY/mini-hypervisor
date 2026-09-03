@@ -1,8 +1,6 @@
 use crate::error::{Error, VmExitError};
 use crate::portio::{PortIoBus, PortIoService};
-use crate::vcpu::{
-    PortIoExit, Vcpu, VcpuExit, VcpuId, VcpuRegisters, VcpuSystemEventType,
-};
+use crate::vcpu::{PortIoExit, Vcpu, VcpuExit, VcpuId, VcpuRegisters, VcpuSystemEventType};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
