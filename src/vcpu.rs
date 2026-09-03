@@ -172,6 +172,7 @@ pub struct Vcpu {
     id: VcpuId,
     fd: OwnedFd,
     run: KvmRunMapping,
+    supports_internal_error_data: bool,
 }
 
 impl Vcpu {
@@ -179,6 +180,7 @@ impl Vcpu {
         id: VcpuId,
         fd: OwnedFd,
         run_mmap_size: usize,
+        supports_internal_error_data: bool,
     ) -> Result<Self, Error> {
         let run = KvmRunMapping::map(&fd, run_mmap_size).map_err(|source| {
             Error::HostEnvironment(HostEnvironmentError::VcpuRunMapping {
@@ -186,12 +188,22 @@ impl Vcpu {
                 source,
             })
         })?;
-        Ok(Self { id, fd, run })
+        Ok(Self {
+            id,
+            fd,
+            run,
+            supports_internal_error_data,
+        })
     }
 
     #[must_use]
     pub const fn id(&self) -> VcpuId {
         self.id
+    }
+
+    #[must_use]
+    pub const fn supports_internal_error_data(&self) -> bool {
+        self.supports_internal_error_data
     }
 
     pub fn initialize_real_mode(&self, entry: GuestPhysAddr) -> Result<(), Error> {
