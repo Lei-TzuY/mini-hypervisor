@@ -1,8 +1,10 @@
+pub mod cpu;
 pub(crate) mod sys;
 
 use crate::error::{Error, GuestMemoryError, HostEnvironmentError, KvmCapabilityError};
 use crate::memory::{GuestMemory, GuestMemoryRegion, GuestPhysAddr, KVM_MEMORY_ALIGNMENT};
 use crate::vcpu::{Vcpu, VcpuId};
+use cpu::{CpuidEntry, GuestCpuPolicy, HostCpuid};
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -17,11 +19,6 @@ const KVM_IDENTITY_MAP_ADDR: u64 = 0xfeff_c000;
 const KVM_TSS_ADDR: u64 = KVM_IDENTITY_MAP_ADDR + KVM_MEMORY_ALIGNMENT;
 const KVM_RESERVED_X86_SIZE: u64 = 4 * KVM_MEMORY_ALIGNMENT;
 const KVM_MAX_SUPPORTED_CPUID_ENTRIES: usize = 256;
-const CPUID_FEATURES: u32 = 0x0000_0001;
-const CPUID_FEATURE_X2APIC: u32 = 1 << 21;
-const CPUID_FEATURE_TSC_DEADLINE: u32 = 1 << 24;
-const KVM_CPUID_FEATURES: u32 = 0x4000_0001;
-const KVM_FEATURE_PV_UNHALT: u32 = 1 << 7;
 
 const REQUIRED_EXTENSIONS: [(&str, i32); 4] = [
     ("KVM_CAP_USER_MEMORY", KVM_CAP_USER_MEMORY),
@@ -83,44 +80,12 @@ impl HostCapabilities {
     }
 }
 
-#[derive(Debug, Clone)]
-struct SupportedCpuid {
-    entries: Vec<sys::KvmCpuidEntry2>,
-}
-
-impl SupportedCpuid {
-    fn query(fd: &File) -> Result<Self, Error> {
-        let mut buffer = sys::KvmCpuid2::<KVM_MAX_SUPPORTED_CPUID_ENTRIES>::new();
-        sys::get_supported_cpuid(fd.as_raw_fd(), &mut buffer)
-            .map_err(|source| host_io("KVM_GET_SUPPORTED_CPUID", source))?;
-
-        let count = validate_supported_cpuid_count(buffer.nent, KVM_MAX_SUPPORTED_CPUID_ENTRIES)?;
-        let mut entries = buffer.entries[..count].to_vec();
-        sanitize_supported_cpuid(&mut entries);
-        Ok(Self { entries })
-    }
-
-    fn apply_to_vcpu(&self, id: VcpuId, fd: &OwnedFd) -> Result<(), Error> {
-        let mut buffer = sys::KvmCpuid2::<KVM_MAX_SUPPORTED_CPUID_ENTRIES>::new();
-        let count = self.entries.len();
-        buffer.nent = u32::try_from(count).expect("validated KVM CPUID count fits u32");
-        buffer.entries[..count].copy_from_slice(&self.entries);
-
-        sys::set_cpuid2(fd.as_raw_fd(), &buffer).map_err(|source| {
-            Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
-                id: id.get(),
-                operation: "KVM_SET_CPUID2",
-                source,
-            })
-        })
-    }
-}
-
 #[derive(Debug)]
 pub struct KvmBackend {
     fd: File,
     capabilities: HostCapabilities,
-    supported_cpuid: SupportedCpuid,
+    host_cpuid: HostCpuid,
+    cpu_policy: GuestCpuPolicy,
 }
 
 impl KvmBackend {
@@ -151,18 +116,30 @@ impl KvmBackend {
             extensions,
         };
         capabilities.validate()?;
-        let supported_cpuid = SupportedCpuid::query(&fd)?;
+        let host_cpuid = query_host_cpuid(&fd)?;
+        let cpu_policy = GuestCpuPolicy::from_host(&host_cpuid);
 
         Ok(Self {
             fd,
             capabilities,
-            supported_cpuid,
+            host_cpuid,
+            cpu_policy,
         })
     }
 
     #[must_use]
     pub fn capabilities(&self) -> &HostCapabilities {
         &self.capabilities
+    }
+
+    #[must_use]
+    pub fn host_cpuid(&self) -> &HostCpuid {
+        &self.host_cpuid
+    }
+
+    #[must_use]
+    pub fn cpu_policy(&self) -> &GuestCpuPolicy {
+        &self.cpu_policy
     }
 
     pub fn create_vm(&self) -> Result<Vm, Error> {
@@ -190,7 +167,7 @@ impl KvmBackend {
             guest_memory: None,
             vcpu_mmap_size: usize::try_from(self.capabilities.vcpu_mmap_size)
                 .expect("validated positive i32 always fits usize"),
-            supported_cpuid: self.supported_cpuid.clone(),
+            cpu_policy: self.cpu_policy.clone(),
         })
     }
 }
@@ -200,7 +177,7 @@ pub struct Vm {
     fd: OwnedFd,
     guest_memory: Option<GuestMemory>,
     vcpu_mmap_size: usize,
-    supported_cpuid: SupportedCpuid,
+    cpu_policy: GuestCpuPolicy,
 }
 
 impl Vm {
@@ -244,7 +221,7 @@ impl Vm {
             })
         })?;
         let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
-        self.supported_cpuid.apply_to_vcpu(id, &fd)?;
+        apply_cpu_policy(&self.cpu_policy, id, &fd)?;
         Vcpu::from_kvm_fd(id, fd, self.vcpu_mmap_size)
     }
 
@@ -278,6 +255,66 @@ fn check_extension(fd: &File, name: &'static str, id: i32) -> Result<Capability,
     Ok(Capability { name, id, value })
 }
 
+fn query_host_cpuid(fd: &File) -> Result<HostCpuid, Error> {
+    let mut buffer = sys::KvmCpuid2::<KVM_MAX_SUPPORTED_CPUID_ENTRIES>::new();
+    sys::get_supported_cpuid(fd.as_raw_fd(), &mut buffer)
+        .map_err(|source| host_io("KVM_GET_SUPPORTED_CPUID", source))?;
+
+    let count = validate_supported_cpuid_count(buffer.nent, KVM_MAX_SUPPORTED_CPUID_ENTRIES)?;
+    let entries = buffer.entries[..count]
+        .iter()
+        .copied()
+        .map(cpuid_entry_from_kvm)
+        .collect();
+    Ok(HostCpuid::from_entries(entries))
+}
+
+fn apply_cpu_policy(policy: &GuestCpuPolicy, id: VcpuId, fd: &OwnedFd) -> Result<(), Error> {
+    let mut buffer = sys::KvmCpuid2::<KVM_MAX_SUPPORTED_CPUID_ENTRIES>::new();
+    let count = policy.entries().len();
+    debug_assert!(count <= KVM_MAX_SUPPORTED_CPUID_ENTRIES);
+    buffer.nent = u32::try_from(count).expect("validated KVM CPUID count fits u32");
+    for (destination, source) in buffer.entries[..count]
+        .iter_mut()
+        .zip(policy.entries().iter().copied())
+    {
+        *destination = cpuid_entry_to_kvm(source);
+    }
+
+    sys::set_cpuid2(fd.as_raw_fd(), &buffer).map_err(|source| {
+        Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
+            id: id.get(),
+            operation: "KVM_SET_CPUID2",
+            source,
+        })
+    })
+}
+
+fn cpuid_entry_from_kvm(entry: sys::KvmCpuidEntry2) -> CpuidEntry {
+    CpuidEntry {
+        function: entry.function,
+        index: entry.index,
+        flags: entry.flags,
+        eax: entry.eax,
+        ebx: entry.ebx,
+        ecx: entry.ecx,
+        edx: entry.edx,
+    }
+}
+
+fn cpuid_entry_to_kvm(entry: CpuidEntry) -> sys::KvmCpuidEntry2 {
+    sys::KvmCpuidEntry2 {
+        function: entry.function,
+        index: entry.index,
+        flags: entry.flags,
+        eax: entry.eax,
+        ebx: entry.ebx,
+        ecx: entry.ecx,
+        edx: entry.edx,
+        padding: [0; 3],
+    }
+}
+
 fn validate_supported_cpuid_count(reported: u32, capacity: usize) -> Result<usize, Error> {
     let count =
         usize::try_from(reported).map_err(|_| malformed_supported_cpuid(reported, capacity))?;
@@ -295,24 +332,6 @@ fn malformed_supported_cpuid(reported: u32, capacity: usize) -> Error {
             format!("KVM reported {reported} supported CPUID entries; expected 1..={capacity}"),
         ),
     )
-}
-
-fn sanitize_supported_cpuid(entries: &mut [sys::KvmCpuidEntry2]) {
-    for entry in entries {
-        entry.padding = [0; 3];
-        match entry.function {
-            CPUID_FEATURES => {
-                // This VMM has no in-kernel LAPIC yet. KVM documents X2APIC and TSC deadline as
-                // LAPIC-dependent, so do not expose them until the interrupt model exists.
-                entry.ecx &= !(CPUID_FEATURE_X2APIC | CPUID_FEATURE_TSC_DEADLINE);
-            }
-            KVM_CPUID_FEATURES => {
-                // PV_UNHALT also depends on in-kernel LAPIC support.
-                entry.eax &= !KVM_FEATURE_PV_UNHALT;
-            }
-            _ => {}
-        }
-    }
 }
 
 fn reserved_kvm_x86_region() -> GuestMemoryRegion {
@@ -468,28 +487,36 @@ mod tests {
     }
 
     #[test]
-    fn cpuid_policy_masks_lapic_dependent_features_and_reserved_padding() {
-        let mut entries = [
-            sys::KvmCpuidEntry2 {
-                function: CPUID_FEATURES,
-                ecx: CPUID_FEATURE_X2APIC | CPUID_FEATURE_TSC_DEADLINE | 1,
-                padding: [1, 2, 3],
-                ..sys::KvmCpuidEntry2::ZERO
-            },
-            sys::KvmCpuidEntry2 {
-                function: KVM_CPUID_FEATURES,
-                eax: KVM_FEATURE_PV_UNHALT | 1,
-                padding: [4, 5, 6],
-                ..sys::KvmCpuidEntry2::ZERO
-            },
-        ];
+    fn cpuid_uapi_conversion_drops_reserved_padding_and_round_trips_fields() {
+        let raw = sys::KvmCpuidEntry2 {
+            function: 0x8000_0001,
+            index: 7,
+            flags: 0xa5a5_5a5a,
+            eax: 0x1111_1111,
+            ebx: 0x2222_2222,
+            ecx: 0x3333_3333,
+            edx: 0x4444_4444,
+            padding: [1, 2, 3],
+        };
 
-        sanitize_supported_cpuid(&mut entries);
+        let typed = cpuid_entry_from_kvm(raw);
+        assert_eq!(typed.function, raw.function);
+        assert_eq!(typed.index, raw.index);
+        assert_eq!(typed.flags, raw.flags);
+        assert_eq!(typed.eax, raw.eax);
+        assert_eq!(typed.ebx, raw.ebx);
+        assert_eq!(typed.ecx, raw.ecx);
+        assert_eq!(typed.edx, raw.edx);
 
-        assert_eq!(entries[0].ecx, 1);
-        assert_eq!(entries[1].eax, 1);
-        assert_eq!(entries[0].padding, [0; 3]);
-        assert_eq!(entries[1].padding, [0; 3]);
+        let round_trip = cpuid_entry_to_kvm(typed);
+        assert_eq!(round_trip.padding, [0; 3]);
+        assert_eq!(round_trip.function, raw.function);
+        assert_eq!(round_trip.index, raw.index);
+        assert_eq!(round_trip.flags, raw.flags);
+        assert_eq!(round_trip.eax, raw.eax);
+        assert_eq!(round_trip.ebx, raw.ebx);
+        assert_eq!(round_trip.ecx, raw.ecx);
+        assert_eq!(round_trip.edx, raw.edx);
     }
 
     #[test]
