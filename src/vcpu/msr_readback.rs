@@ -248,3 +248,6 @@ mod tests {
             .contains("entry 1: expected 0x1b, got 0x3a"));
     }
 }
+
+#[path = "msr_write.rs"]
+mod msr_write;
