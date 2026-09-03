@@ -3,7 +3,8 @@ use mini_hypervisor::error::{Error, HostEnvironmentError};
 use mini_hypervisor::run_state_snapshot_roundtrip;
 
 #[test]
-fn public_state_snapshot_roundtrip_reports_changed_then_exact_restored_state_when_kvm_is_available() {
+fn public_state_snapshot_roundtrip_reports_changed_then_exact_restored_state_when_kvm_is_available()
+{
     let result = match run_state_snapshot_roundtrip(VmConfig::default()) {
         Ok(result) => result,
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
