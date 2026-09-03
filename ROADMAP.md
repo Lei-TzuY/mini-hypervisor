@@ -11,25 +11,25 @@ The repository currently has typed, owned boundaries for:
 - bounded host MSR index/feature discovery, feature-value stability classification, immutable host MSR model candidates, and pure candidate comparison;
 - explicit guest MSR access policy, policy-validated value sets, policy-bound capture, full MSR snapshots, snapshot comparison, bounded non-transactional restore, and restore-and-verify;
 - owned vCPU general-register snapshots, pure 18-field reference-to-observed comparison, snapshot-bound restore, and restore-and-verify;
+- owned vCPU special-register snapshots covering segment, descriptor-table, control-register, EFER, APIC-base, and interrupt-bitmap state without exposing KVM UAPI padding;
 - centralized VM-exit dispatch, bounded execution budgets, and the minimal bidirectional debug port-I/O device.
 
-## Phase 34 — vCPU general-register restore-and-verify
+## Phase 35 — vCPU special-register snapshot capture
 
-The current bounded slice adds `Vcpu::restore_and_verify_register_snapshot(&VcpuRegisterSnapshot)`.
+The current bounded slice adds `Vcpu::capture_special_register_snapshot()` plus typed owned `VcpuSpecialRegisterSnapshot`, `VcpuSegmentState`, and `VcpuDescriptorTableState` representations.
 
 Correctness contract:
 
-- the input is one complete owned `VcpuRegisterSnapshot`;
-- the write delegates to the existing `restore_register_snapshot` path, so KVM_SET_REGS serialization remains single-sourced;
-- post-write read-back occurs only after the restore succeeds and delegates to `capture_register_snapshot`;
-- verification delegates to the existing pure `VcpuRegisterSnapshot::compare` contract, preserving the canonical 18-field mismatch identities and ordering;
-- restore or recapture failures propagate without retry, rollback, or automatic repair;
-- if KVM accepts the write but the recaptured register state differs, the operation returns the owned `VcpuRegisterSnapshotComparison` instead of converting the mismatch into a special failure;
-- RIP and RFLAGS remain ordinary comparison fields rather than termination or lifecycle verdicts;
-- this slice does not restore special registers, MSRs, CPUID, memory, device state, or multiple vCPUs and does not claim migration safety.
+- each capture performs exactly one existing `KVM_GET_SREGS` read and does not write guest state;
+- the owned snapshot preserves CS/DS/ES/FS/GS/SS/TR/LDT semantic fields, GDT/IDT base and limit, CR0/CR2/CR3/CR4/CR8, EFER, APIC base, and all four interrupt-bitmap words;
+- KVM segment and descriptor-table padding is deliberately absent from the public typed state;
+- capture copies the kernel-reported semantic values without normalization, masking, synthesis, or interpretation;
+- `KVM_GET_SREGS` failure remains a named vCPU operation failure through the existing error boundary;
+- focused pure regressions lock complete semantic field copying and padding exclusion, while a KVM-aware regression proves the explicitly initialized real-mode segment bases/selectors and CR0 PE/PG state are observable through the snapshot;
+- this slice does not compare, restore, restore-and-verify, compose, or migrate special-register state and does not modify CPUID, MSR, memory, device, or multi-vCPU lifecycle behavior.
 
 ## Next bounded slice
 
 No broader implementation slice is preselected by this commit.
 
-After Phase 34 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, and this authoritative roadmap before choosing any additional state-restoration or state-composition work. Do not infer that special-register restore, multi-state snapshot composition, migration orchestration, long-mode boot, interrupts, MMIO, SMP, or device expansion is automatically next merely because general-register restore-and-verify now exists.
+After Phase 35 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, and this authoritative roadmap before choosing further state-comparison, restoration, or composition work. Do not infer that special-register comparison or restore, multi-state snapshot composition, migration orchestration, long-mode boot, interrupts, MMIO, SMP, or device expansion is automatically next merely because special-register capture now exists.
