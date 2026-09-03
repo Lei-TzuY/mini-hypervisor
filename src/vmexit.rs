@@ -1,5 +1,5 @@
 use crate::error::{Error, VmExitError};
-use crate::portio::PortIoBus;
+use crate::portio::{PortIoBus, PortIoService};
 use crate::vcpu::{PortIoExit, Vcpu, VcpuExit, VcpuId, VcpuRegisters};
 use std::fmt;
 
@@ -53,14 +53,17 @@ pub enum VmExitDisposition {
 }
 
 pub fn dispatch_vcpu_exit(
-    vcpu: &Vcpu,
+    vcpu: &mut Vcpu,
     exit: VcpuExit,
     port_io: &mut PortIoBus,
 ) -> Result<VmExitDisposition, Error> {
     match exit {
         VcpuExit::Io => {
             let io = vcpu.port_io_exit()?;
-            port_io.dispatch(&io)?;
+            match port_io.dispatch(&io)? {
+                PortIoService::Output => {}
+                PortIoService::Input(response) => vcpu.write_port_io_input(&response)?,
+            }
             Ok(VmExitDisposition::Continue(io))
         }
         VcpuExit::Hlt => {
