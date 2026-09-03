@@ -23,6 +23,9 @@ mod special_register_restore;
 mod msr_readback;
 pub use msr_readback::{VcpuMsrValue, VcpuMsrValues};
 
+mod system_event;
+pub use system_event::{VcpuSystemEvent, VcpuSystemEventType};
+
 const REAL_MODE_MAX_RIP: u64 = u16::MAX as u64;
 const CR0_PROTECTED_MODE_ENABLE: u64 = 1;
 const CR0_PAGING_ENABLE: u64 = 1 << 31;
@@ -50,6 +53,7 @@ pub enum VcpuExit {
     Hlt,
     Io,
     Shutdown,
+    SystemEvent,
     Unhandled { reason: u32 },
 }
 
@@ -60,6 +64,7 @@ impl VcpuExit {
             sys::KVM_EXIT_IO => Self::Io,
             sys::KVM_EXIT_HLT => Self::Hlt,
             sys::KVM_EXIT_SHUTDOWN => Self::Shutdown,
+            system_event::KVM_EXIT_SYSTEM_EVENT => Self::SystemEvent,
             _ => Self::Unhandled { reason },
         }
     }
@@ -70,6 +75,7 @@ impl VcpuExit {
             Self::Io => sys::KVM_EXIT_IO,
             Self::Hlt => sys::KVM_EXIT_HLT,
             Self::Shutdown => sys::KVM_EXIT_SHUTDOWN,
+            Self::SystemEvent => system_event::KVM_EXIT_SYSTEM_EVENT,
             Self::Unhandled { reason } => reason,
         }
     }
@@ -324,6 +330,10 @@ fn checked_io_response_range(
     Ok(range)
 }
 
+fn required_kvm_run_prefix_size() -> usize {
+    std::mem::size_of::<sys::KvmRunIoPrefix>().max(system_event::required_kvm_run_prefix_size())
+}
+
 #[derive(Debug)]
 struct KvmRunMapping {
     ptr: NonNull<libc::c_void>,
@@ -332,10 +342,10 @@ struct KvmRunMapping {
 
 impl KvmRunMapping {
     fn map(fd: &OwnedFd, len: usize) -> io::Result<Self> {
-        if len < std::mem::size_of::<sys::KvmRunIoPrefix>() {
+        if len < required_kvm_run_prefix_size() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "kvm_run mmap length is smaller than the required x86 I/O prefix",
+                "kvm_run mmap length is smaller than the required x86 exit payload prefix",
             ));
         }
 
@@ -447,12 +457,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classifies_hlt_io_shutdown_and_preserves_unknown_reason() {
+    fn classifies_hlt_io_shutdown_system_event_and_preserves_unknown_reason() {
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_HLT), VcpuExit::Hlt);
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_IO), VcpuExit::Io);
         assert_eq!(
             VcpuExit::from_raw(sys::KVM_EXIT_SHUTDOWN),
             VcpuExit::Shutdown
+        );
+        assert_eq!(
+            VcpuExit::from_raw(system_event::KVM_EXIT_SYSTEM_EVENT),
+            VcpuExit::SystemEvent
         );
         assert_eq!(
             VcpuExit::from_raw(0xfeed_beef),
@@ -467,7 +481,17 @@ mod tests {
         assert_eq!(VcpuExit::Hlt.reason(), sys::KVM_EXIT_HLT);
         assert_eq!(VcpuExit::Io.reason(), sys::KVM_EXIT_IO);
         assert_eq!(VcpuExit::Shutdown.reason(), sys::KVM_EXIT_SHUTDOWN);
+        assert_eq!(
+            VcpuExit::SystemEvent.reason(),
+            system_event::KVM_EXIT_SYSTEM_EVENT
+        );
         assert_eq!(VcpuExit::Unhandled { reason: 0x1234 }.reason(), 0x1234);
+    }
+
+    #[test]
+    fn required_run_prefix_covers_io_and_system_event_payloads() {
+        assert!(required_kvm_run_prefix_size() >= std::mem::size_of::<sys::KvmRunIoPrefix>());
+        assert!(required_kvm_run_prefix_size() >= system_event::required_kvm_run_prefix_size());
     }
 
     #[test]
