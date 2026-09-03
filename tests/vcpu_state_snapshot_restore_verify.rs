@@ -17,7 +17,8 @@ fn backend_or_skip() -> Option<KvmBackend> {
 }
 
 #[test]
-fn composite_state_snapshot_restores_and_verifies_through_existing_boundaries_when_kvm_is_available() {
+fn composite_state_snapshot_restores_and_verifies_through_existing_boundaries_when_kvm_is_available(
+) {
     let Some(backend) = backend_or_skip() else {
         return;
     };
