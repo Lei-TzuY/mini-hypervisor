@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     match run() {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(exit_code) => exit_code,
         Err(error) => {
             eprintln!("error: {error}");
             ExitCode::FAILURE
@@ -16,7 +16,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<(), mini_hypervisor::error::Error> {
+fn run() -> Result<ExitCode, mini_hypervisor::error::Error> {
     match std::env::args().nth(1).as_deref() {
         Some("probe") | None => {
             let backend = KvmBackend::open()?;
@@ -26,9 +26,12 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
             for capability in &capabilities.extensions {
                 println!("{}: {}", capability.name, capability.value);
             }
-            Ok(())
+            Ok(ExitCode::SUCCESS)
         }
-        Some("lifecycle") => verify_kvm_lifecycle(VmConfig::default()),
+        Some("lifecycle") => {
+            verify_kvm_lifecycle(VmConfig::default())?;
+            Ok(ExitCode::SUCCESS)
+        }
         Some("state-roundtrip") => {
             let result = run_state_snapshot_roundtrip(VmConfig::default())?;
             println!("changed exact: {}", result.changed().is_exact_match());
@@ -45,7 +48,7 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
                 "restored MSRs exact: {}",
                 result.restored().msrs().is_exact_match()
             );
-            Ok(())
+            Ok(ExitCode::SUCCESS)
         }
         Some("run-cpuid") => {
             let result = run_cpuid_guest(VmConfig::default())?;
@@ -56,12 +59,12 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
                 result.masked_lapic_features_clear()
             );
             println!("{}", result.report());
-            Ok(())
+            Ok(ExitCode::SUCCESS)
         }
         Some("run-hlt") => {
             let report = run_hlt_guest(VmConfig::default())?;
             println!("{report}");
-            Ok(())
+            Ok(ExitCode::SUCCESS)
         }
         Some("run-debug-port") => {
             let result = run_debug_port_guest(VmConfig::default())?;
@@ -76,14 +79,14 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
             );
             println!("debug output: {:?}", result.output());
             println!("{}", result.report());
-            Ok(())
+            Ok(ExitCode::SUCCESS)
         }
         Some(other) => {
             eprintln!(
                 "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port]"
             );
             eprintln!("unknown command: {other}");
-            Ok(())
+            Ok(ExitCode::from(2))
         }
     }
 }
