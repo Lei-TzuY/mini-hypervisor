@@ -131,11 +131,13 @@ fn recapture_failure_after_successful_write_propagates_without_retry() {
         },
         |_policy| {
             reads += 1;
-            Err(Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
-                id: 9,
-                operation: "capture-test",
-                source: io::Error::other("capture failed"),
-            }))
+            Err(Error::HostEnvironment(
+                HostEnvironmentError::VcpuOperation {
+                    id: 9,
+                    operation: "capture-test",
+                    source: io::Error::other("capture failed"),
+                },
+            ))
         },
     )
     .unwrap_err();
