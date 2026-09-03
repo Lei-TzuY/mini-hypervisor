@@ -16,7 +16,8 @@ fn backend_or_skip() -> Option<KvmBackend> {
 }
 
 #[test]
-fn special_register_snapshot_observes_and_restores_real_mode_state_when_kvm_is_available() {
+fn special_register_snapshot_observes_restores_and_verifies_real_mode_state_when_kvm_is_available()
+{
     let Some(backend) = backend_or_skip() else {
         return;
     };
@@ -46,14 +47,12 @@ fn special_register_snapshot_observes_and_restores_real_mode_state_when_kvm_is_a
     assert_eq!(snapshot.cr0() & 1, 0, "CR0.PE should be cleared");
     assert_eq!(snapshot.cr0() & (1 << 31), 0, "CR0.PG should be cleared");
 
-    vcpu.restore_special_register_snapshot(&snapshot)
-        .expect("captured special-register snapshot should restore successfully");
-    let restored = vcpu
-        .capture_special_register_snapshot()
-        .expect("restored special-register state should be observable");
-    let restore_comparison = snapshot.compare(&restored);
+    let restore_comparison = vcpu
+        .restore_and_verify_special_register_snapshot(&snapshot)
+        .expect("captured special-register snapshot should restore and verify successfully");
     assert!(restore_comparison.is_exact_match());
     assert!(restore_comparison.mismatches().is_empty());
+    assert_eq!(restore_comparison.reference(), &snapshot);
 
     let copied = snapshot;
     drop(vcpu);
