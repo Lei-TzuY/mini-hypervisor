@@ -48,8 +48,7 @@ fn policy_bound_vcpu_msr_capture_is_owned_and_preserves_policy_order_when_kvm_is
         .expect("policy-authorized vCPU MSRs should be capturable");
 
     assert_eq!(captured.values().len(), requested.len());
-    for (captured_value, expected_index) in
-        captured.values().iter().zip(requested.iter().copied())
+    for (captured_value, expected_index) in captured.values().iter().zip(requested.iter().copied())
     {
         assert_eq!(captured_value.index(), expected_index);
     }
