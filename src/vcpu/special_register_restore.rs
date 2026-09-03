@@ -1,6 +1,5 @@
 use super::{
-    vcpu_operation, Vcpu, VcpuDescriptorTableState, VcpuSegmentState,
-    VcpuSpecialRegisterSnapshot,
+    vcpu_operation, Vcpu, VcpuDescriptorTableState, VcpuSegmentState, VcpuSpecialRegisterSnapshot,
 };
 use crate::error::Error;
 use crate::kvm::sys;
