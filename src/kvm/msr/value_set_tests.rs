@@ -86,7 +86,8 @@ fn guest_value_set_owns_values_after_sources_are_dropped() {
 
 #[test]
 fn empty_full_policy_snapshot_is_valid() {
-    let policy = policy(&[]);
+    let host = HostMsrIndexList::from_validated_raw(&[0x10]);
+    let policy = GuestMsrAccessPolicy::from_host(&host, &[]).unwrap();
     let values = GuestMsrValueSet::from_policy(&policy, &[]).unwrap();
 
     let snapshot = GuestMsrSnapshot::from_capture(&policy, &values).unwrap();
