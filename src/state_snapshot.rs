@@ -1,5 +1,6 @@
 use crate::error::Error;
-use crate::kvm::msr::{GuestMsrAccessPolicy, GuestMsrSnapshot};
+use crate::kvm::msr::value_set::GuestMsrSnapshot;
+use crate::kvm::msr::GuestMsrAccessPolicy;
 use crate::vcpu::{Vcpu, VcpuRegisterSnapshot, VcpuSpecialRegisterSnapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
