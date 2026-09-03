@@ -149,6 +149,117 @@ impl GuestMsrSnapshot {
     pub fn values(&self) -> &GuestMsrValueSet {
         &self.values
     }
+
+    #[must_use]
+    pub fn compare(&self, observed: &Self) -> GuestMsrSnapshotComparison {
+        let policy_matches = self.policy == observed.policy;
+        let value_mismatches = if policy_matches {
+            self.values
+                .values()
+                .iter()
+                .zip(observed.values.values().iter())
+                .enumerate()
+                .filter_map(|(position, (reference, candidate))| {
+                    (reference.value() != candidate.value()).then_some(
+                        GuestMsrSnapshotValueMismatch::new(
+                            position,
+                            reference.index(),
+                            reference.value(),
+                            candidate.value(),
+                        ),
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        GuestMsrSnapshotComparison {
+            reference: self.clone(),
+            observed: observed.clone(),
+            policy_matches,
+            value_mismatches,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GuestMsrSnapshotValueMismatch {
+    position: usize,
+    index: MsrIndex,
+    reference_value: u64,
+    observed_value: u64,
+}
+
+impl GuestMsrSnapshotValueMismatch {
+    const fn new(
+        position: usize,
+        index: MsrIndex,
+        reference_value: u64,
+        observed_value: u64,
+    ) -> Self {
+        Self {
+            position,
+            index,
+            reference_value,
+            observed_value,
+        }
+    }
+
+    #[must_use]
+    pub const fn position(self) -> usize {
+        self.position
+    }
+
+    #[must_use]
+    pub const fn index(self) -> MsrIndex {
+        self.index
+    }
+
+    #[must_use]
+    pub const fn reference_value(self) -> u64 {
+        self.reference_value
+    }
+
+    #[must_use]
+    pub const fn observed_value(self) -> u64 {
+        self.observed_value
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuestMsrSnapshotComparison {
+    reference: GuestMsrSnapshot,
+    observed: GuestMsrSnapshot,
+    policy_matches: bool,
+    value_mismatches: Vec<GuestMsrSnapshotValueMismatch>,
+}
+
+impl GuestMsrSnapshotComparison {
+    #[must_use]
+    pub fn reference(&self) -> &GuestMsrSnapshot {
+        &self.reference
+    }
+
+    #[must_use]
+    pub fn observed(&self) -> &GuestMsrSnapshot {
+        &self.observed
+    }
+
+    #[must_use]
+    pub const fn policy_matches(&self) -> bool {
+        self.policy_matches
+    }
+
+    #[must_use]
+    pub fn value_mismatches(&self) -> &[GuestMsrSnapshotValueMismatch] {
+        &self.value_mismatches
+    }
+
+    #[must_use]
+    pub fn is_exact_match(&self) -> bool {
+        self.policy_matches && self.value_mismatches.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
