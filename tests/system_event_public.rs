@@ -4,7 +4,10 @@ const KVM_EXIT_SYSTEM_EVENT: u32 = 24;
 
 #[test]
 fn public_system_event_exit_and_event_types_round_trip_raw_kvm_values() {
-    assert_eq!(VcpuExit::from_raw(KVM_EXIT_SYSTEM_EVENT), VcpuExit::SystemEvent);
+    assert_eq!(
+        VcpuExit::from_raw(KVM_EXIT_SYSTEM_EVENT),
+        VcpuExit::SystemEvent
+    );
     assert_eq!(VcpuExit::SystemEvent.reason(), KVM_EXIT_SYSTEM_EVENT);
 
     let known = [
