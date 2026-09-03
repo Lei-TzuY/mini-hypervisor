@@ -4,6 +4,43 @@ use crate::kvm::sys;
 
 pub(super) const KVM_EXIT_INTERNAL_ERROR: u32 = 17;
 const KVM_INTERNAL_ERROR_DATA_CAPACITY: usize = 16;
+const KVM_INTERNAL_ERROR_EMULATION: u32 = 1;
+const KVM_INTERNAL_ERROR_SIMUL_EX: u32 = 2;
+const KVM_INTERNAL_ERROR_DELIVERY_EV: u32 = 3;
+const KVM_INTERNAL_ERROR_UNEXPECTED_EXIT_REASON: u32 = 4;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcpuInternalErrorSuberror {
+    Emulation,
+    SimultaneousExceptions,
+    DeliveryEvent,
+    UnexpectedExitReason,
+    Unknown(u32),
+}
+
+impl VcpuInternalErrorSuberror {
+    #[must_use]
+    pub const fn from_raw(raw: u32) -> Self {
+        match raw {
+            KVM_INTERNAL_ERROR_EMULATION => Self::Emulation,
+            KVM_INTERNAL_ERROR_SIMUL_EX => Self::SimultaneousExceptions,
+            KVM_INTERNAL_ERROR_DELIVERY_EV => Self::DeliveryEvent,
+            KVM_INTERNAL_ERROR_UNEXPECTED_EXIT_REASON => Self::UnexpectedExitReason,
+            raw => Self::Unknown(raw),
+        }
+    }
+
+    #[must_use]
+    pub const fn raw(self) -> u32 {
+        match self {
+            Self::Emulation => KVM_INTERNAL_ERROR_EMULATION,
+            Self::SimultaneousExceptions => KVM_INTERNAL_ERROR_SIMUL_EX,
+            Self::DeliveryEvent => KVM_INTERNAL_ERROR_DELIVERY_EV,
+            Self::UnexpectedExitReason => KVM_INTERNAL_ERROR_UNEXPECTED_EXIT_REASON,
+            Self::Unknown(raw) => raw,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VcpuInternalError {
@@ -17,6 +54,11 @@ impl VcpuInternalError {
     #[must_use]
     pub const fn suberror(&self) -> u32 {
         self.suberror
+    }
+
+    #[must_use]
+    pub const fn suberror_kind(&self) -> VcpuInternalErrorSuberror {
+        VcpuInternalErrorSuberror::from_raw(self.suberror)
     }
 
     #[must_use]
@@ -170,6 +212,10 @@ mod tests {
     fn base_decoder_copies_suberror_without_optional_data() {
         let decoded = decode_internal_error_base(KvmRunInternalErrorBase { suberror: 4 });
         assert_eq!(decoded.suberror(), 4);
+        assert_eq!(
+            decoded.suberror_kind(),
+            VcpuInternalErrorSuberror::UnexpectedExitReason
+        );
         assert_eq!(decoded.data(), None);
     }
 
@@ -182,6 +228,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(decoded.suberror(), 2);
+        assert_eq!(
+            decoded.suberror_kind(),
+            VcpuInternalErrorSuberror::SimultaneousExceptions
+        );
         assert_eq!(decoded.data(), Some([10, 20, 30].as_slice()));
     }
 
