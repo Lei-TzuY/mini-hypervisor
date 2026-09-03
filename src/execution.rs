@@ -83,6 +83,21 @@ fn attach_completed_exit_trace(error: Error, exit_reasons: &[u32]) -> Error {
                 exit_reasons: exit_reasons.to_vec(),
             })
         }
+        Error::VmExit(VmExitError::KvmUnknownExit {
+            vcpu_id,
+            hardware_exit_reason,
+            ..
+        }) => {
+            debug_assert_eq!(
+                exit_reasons.last().copied(),
+                Some(VcpuExit::KvmUnknown.reason())
+            );
+            Error::VmExit(VmExitError::KvmUnknownExit {
+                vcpu_id,
+                hardware_exit_reason,
+                exit_reasons: exit_reasons.to_vec(),
+            })
+        }
         Error::VmExit(VmExitError::EntryFailure {
             vcpu_id,
             hardware_entry_failure_reason,
@@ -330,6 +345,27 @@ mod tests {
                 rflags: 0x2,
                 exit_reasons,
             }) if exit_reasons == [sys::KVM_EXIT_IO, 0xfeed_beef]
+        ));
+    }
+
+    #[test]
+    fn kvm_unknown_error_trace_is_replaced_with_complete_execution_trace() {
+        let kvm_unknown_reason = VcpuExit::KvmUnknown.reason();
+        let error = Error::VmExit(VmExitError::KvmUnknownExit {
+            vcpu_id: 3,
+            hardware_exit_reason: 0xdead_beef,
+            exit_reasons: vec![kvm_unknown_reason],
+        });
+
+        let result = attach_completed_exit_trace(error, &[sys::KVM_EXIT_IO, kvm_unknown_reason]);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::KvmUnknownExit {
+                vcpu_id: 3,
+                hardware_exit_reason: 0xdead_beef,
+                exit_reasons,
+            }) if exit_reasons == [sys::KVM_EXIT_IO, kvm_unknown_reason]
         ));
     }
 
