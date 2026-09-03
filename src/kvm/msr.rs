@@ -683,10 +683,7 @@ impl GuestMsrAccessPolicy {
                 return Err(GuestMsrPolicyError::UnsupportedIndex { index, position });
             }
             seen.insert(index, position);
-            entries.push(GuestMsrAccess::new(
-                index,
-                MsrAccessAuthority::ReadWrite,
-            ));
+            entries.push(GuestMsrAccess::new(index, MsrAccessAuthority::ReadWrite));
         }
 
         Ok(Self { entries })
