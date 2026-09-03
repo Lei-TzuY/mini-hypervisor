@@ -74,6 +74,14 @@ pub fn dispatch_vcpu_exit(
                 registers,
             )))
         }
+        VcpuExit::FailEntry => {
+            let failure = vcpu.fail_entry()?;
+            Err(entry_failure(
+                vcpu.id(),
+                failure.hardware_entry_failure_reason(),
+                failure.cpu(),
+            ))
+        }
         VcpuExit::SystemEvent => {
             let event = vcpu.system_event()?;
             let registers = vcpu.registers()?;
@@ -99,6 +107,15 @@ fn stopped_report(vcpu_id: VcpuId, exit: VcpuExit, registers: VcpuRegisters) -> 
         rip: registers.rip,
         rflags: registers.rflags,
     }
+}
+
+fn entry_failure(vcpu_id: VcpuId, hardware_entry_failure_reason: u64, cpu: u32) -> Error {
+    Error::VmExit(VmExitError::EntryFailure {
+        vcpu_id: vcpu_id.get(),
+        hardware_entry_failure_reason,
+        cpu,
+        exit_reasons: vec![VcpuExit::FailEntry.reason()],
+    })
 }
 
 fn unsupported_system_event(
@@ -154,6 +171,21 @@ mod tests {
         assert_eq!(report.exit(), VcpuExit::Shutdown);
         assert_eq!(report.rip(), 0x1001);
         assert_eq!(report.rflags(), 0x2);
+    }
+
+    #[test]
+    fn fail_entry_dispatch_preserves_payload_and_local_trace_without_register_context() {
+        let result = entry_failure(VcpuId::new(6), 0xfeed_face, 11);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::EntryFailure {
+                vcpu_id: 6,
+                hardware_entry_failure_reason: 0xfeed_face,
+                cpu: 11,
+                exit_reasons,
+            }) if exit_reasons == [VcpuExit::FailEntry.reason()]
+        ));
     }
 
     #[test]
