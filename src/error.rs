@@ -152,6 +152,12 @@ pub enum VmExitError {
         expected: usize,
         actual: usize,
     },
+    ExitBudgetExhausted {
+        vcpu_id: u16,
+        budget: u32,
+        completed: u32,
+        last_exit_reason: Option<u32>,
+    },
     UnexpectedSequence {
         stage: &'static str,
         expected_reason: u32,
@@ -421,6 +427,21 @@ impl fmt::Display for VmExitError {
                 f,
                 "invalid port-I/O input response for vCPU {vcpu_id} port {port:#x}: expected {expected} bytes, got {actual}"
             ),
+            Self::ExitBudgetExhausted {
+                vcpu_id,
+                budget,
+                completed,
+                last_exit_reason,
+            } => match last_exit_reason {
+                Some(reason) => write!(
+                    f,
+                    "vCPU {vcpu_id} exhausted VM-exit budget {budget} after {completed} completed exits; last exit reason={reason}"
+                ),
+                None => write!(
+                    f,
+                    "vCPU {vcpu_id} cannot run with VM-exit budget {budget}; no VM exit has completed"
+                ),
+            },
             Self::UnexpectedSequence {
                 stage,
                 expected_reason,
