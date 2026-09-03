@@ -149,6 +149,15 @@ pub enum VmExitError {
         vcpu_id: u16,
         exit_reason: u32,
     },
+    InternalError {
+        vcpu_id: u16,
+        suberror: u32,
+        exit_reasons: Vec<u32>,
+    },
+    InternalErrorPayloadUnavailable {
+        vcpu_id: u16,
+        exit_reason: u32,
+    },
     UnsupportedSystemEvent {
         vcpu_id: u16,
         event_type: u32,
@@ -468,6 +477,19 @@ impl fmt::Display for VmExitError {
             } => write!(
                 f,
                 "vCPU {vcpu_id} has no fail-entry payload for exit reason {exit_reason}"
+            ),
+            Self::InternalError {
+                vcpu_id, suberror, ..
+            } => write!(
+                f,
+                "KVM reported internal error on vCPU {vcpu_id}: suberror={suberror}"
+            ),
+            Self::InternalErrorPayloadUnavailable {
+                vcpu_id,
+                exit_reason,
+            } => write!(
+                f,
+                "vCPU {vcpu_id} has no internal-error payload for exit reason {exit_reason}"
             ),
             Self::UnsupportedSystemEvent {
                 vcpu_id,

@@ -25,18 +25,20 @@ The repository currently implements the KVM lifecycle foundation, one bounded gu
 - capture owned vCPU general-register snapshots, compare all 18 fields deterministically, verify them through fresh read-only capture, restore them, and restore-and-verify through read-back;
 - capture owned vCPU special-register snapshots covering segments, descriptor tables, control registers, EFER, APIC base, and the interrupt bitmap without exposing KVM padding, then compare, verify through fresh read-only capture, restore, and restore-and-verify them;
 - capture composite vCPU state snapshots containing general registers, special registers, and policy-bound MSRs; compare those components without flattening their typed mismatch semantics; verify against a fresh read-only capture; perform bounded non-transactional restore; and restore-and-verify through a fresh capture;
-- classify `KVM_EXIT_HLT`, `KVM_EXIT_IO`, legacy `KVM_EXIT_SHUTDOWN`, `KVM_EXIT_FAIL_ENTRY`, and `KVM_EXIT_SYSTEM_EVENT` as typed exits while preserving unsupported raw exit reasons;
+- classify `KVM_EXIT_HLT`, `KVM_EXIT_IO`, legacy `KVM_EXIT_SHUTDOWN`, `KVM_EXIT_FAIL_ENTRY`, `KVM_EXIT_INTERNAL_ERROR`, and `KVM_EXIT_SYSTEM_EVENT` as typed exits while preserving unsupported raw exit reasons;
 - decode `KVM_EXIT_FAIL_ENTRY` through its tested x86 `kvm_run` union layout and copy the raw hardware entry failure reason plus CPU field into owned Rust state;
+- decode the always-available base of `KVM_EXIT_INTERNAL_ERROR` through a tested x86 `kvm_run` prefix and copy only `suberror` into owned Rust state without reading capability-dependent `ndata` or `data[16]`;
 - decode `KVM_EXIT_SYSTEM_EVENT` through a tested 168-byte x86 `kvm_run` prefix, reject `ndata > 16`, and copy only the declared payload words into owned Rust state;
 - validate x86 `kvm_run` port-I/O metadata with checked offset/length arithmetic against the mapped region;
 - copy OUT payloads into owned Rust memory only after validation;
 - write IN responses back into the exact checked `kvm_run` data range only when direction and response length are valid;
 - route exits through `vmexit::dispatch_vcpu_exit`;
-- repeatedly run and dispatch through `execution::run_vcpu_until_stopped` until a typed terminal report, structured unsupported/entry-failure diagnostic, or explicit VM-exit budget exhaustion;
+- repeatedly run and dispatch through `execution::run_vcpu_until_stopped` until a typed terminal report, structured unsupported/entry-failure/internal-error diagnostic, or explicit VM-exit budget exhaustion;
 - preserve completed-exit count, serviced typed port-I/O exits, the terminal report, and the full ordered raw exit-reason trace in successful `VmExecutionResult` values;
 - preserve the full ordered completed-exit trace on budget exhaustion while retaining the configured budget, completed count, and last completed reason;
 - preserve the full ordered completed-exit trace on unhandled VM exits while retaining vCPU id, raw reason, RIP, and RFLAGS diagnostics;
 - preserve the full ordered completed-exit trace on fail-entry diagnostics while retaining the raw hardware entry failure reason and CPU field without issuing a secondary register-read ioctl;
+- preserve the full ordered completed-exit trace on internal-error diagnostics while retaining the raw `suberror` without reading optional internal-error data or issuing a secondary register-read ioctl;
 - preserve the full ordered completed-exit trace on unsupported or malformed system-event diagnostics while retaining decoded event context or invalid `ndata` metadata;
 - service exactly one byte-wide, single-count debug device at port `0xe9` through `PortIoBus`;
 - support configured one-byte IN responses and one-byte OUT capture on that same device;
@@ -44,7 +46,7 @@ The repository currently implements the KVM lifecycle foundation, one bounded gu
 - respect KVM's pending-I/O completion rule by re-entering `KVM_RUN` when execution continues after a serviced I/O exit;
 - produce a typed `VmExitReport` containing vCPU id, terminal exit, RIP, and RFLAGS for handled HLT and legacy shutdown exits;
 - release or conservatively retain mappings according to the documented KVM lifetime rules;
-- run pure validation/UAPI/CPUID/MSR/state-snapshot/loader/exit-dispatch/fail-entry/system-event/port-bus/execution-budget tests without requiring KVM;
+- run pure validation/UAPI/CPUID/MSR/state-snapshot/loader/exit-dispatch/fail-entry/internal-error/system-event/port-bus/execution-budget tests without requiring KVM;
 - run environment-sensitive KVM integration tests that distinguish unavailable `/dev/kvm` from product regressions.
 
 The deterministic `run-hlt` fixture registers 2 MiB of RAM at guest physical address 0, loads the single byte `HLT` instruction at `0x1000`, starts vCPU 0 there, and runs with an exit budget of 1. It expects a handled HLT report with RIP advanced to `0x1001`.
@@ -63,9 +65,11 @@ Exit-budget exhaustion is not a terminal guest report. If the last permitted exi
 
 `KVM_EXIT_FAIL_ENTRY` is now classified and decoded into owned typed diagnostic state. The VMM preserves KVM's raw `hardware_entry_failure_reason` and `cpu` fields and stops the execution attempt with a structured error; it does not reinterpret those architecture-specific diagnostics into retry, CPU-affinity, placement, or recovery policy and does not issue a secondary register read that could replace the original failure with another error.
 
+`KVM_EXIT_INTERNAL_ERROR` is now classified as a typed exit and decoded only through its always-available base field. The VMM copies the raw `suberror` into owned diagnostic state and returns a structured error without issuing a secondary register read. It deliberately does **not** require `KVM_CAP_INTERNAL_ERROR_DATA`, does not read capability-dependent `ndata` or `data[16]`, and does not infer emulation recovery, retry, replacement execution, or architecture-specific policy from the suberror. Optional internal-error data remains unsupported until a separate capability-aware design is introduced.
+
 `KVM_EXIT_SYSTEM_EVENT` is classified and decoded into owned typed payload state, but handling policy remains deliberately undefined: shutdown/reset/crash/wakeup/suspend/SEV-termination/TDX-fatal events are reported as structured unsupported diagnostics rather than being translated into reboot, termination, or other VM lifecycle actions. This is distinct from legacy `KVM_EXIT_SHUTDOWN`, which remains a typed terminal stop.
 
-This remains a single-vCPU, flat-binary, real-mode execution laboratory. It does **not** yet provide MMIO, multiple device families, interrupts, an in-kernel interrupt controller model, arbitrary/configurable CPU models, virtio, SMP, ELF loading, long-mode guest boot, Linux boot, migration orchestration, whole-VM snapshots, guest-memory/device snapshots, resumable execution, architectural rollback, fail-entry retry/placement policy, or implemented system-event lifecycle policy.
+This remains a single-vCPU, flat-binary, real-mode execution laboratory. It does **not** yet provide MMIO, multiple device families, interrupts, an in-kernel interrupt controller model, arbitrary/configurable CPU models, virtio, SMP, ELF loading, long-mode guest boot, Linux boot, migration orchestration, whole-VM snapshots, guest-memory/device snapshots, resumable execution, architectural rollback, fail-entry retry/placement policy, optional internal-error data/capability decoding or recovery policy, or implemented system-event lifecycle policy.
 
 For the authoritative current bounded implementation state and next-slice selection rules, see [ROADMAP.md](ROADMAP.md).
 
@@ -101,7 +105,7 @@ cargo run -- run-debug-port
 
 ## Safety boundary
 
-Unsafe operations are limited to Linux KVM `ioctl` calls, conversion of successful KVM-created file descriptors into owned descriptors, and `mmap`/`munmap` for `kvm_run` and guest RAM. Variable-length KVM ABIs are represented by bounded `repr(C)` buffers with returned counts validated before slices are formed. Flat guest bytes are copied only through checked guest-memory ranges. The x86 `kvm_run` I/O, fail-entry, and system-event views are accessed only through tested UAPI layouts and only after the mapping is known large enough for every required prefix. Fail-entry diagnostics are copied immediately into owned scalar state. System-event `ndata` is bounded by the fixed 16-word UAPI capacity before any payload slice is formed. Both OUT copying and IN write-back use `data_offset + size * count` only after checked conversion, overflow, and mapping-bounds validation; IN additionally requires an exact response-length match. Raw pointers into `kvm_run` never cross into VM-exit policy, execution-loop, or device code. No guest physical address is treated as a host pointer.
+Unsafe operations are limited to Linux KVM `ioctl` calls, conversion of successful KVM-created file descriptors into owned descriptors, and `mmap`/`munmap` for `kvm_run` and guest RAM. Variable-length KVM ABIs are represented by bounded `repr(C)` buffers with returned counts validated before slices are formed. Flat guest bytes are copied only through checked guest-memory ranges. The x86 `kvm_run` I/O, fail-entry, internal-error-base, and system-event views are accessed only through tested UAPI layouts and only after the mapping is known large enough for every required prefix. Fail-entry diagnostics are copied immediately into owned scalar state. Internal-error handling copies only the always-available `suberror` and intentionally does not form or consume capability-dependent `ndata`/`data` state. System-event `ndata` is bounded by the fixed 16-word UAPI capacity before any payload slice is formed. Both OUT copying and IN write-back use `data_offset + size * count` only after checked conversion, overflow, and mapping-bounds validation; IN additionally requires an exact response-length match. Raw pointers into `kvm_run` never cross into VM-exit policy, execution-loop, or device code. No guest physical address is treated as a host pointer.
 
 CPU/MSR snapshot comparison and read-only verification are capture-and-compare operations over owned values and do not invoke restore or setter paths. Restore boundaries delegate to the existing validated KVM setters and deliberately do not claim transactionality, rollback, repair, or atomic point-in-time capture. MSR partial writes retain structured diagnostics for the processed prefix rather than pretending the operation was all-or-nothing.
 
