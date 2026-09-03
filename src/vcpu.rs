@@ -207,6 +207,10 @@ impl Vcpu {
     pub(crate) fn port_io_exit(&self) -> Result<PortIoExit, Error> {
         self.run.port_io_exit(self.id)
     }
+
+    pub(crate) fn write_port_io_input(&mut self, response: &[u8]) -> Result<(), Error> {
+        self.run.write_port_io_input(self.id, response)
+    }
 }
 
 fn validate_real_mode_entry(entry: GuestPhysAddr) -> Result<u64, Error> {
@@ -271,6 +275,33 @@ fn checked_io_data_range(
     }
 
     Ok(offset..end)
+}
+
+fn checked_io_response_range(
+    id: VcpuId,
+    io: sys::KvmRunIo,
+    mapping_size: usize,
+    response_len: usize,
+) -> Result<Range<usize>, Error> {
+    let direction = port_io_direction(id, io.direction)?;
+    if direction != PortIoDirection::In {
+        return Err(Error::VmExit(VmExitError::IoResponseForNonInput {
+            vcpu_id: id.get(),
+            direction: io.direction,
+        }));
+    }
+
+    let range = checked_io_data_range(id, io, mapping_size)?;
+    if response_len != range.len() {
+        return Err(Error::VmExit(VmExitError::InvalidIoResponseLength {
+            vcpu_id: id.get(),
+            port: io.port,
+            expected: range.len(),
+            actual: response_len,
+        }));
+    }
+
+    Ok(range)
 }
 
 #[derive(Debug)]
@@ -355,6 +386,33 @@ impl KvmRunMapping {
             output_data,
         ))
     }
+
+    fn write_port_io_input(&mut self, id: VcpuId, response: &[u8]) -> Result<(), Error> {
+        let prefix = self.prefix();
+        if prefix.header.exit_reason != sys::KVM_EXIT_IO {
+            return Err(Error::VmExit(VmExitError::IoPayloadUnavailable {
+                vcpu_id: id.get(),
+                exit_reason: prefix.header.exit_reason,
+            }));
+        }
+
+        let io = prefix.io;
+        let range = checked_io_response_range(id, io, self.len, response.len())?;
+        if response.is_empty() {
+            return Ok(());
+        }
+
+        // SAFETY: `checked_io_response_range` proves the complete destination range lies inside
+        // this writable shared `kvm_run` mapping. The response slice is valid and non-overlapping.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                response.as_ptr(),
+                self.ptr.as_ptr().cast::<u8>().add(range.start),
+                response.len(),
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Drop for KvmRunMapping {
@@ -416,6 +474,62 @@ mod tests {
             data_offset: 48,
         };
         assert_eq!(checked_io_data_range(VcpuId::BOOT, io, 64).unwrap(), 48..54);
+    }
+
+    #[test]
+    fn validates_exact_port_io_input_response_range() {
+        let io = sys::KvmRunIo {
+            direction: sys::KVM_EXIT_IO_IN,
+            size: 1,
+            port: 0xe9,
+            count: 1,
+            data_offset: 48,
+        };
+
+        assert_eq!(
+            checked_io_response_range(VcpuId::BOOT, io, 64, 1).unwrap(),
+            48..49
+        );
+    }
+
+    #[test]
+    fn rejects_port_io_response_for_output_exit() {
+        let io = sys::KvmRunIo {
+            direction: sys::KVM_EXIT_IO_OUT,
+            size: 1,
+            port: 0xe9,
+            count: 1,
+            data_offset: 48,
+        };
+
+        assert!(matches!(
+            checked_io_response_range(VcpuId::new(4), io, 64, 1),
+            Err(Error::VmExit(VmExitError::IoResponseForNonInput {
+                vcpu_id: 4,
+                direction: sys::KVM_EXIT_IO_OUT,
+            }))
+        ));
+    }
+
+    #[test]
+    fn rejects_port_io_input_response_length_mismatch() {
+        let io = sys::KvmRunIo {
+            direction: sys::KVM_EXIT_IO_IN,
+            size: 2,
+            port: 0xe9,
+            count: 2,
+            data_offset: 48,
+        };
+
+        assert!(matches!(
+            checked_io_response_range(VcpuId::new(5), io, 64, 3),
+            Err(Error::VmExit(VmExitError::InvalidIoResponseLength {
+                vcpu_id: 5,
+                port: 0xe9,
+                expected: 4,
+                actual: 3,
+            }))
+        ));
     }
 
     #[test]
