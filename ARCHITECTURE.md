@@ -25,6 +25,9 @@ KvmBackend
  │                   │    └─ HostMsrModelCandidate
  │                   │         └─ HostMsrModelComparison
  │                   └─ HostMutable (MSR_IA32_UCODE_REV)
+ ├─ GuestCpuPolicy + HostMsrModelCandidate
+ │    └─ CpuModelCandidate
+ │         └─ CpuModelComparison
  └─ VM creation
        ├─ x86 identity-map/TSS setup before vCPUs
        ↓
@@ -41,6 +44,13 @@ KvmBackend
              Vcpu
               ├─ explicit real-mode register setup
               ├─ KVM_GET_REGS → VcpuRegisterSnapshot
+              │    ├─ compare → VcpuRegisterSnapshotComparison (pure)
+              │    ├─ restore_register_snapshot → KVM_SET_REGS
+              │    └─ restore_and_verify_register_snapshot
+              ├─ KVM_GET_SREGS → VcpuSpecialRegisterSnapshot
+              │    ├─ compare → VcpuSpecialRegisterSnapshotComparison (pure)
+              │    ├─ restore_special_register_snapshot → KVM_SET_SREGS
+              │    └─ restore_and_verify_special_register_snapshot
               ├─ explicit MsrIndex[] → bounded KVM_GET_MSRS → VcpuMsrValues
               ├─ GuestMsrAccessPolicy → capture_msrs → GuestMsrValueSet
               ├─ GuestMsrAccessPolicy → capture_msr_snapshot → GuestMsrSnapshot
@@ -48,21 +58,29 @@ KvmBackend
               ├─ GuestMsrValueSet → bounded KVM_SET_MSRS
               ├─ GuestMsrSnapshot → restore_msr_snapshot → bounded KVM_SET_MSRS
               ├─ GuestMsrSnapshot → restore_and_verify_msr_snapshot → GuestMsrSnapshotComparison
+              ├─ capture_state_snapshot → VcpuStateSnapshot
+              │    ├─ compare → VcpuStateSnapshotComparison (pure)
+              │    ├─ verify_state_snapshot → fresh read-only capture
+              │    ├─ restore_state_snapshot → bounded non-transactional component restore
+              │    └─ restore_and_verify_state_snapshot
               ├─ kvm_run mapping
               ├─ checked KVM_EXIT_IO metadata/payload extraction
               ├─ checked KVM_EXIT_IO_IN response write-back
+              ├─ checked KVM_EXIT_SYSTEM_EVENT payload extraction
               └─ KVM_RUN → VcpuExit
                          ↓
              execution::run_vcpu_until_stopped
               ├─ explicit completed-exit budget
+              ├─ ordered completed-exit reason trace
               ├─ records serviced typed I/O exits
               └─ vmexit::dispatch_vcpu_exit
-                   ├─ HLT → VmExitReport → stop
-                   ├─ IO  → PortIoBus → debug port 0xe9 → continue
-                   └─ other → VmExitError
+                   ├─ HLT / legacy shutdown → VmExitReport → stop
+                   ├─ IO → PortIoBus → debug port 0xe9 → continue
+                   ├─ SYSTEM_EVENT → structured unsupported diagnostic
+                   └─ unknown raw reason → VmExitError::Unhandled
 ```
 
-The KVM UAPI details live in `src/kvm/sys.rs`. Higher layers call typed Rust methods and do not issue raw `ioctl` operations directly.
+The raw ioctl UAPI details live in `src/kvm/sys.rs`; the tested `KVM_EXIT_SYSTEM_EVENT` `kvm_run` payload view is isolated in `src/vcpu/system_event.rs`. Higher layers call typed Rust methods and do not issue raw `ioctl` operations or inspect raw shared-memory payload layouts directly.
 
 ## x86 host and CPU capability contract
 
@@ -222,23 +240,29 @@ The current fixtures use KVM's newly-created x86 vCPU architectural reset state 
 
 The current CS=0 fixture deliberately limits its real-mode RIP to `0xffff`. Broader real-mode segment addressing and protected/long-mode setup belong to later guest boot work.
 
-`Vcpu::capture_register_snapshot` performs one existing `KVM_GET_REGS` and copies all 18 x86 general-register fields (RAX through R15, RIP, and RFLAGS) into an owned `VcpuRegisterSnapshot`. The snapshot is independent of KVM UAPI storage and the vCPU descriptor after capture; it does not mask, synthesize, or reinterpret any field. The existing `Vcpu::registers` API remains the lighter RIP/RFLAGS diagnostic view and is not changed by snapshot capture.
+`Vcpu::capture_register_snapshot` performs one existing `KVM_GET_REGS` and copies all 18 x86 general-register fields (RAX through R15, RIP, and RFLAGS) into an owned `VcpuRegisterSnapshot`. `VcpuRegisterSnapshot::compare` performs deterministic pure reference-to-observed comparison over those 18 fields, and the snapshot-bound restore/restore-and-verify APIs use the validated KVM register setters/readback without claiming transactionality or rollback. The existing `Vcpu::registers` API remains the lighter RIP/RFLAGS diagnostic view and is not changed by snapshot capture.
+
+Special-register capture likewise owns semantic x86 segment, descriptor-table, control-register, EFER, APIC-base, and interrupt-bitmap state without exposing KVM padding. Pure comparison, snapshot-bound restore, and restore-and-verify preserve that typed boundary. `VcpuStateSnapshot` composes general-register, special-register, and policy-bound MSR snapshots; its comparison preserves component reports, `verify_state_snapshot` performs a fresh read-only capture, and restore/restore-and-verify sequence the existing component operations with explicitly bounded non-transactional semantics. None of these values is a whole-VM, guest-memory, device-state, checkpoint, migration, atomic/quiesced snapshot, or rollback primitive.
 
 `Vcpu::msrs`, `Vcpu::capture_msrs`, `Vcpu::capture_msr_snapshot`, `Vcpu::set_msrs`, `Vcpu::restore_msr_snapshot`, and `Vcpu::restore_and_verify_msr_snapshot` are synchronous state operations over the same owned vCPU descriptor used by the execution path. The current VMM has no scheduler or concurrent vCPU runner; callers invoke these primitives directly rather than racing an independently executing vCPU thread. Readback returns owned typed values, policy-bound capture returns an owned validated value set, full snapshot capture returns an owned policy/value binding, direct writes consume only an owned policy-validated value set, snapshot restore delegates the snapshot's owned value set to the same write boundary, and restore verification sequences one restore with one recapture before returning the existing owned comparison report. None retains a caller borrow after its operation returns.
 
-`Vcpu::run_once` retries an interrupted host syscall, performs one completed `KVM_RUN`, reads the tested x86 prefix of `kvm_run`, and returns a typed `VcpuExit`. HLT and I/O are classified explicitly; unknown reasons retain the exact raw reason.
+`Vcpu::run_once` retries an interrupted host syscall, performs one completed `KVM_RUN`, reads the tested x86 prefix of `kvm_run`, and returns a typed `VcpuExit`. HLT, port I/O, legacy `KVM_EXIT_SHUTDOWN`, and `KVM_EXIT_SYSTEM_EVENT` are classified explicitly; unknown reasons retain the exact raw reason.
 
 For `KVM_EXIT_IO`, `Vcpu::port_io_exit` is the only layer allowed to inspect the I/O union and referenced data area. It validates direction, converts and checks `data_offset`, computes `size * count` with checked arithmetic, validates the complete range against the mmap length, and copies OUT bytes into owned Rust memory. IN requests expose metadata but no borrowed mmap data. No pointer into `kvm_run` leaves the vCPU layer.
 
 For `KVM_EXIT_IO_IN`, `Vcpu::write_port_io_input` re-reads the current I/O metadata, requires IN direction, recomputes the complete checked mmap range, and requires the response length to equal that range exactly before copying the owned bytes into `kvm_run`.
 
+For `KVM_EXIT_SYSTEM_EVENT`, `Vcpu::system_event` is the only layer allowed to form the tested 168-byte x86 system-event prefix view. Mapping construction requires the shared region to be large enough before that cast can be formed. The decoder requires the current exit reason to be system-event, validates the kernel-reported `ndata` against the fixed 16-word UAPI capacity before slicing, preserves the current raw event-type values (including unknown values), and copies only the declared payload words into an owned `VcpuSystemEvent`. No raw pointer or borrowed system-event data crosses into dispatch.
+
 ## Bounded execution loop
 
 `execution::run_vcpu_until_stopped` is the single reusable run-loop boundary for the current one-vCPU model. Before each `KVM_RUN` it checks an explicit completed-exit budget. A successful `KVM_RUN` consumes exactly one budget unit; host-side failures that do not produce a completed VM exit consume none.
 
-Each completed exit is sent through `vmexit::dispatch_vcpu_exit`. Serviceable I/O is recorded as an owned `PortIoExit` and execution continues while budget remains. A terminal HLT returns `VmExecutionResult`, which contains the terminal `VmExitReport`, every serviced typed I/O exit, and the exact completed-exit count.
+Each completed exit is recorded exactly once in an ordered raw reason trace before dispatch. Serviceable I/O is recorded as an owned `PortIoExit` and execution continues while budget remains. A terminal HLT or legacy shutdown returns `VmExecutionResult`, which contains the terminal `VmExitReport`, every serviced typed I/O exit, the exact completed-exit count, and the complete ordered raw reason trace.
 
-A zero budget fails before any guest run. When the configured budget is exhausted, the next run attempt fails with `VmExitError::ExitBudgetExhausted`, preserving vCPU id, configured limit, completed count, and the last completed raw exit reason when available. Exhaustion is not reported as guest termination. If the final permitted exit was serviceable port I/O, userspace may have prepared the service response but the VMM does not claim the pending KVM operation completed because no further `KVM_RUN` was permitted.
+A zero budget fails before any guest run. When the configured budget is exhausted, the next run attempt fails with `VmExitError::ExitBudgetExhausted`, preserving vCPU id, configured limit, completed count, last completed raw exit reason when available, and the complete ordered trace of completed exits. Exhaustion is not reported as guest termination. If the final permitted exit was serviceable port I/O, userspace may have prepared the service response but the VMM does not claim the pending KVM operation completed because no further `KVM_RUN` was permitted.
+
+Unhandled raw exits and system-event diagnostics are also annotated with the complete ordered trace accumulated by the loop. For system-event failures, reason `24` appears exactly once at the tail because the successful `KVM_RUN` is recorded before payload decoding/dispatch. This diagnostic ownership does not create resumable execution or partial-success result semantics.
 
 The HLT and CPUID fixtures use budget 1. Both deterministic port fixtures use budget 2, so their successful sequence is exactly one serviceable I/O exit followed by terminal HLT. Extra serviceable exits cannot be silently accepted: they consume the budget and prevent a terminal success report.
 
@@ -246,11 +270,14 @@ The HLT and CPUID fixtures use budget 1. Both deterministic port fixtures use bu
 
 `vmexit::dispatch_vcpu_exit` is the single policy boundary for one completed vCPU exit.
 
-- HLT snapshots RIP/RFLAGS and becomes `VmExitDisposition::Stopped(VmExitReport)`.
+- HLT and legacy `KVM_EXIT_SHUTDOWN` snapshot RIP/RFLAGS and become `VmExitDisposition::Stopped(VmExitReport)`.
 - Port I/O is parsed into an owned `PortIoExit` and routed through `PortIoBus`.
 - An OUT service records/captures device output and becomes `Continue` without writing the run mapping.
 - An IN service returns owned response bytes; the dispatcher asks the vCPU layer to validate and write those bytes into the pending KVM input range before returning `Continue`.
+- `KVM_EXIT_SYSTEM_EVENT` is decoded into owned event type/data, paired with register diagnostics, and returned as structured `VmExitError::UnsupportedSystemEvent`; no shutdown/reset/crash/wakeup/suspend/SEV-termination/TDX-fatal lifecycle action is implemented.
 - Unsupported raw exit reasons become `VmExitError::Unhandled` with vCPU id and register diagnostics.
+
+Legacy `KVM_EXIT_SHUTDOWN` reason `8` is intentionally distinct from `KVM_EXIT_SYSTEM_EVENT` reason `24` carrying event type `Shutdown`. The former is the existing typed terminal stop; the latter remains a structured unsupported event until an explicit lifecycle policy is designed.
 
 The dispatcher deliberately does **not** snapshot registers for an in-flight KVM I/O exit. KVM defines port-I/O operations as pending until userspace re-enters `KVM_RUN`; register state used as a completed-operation diagnostic is therefore taken only on a later terminal exit.
 
@@ -269,7 +296,7 @@ Unknown ports become `PortIoError::UnhandledPort`. Wider or multi-count operatio
 
 ## Ownership and lifetime
 
-`KvmBackend` owns `/dev/kvm`, validated host capabilities, the typed `HostCpuid`, `HostMsrIndexList`, `HostMsrFeatureIndexList`, and stability-annotated `HostMsrFeatureValues` discovery snapshots, and the derived `GuestCpuPolicy`. `GuestMsrAccessPolicy` is an on-demand owned derivative of the validated general MSR capability set plus explicit caller authorization; it keeps no borrow into `KvmBackend` or the caller slice. `GuestMsrValueSet` is another on-demand owned derivative of an access policy plus explicit caller state; it owns only typed MSR index/value pairs and keeps no borrow into the policy or caller slice. `GuestMsrSnapshot` is an owned full-policy capture derivative that clones one complete access policy plus the exact complete ordered value set validated against it; it keeps no borrow into either source value. `GuestMsrSnapshotComparison` owns clones of both complete snapshots plus same-policy value-mismatch findings, so comparison survives after either source snapshot is dropped. `GuestCpuPolicyComparison` is an on-demand owned derivative that clones both complete configured policies plus all directional findings; it holds no borrow into backend or VM state. `HostMsrModelCandidate` is an on-demand owned derivative: it clones the complete feature-value observation as provenance and separately owns only its immutable subset. `HostMsrModelComparison` is also owned: it clones both complete candidates and owns its missing/extra/value-mismatch findings, so comparison data carries no borrow into backend state. `CpuModelCandidate` is another owned derivative that clones one complete configured `GuestCpuPolicy` plus one complete `HostMsrModelCandidate`; the latter continues to own its complete source-observation provenance. `CpuModelComparison` owns the resulting `GuestCpuPolicyComparison` and `HostMsrModelComparison`, so the composed report has no borrow into either source candidate and retains both component provenance chains. `Vm` owns the VM descriptor, a clone of only the guest CPUID policy, and its optional registered guest RAM. CPUID read-back buffers and decoded comparison entries are temporary data inside vCPU construction; neither is retained after exact verification. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`; each successful `Vcpu::capture_register_snapshot` returns a separate owned `VcpuRegisterSnapshot` containing copied general-register values, each successful `Vcpu::msrs` call returns a separate owned `VcpuMsrValues` snapshot with no descriptor or UAPI-buffer borrow, `Vcpu::capture_msrs` returns a separate owned `GuestMsrValueSet` after full-policy validation, `Vcpu::capture_msr_snapshot` returns an owned `GuestMsrSnapshot`, `Vcpu::set_msrs` serializes a borrowed `GuestMsrValueSet` into a temporary bounded UAPI buffer, `Vcpu::restore_msr_snapshot` borrows only the snapshot for the duration of one delegated write attempt, and `Vcpu::restore_and_verify_msr_snapshot` returns an owned snapshot comparison after a successful restore and recapture. `PortIoBus` owns its optional debug device, configured input byte, and accepted output bytes. `VmExecutionResult` and `CpuidGuestResult` own only copied safe Rust data and reports; neither contains a pointer or borrow into KVM shared memory or guest RAM.
+`KvmBackend` owns `/dev/kvm`, validated host capabilities, the typed `HostCpuid`, `HostMsrIndexList`, `HostMsrFeatureIndexList`, and stability-annotated `HostMsrFeatureValues` discovery snapshots, and the derived `GuestCpuPolicy`. `GuestMsrAccessPolicy` is an on-demand owned derivative of the validated general MSR capability set plus explicit caller authorization; it keeps no borrow into `KvmBackend` or the caller slice. `GuestMsrValueSet` is another on-demand owned derivative of an access policy plus explicit caller state; it owns only typed MSR index/value pairs and keeps no borrow into the policy or caller slice. `GuestMsrSnapshot` is an owned full-policy capture derivative that clones one complete access policy plus the exact complete ordered value set validated against it; it keeps no borrow into either source value. `GuestMsrSnapshotComparison` owns clones of both complete snapshots plus same-policy value-mismatch findings, so comparison survives after either source snapshot is dropped. `GuestCpuPolicyComparison` is an on-demand owned derivative that clones both complete configured policies plus all directional findings; it holds no borrow into backend or VM state. `HostMsrModelCandidate` is an on-demand owned derivative: it clones the complete feature-value observation as provenance and separately owns only its immutable subset. `HostMsrModelComparison` is also owned: it clones both complete candidates and owns its missing/extra/value-mismatch findings, so comparison data carries no borrow into backend state. `CpuModelCandidate` is another owned derivative that clones one complete configured `GuestCpuPolicy` plus one complete `HostMsrModelCandidate`; the latter continues to own its complete source-observation provenance. `CpuModelComparison` owns the resulting `GuestCpuPolicyComparison` and `HostMsrModelComparison`, so the composed report has no borrow into either source candidate and retains both component provenance chains. `Vm` owns the VM descriptor, a clone of only the guest CPUID policy, and its optional registered guest RAM. CPUID read-back buffers and decoded comparison entries are temporary data inside vCPU construction; neither is retained after exact verification. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`; register, special-register, MSR, and composite state captures return separate owned typed snapshots and comparisons; restore methods borrow only their typed snapshot inputs for the duration of the bounded setter/readback sequence. `VcpuSystemEvent` owns its decoded event type and copied declared data words rather than borrowing the shared mapping. `PortIoBus` owns its optional debug device, configured input byte, and accepted output bytes. `VmExecutionResult`, execution errors carrying completed-exit traces, and `CpuidGuestResult` own only copied safe Rust data and reports; none contains a pointer or borrow into KVM shared memory or guest RAM.
 
 Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
@@ -282,16 +309,20 @@ Errors are categorized as:
 - `Configuration`: unsupported VMM configuration or current real-mode entry limits;
 - `GuestMemory`: invalid guest ranges, reserved-range overlap, mapping failures, bounds violations, or KVM RAM-registration failures;
 - `GuestImage`: malformed or overflowing flat-image descriptions;
-- `VmExit`: unsupported exits, malformed KVM I/O metadata/ranges, invalid IN response direction/length, execution-budget exhaustion, or deterministic fixture sequence failures;
+- `VmExit`: unsupported raw exits, unsupported system events, unavailable/malformed system-event payload metadata, malformed KVM I/O metadata/ranges, invalid IN response direction/length, execution-budget exhaustion, or deterministic fixture sequence failures;
 - `PortIo`: unknown ports or unsupported/malformed device accesses.
 
-Pure guest-MSR policy construction has its own `GuestMsrPolicyError`, while pure value-set materialization has `GuestMsrValueSetError`. Crate-controlled full-snapshot construction has `GuestMsrSnapshotError`, used to reject coverage or positional-index mismatch before a `GuestMsrSnapshot` can exist. Snapshot comparison itself is total over already-valid snapshots and therefore introduces no new error type. Unsupported/duplicate caller authorization and unauthorized/duplicate caller value state are configuration/state validation failures and do not originate from host I/O or a vCPU operation. Policy-bound capture uses the existing vCPU-operation error boundary if its independently checked full-policy materialization invariant is violated. `VcpuMsrPartialWrite` is intentionally different: it reports that a kernel write attempt stopped after a prefix that may already have changed vCPU state, and snapshot restore preserves that diagnostic unchanged. Future MMIO, interrupt, snapshot, and stronger invariant categories will be added only when those responsibilities exist.
+Pure guest-MSR policy construction has its own `GuestMsrPolicyError`, while pure value-set materialization has `GuestMsrValueSetError`. Crate-controlled full-snapshot construction has `GuestMsrSnapshotError`, used to reject coverage or positional-index mismatch before a `GuestMsrSnapshot` can exist. Snapshot comparison itself is total over already-valid snapshots and therefore introduces no new error type. Unsupported/duplicate caller authorization and unauthorized/duplicate caller value state are configuration/state validation failures and do not originate from host I/O or a vCPU operation. Policy-bound capture uses the existing vCPU-operation error boundary if its independently checked full-policy materialization invariant is violated. `VcpuMsrPartialWrite` is intentionally different: it reports that a kernel write attempt stopped after a prefix that may already have changed vCPU state, and snapshot restore preserves that diagnostic unchanged. Future MMIO, interrupt, whole-VM/device-snapshot, and stronger invariant categories will be added only when those responsibilities exist.
 
 ## Deliberate non-abstractions
 
 There is no generic hypervisor backend trait yet. KVM is the only implementation, and an abstraction would not have a second consumer. The KVM-specific plumbing is nevertheless isolated so a later raw-VMX research backend would not require leaking ioctls into VM policy.
 
-There is no configurable or migration-stable CPU model yet. The current boundary distinguishes discovered host support from a derived guest CPUID policy, but there is still exactly one built-in CPUID policy: host/KVM-supported entries with conservative masking for the absent LAPIC model. The vCPU creation path requires KVM to report back exactly that submitted typed CPUID policy, and the existing CPUID fixture independently verifies selected architectural bits from guest-observed state. `GuestCpuPolicyComparison`, `HostMsrIndexList`, `HostMsrFeatureIndexList`, stability-annotated `HostMsrFeatureValues`, `HostMsrModelCandidate`, `HostMsrModelComparison`, `CpuModelCandidate`, and `CpuModelComparison` remain analysis state; composed comparison does not convert component-level exact matches into a named cross-host CPU model or migration guarantee. `VcpuRegisterSnapshot` is an owned observation of one vCPU's general-register state and currently has no comparison or restore boundary. `VcpuMsrValues` is a caller-directed observation of one vCPU's architectural MSR values. `GuestMsrAccessPolicy` defines explicit caller-selected MSR access authority bounded by the general host-supported set, `GuestMsrValueSet` materializes an owned policy-validated subset of caller state, `Vcpu::capture_msrs` provides one full-policy value capture path, `GuestMsrSnapshot` binds one complete policy to one complete ordered capture, `GuestMsrSnapshotComparison` compares two such bindings without touching KVM, `Vcpu::capture_msr_snapshot` returns that owned binding, `Vcpu::set_msrs` exposes one bounded non-transactional write attempt, `Vcpu::restore_msr_snapshot` provides one snapshot-bound non-transactional restore attempt, and `Vcpu::restore_and_verify_msr_snapshot` verifies one exact restore through recapture and comparison. None is migration-stable, and value-set or snapshot membership does not guarantee per-value KVM acceptance. There is still no automatic mismatch repair, no multi-state or multi-vCPU restore orchestration, no rollback, and no general-register restore.
+There is no configurable or migration-stable CPU model yet. The current boundary distinguishes discovered host support from a derived guest CPUID policy and immutable host MSR model candidate, then allows them to be composed and compared without turning an exact component match into a named cross-host compatibility guarantee. The current CPUID policy remains host-derived with conservative masking for the absent LAPIC model.
+
+The implemented state lifecycle is deliberately vCPU-CPU-state scoped. General-register, special-register, policy-bound MSR, and composite `VcpuStateSnapshot` values support owned capture and pure comparison; the register/MSR/composite paths expose bounded restore and restore-and-verify, and composite state also supports read-only snapshot-bound verification. These operations are synchronous, non-transactional across multi-component restore, and do not imply a quiesced atomic point in time. There is still no automatic mismatch repair, no rollback, no multi-vCPU restore orchestration, no guest-memory/device snapshot, no checkpoint decoder, and no migration protocol.
+
+`KVM_EXIT_SYSTEM_EVENT` now has typed classification and owned payload diagnostics, but there is deliberately no reset/reboot/crash/shutdown/wakeup/suspend/SEV-termination/TDX-fatal lifecycle policy. Adding such policy requires an explicit VM lifecycle design rather than treating the decoded event as an implicit terminal action.
 
 There is also no multi-region memory map yet. `GuestMemoryRegion::overlaps` exists to make range semantics explicit and tested, but the VM intentionally supports only slot 0 in this milestone.
 
@@ -301,4 +332,4 @@ The execution loop is not a scheduler. It owns no vCPU, thread, timer, or interr
 
 ## Next architectural milestone
 
-The next bounded slice should add a pure reference-to-observed comparison contract for two `VcpuRegisterSnapshot` values. The comparison should report exact-match state plus deterministic field-level mismatches across all 18 captured general-register fields without consulting KVM, and it should retain owned copies of both complete snapshots so diagnostics survive after the source values are dropped. Field identity and reporting order must be explicit and stable; a changed RIP or RFLAGS is a normal mismatch rather than a special termination verdict. Focused regressions should lock identical snapshots, one-field and multi-field differences, canonical mismatch ordering, complete source retention, and clone/ownership behavior. This slice must not call `KVM_SET_REGS`, restore special registers, combine the register snapshot with MSR/CPUID/device state, orchestrate multi-vCPU restore, claim migration safety, or add long-mode boot, interrupts, MMIO, SMP, or device expansion in the same slice.
+No architectural milestone is selected in this document. `ROADMAP.md` is the authoritative live source for next-slice selection; after each integrated slice and exact post-merge CI result, future work must be chosen from the then-current repository state rather than from a historical architecture note.

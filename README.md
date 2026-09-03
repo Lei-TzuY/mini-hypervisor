@@ -8,7 +8,7 @@ The repository currently implements the KVM lifecycle foundation, one bounded gu
 
 - open `/dev/kvm` with structured environment errors;
 - require KVM API version 12;
-- check `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, `KVM_CAP_EXT_CPUID`, and `KVM_CAP_SET_IDENTITY_MAP_ADDR`;
+- check `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, `KVM_CAP_EXT_CPUID`, `KVM_CAP_SET_IDENTITY_MAP_ADDR`, and `KVM_CAP_GET_MSR_FEATURES`;
 - obtain and validate the `kvm_run` mmap size;
 - retrieve KVM's supported x86 CPUID set into one fixed-capacity 256-entry `repr(C)` buffer and reject zero or out-of-capacity returned counts;
 - derive a bounded configured guest CPUID contract that clears LAPIC-dependent x2APIC, TSC-deadline, and KVM PV-unhalt feature bits while this VMM has no in-kernel LAPIC model;
@@ -24,8 +24,9 @@ The repository currently implements the KVM lifecycle foundation, one bounded gu
 - normalize the six visible real-mode segment bases/selectors to zero and ensure paging/protected mode are disabled;
 - capture owned vCPU general-register snapshots, compare all 18 fields deterministically, restore them, and restore-and-verify through read-back;
 - capture owned vCPU special-register snapshots covering segments, descriptor tables, control registers, EFER, APIC base, and the interrupt bitmap without exposing KVM padding, then compare, restore, and restore-and-verify them;
-- capture composite vCPU state snapshots containing general registers, special registers, and policy-bound MSRs; compare those components without flattening their typed mismatch semantics; perform bounded non-transactional restore; and restore-and-verify through a fresh capture;
-- classify `KVM_EXIT_HLT`, `KVM_EXIT_IO`, and legacy `KVM_EXIT_SHUTDOWN` as typed exits while preserving unsupported raw exit reasons;
+- capture composite vCPU state snapshots containing general registers, special registers, and policy-bound MSRs; compare those components without flattening their typed mismatch semantics; verify against a fresh read-only capture; perform bounded non-transactional restore; and restore-and-verify through a fresh capture;
+- classify `KVM_EXIT_HLT`, `KVM_EXIT_IO`, legacy `KVM_EXIT_SHUTDOWN`, and `KVM_EXIT_SYSTEM_EVENT` as typed exits while preserving unsupported raw exit reasons;
+- decode `KVM_EXIT_SYSTEM_EVENT` through a tested 168-byte x86 `kvm_run` prefix, reject `ndata > 16`, and copy only the declared payload words into owned Rust state;
 - validate x86 `kvm_run` port-I/O metadata with checked offset/length arithmetic against the mapped region;
 - copy OUT payloads into owned Rust memory only after validation;
 - write IN responses back into the exact checked `kvm_run` data range only when direction and response length are valid;
@@ -34,13 +35,14 @@ The repository currently implements the KVM lifecycle foundation, one bounded gu
 - preserve completed-exit count, serviced typed port-I/O exits, the terminal report, and the full ordered raw exit-reason trace in successful `VmExecutionResult` values;
 - preserve the full ordered completed-exit trace on budget exhaustion while retaining the configured budget, completed count, and last completed reason;
 - preserve the full ordered completed-exit trace on unhandled VM exits while retaining vCPU id, raw reason, RIP, and RFLAGS diagnostics;
+- preserve the full ordered completed-exit trace on unsupported or malformed system-event diagnostics while retaining decoded event context or invalid `ndata` metadata;
 - service exactly one byte-wide, single-count debug device at port `0xe9` through `PortIoBus`;
 - support configured one-byte IN responses and one-byte OUT capture on that same device;
 - reject unknown ports, wide accesses, multi-count debug-port operations, and malformed response/payload sizes with structured errors;
 - respect KVM's pending-I/O completion rule by re-entering `KVM_RUN` when execution continues after a serviced I/O exit;
 - produce a typed `VmExitReport` containing vCPU id, terminal exit, RIP, and RFLAGS for handled HLT and legacy shutdown exits;
 - release or conservatively retain mappings according to the documented KVM lifetime rules;
-- run pure validation/UAPI/CPUID/MSR/state-snapshot/loader/exit-dispatch/port-bus/execution-budget tests without requiring KVM;
+- run pure validation/UAPI/CPUID/MSR/state-snapshot/loader/exit-dispatch/system-event/port-bus/execution-budget tests without requiring KVM;
 - run environment-sensitive KVM integration tests that distinguish unavailable `/dev/kvm` from product regressions.
 
 The deterministic `run-hlt` fixture registers 2 MiB of RAM at guest physical address 0, loads the single byte `HLT` instruction at `0x1000`, starts vCPU 0 there, and runs with an exit budget of 1. It expects a handled HLT report with RIP advanced to `0x1001`.
@@ -53,11 +55,13 @@ The deterministic `run-cpuid` fixture executes the existing guest-observed CPUID
 
 The deterministic `state-roundtrip` fixture creates vCPU 0 without running guest code, uses an intentionally empty guest MSR policy for host portability, captures reference composite CPU state at real-mode RIP `0x1000`, changes the configured state to RIP `0x1200`, proves that the changed snapshot no longer matches, then restores and verifies the original snapshot through the existing bounded composite restore-and-verify path. It reports typed changed/restored comparison results and does not claim whole-VM, guest-memory, device-state, migration, checkpoint, atomic/quiesced snapshot, rollback, or retry semantics.
 
-KVM-aware state regressions also exercise real vCPU capture/compare/restore/verify paths when `/dev/kvm` is available. These snapshots cover the owned vCPU CPU-state boundaries listed above; they are **not** whole-VM, guest-memory, device-state, migration, checkpoint, or atomic/quiesced snapshot semantics.
+KVM-aware state regressions also exercise real vCPU capture/compare/verify/restore/restore-and-verify paths when `/dev/kvm` is available. These snapshots cover the owned vCPU CPU-state boundaries listed above; they are **not** whole-VM, guest-memory, device-state, migration, checkpoint, or atomic/quiesced snapshot semantics.
 
 Exit-budget exhaustion is not a terminal guest report. If the last permitted exit was serviceable I/O, the request has been serviced in userspace but the loop does not claim that KVM has completed the pending operation because no further `KVM_RUN` was permitted. Likewise, composite state restore is explicitly non-transactional: if a later component fails, already completed earlier component writes are not rolled back.
 
-This remains a single-vCPU, flat-binary, real-mode execution laboratory. It does **not** yet provide MMIO, multiple device families, interrupts, an in-kernel interrupt controller model, arbitrary/configurable CPU models, virtio, SMP, ELF loading, long-mode guest boot, Linux boot, migration orchestration, whole-VM snapshots, guest-memory/device snapshots, resumable execution, or architectural rollback. `KVM_EXIT_SYSTEM_EVENT` payload policy is also not yet modeled; only legacy `KVM_EXIT_SHUTDOWN` is currently a typed terminal shutdown exit.
+`KVM_EXIT_SYSTEM_EVENT` is now classified and decoded into owned typed payload state, but handling policy remains deliberately undefined: shutdown/reset/crash/wakeup/suspend/SEV-termination/TDX-fatal events are reported as structured unsupported diagnostics rather than being translated into reboot, termination, or other VM lifecycle actions. This is distinct from legacy `KVM_EXIT_SHUTDOWN`, which remains a typed terminal stop.
+
+This remains a single-vCPU, flat-binary, real-mode execution laboratory. It does **not** yet provide MMIO, multiple device families, interrupts, an in-kernel interrupt controller model, arbitrary/configurable CPU models, virtio, SMP, ELF loading, long-mode guest boot, Linux boot, migration orchestration, whole-VM snapshots, guest-memory/device snapshots, resumable execution, architectural rollback, or implemented system-event lifecycle policy.
 
 For the authoritative current bounded implementation state and next-slice selection rules, see [ROADMAP.md](ROADMAP.md).
 
@@ -71,6 +75,7 @@ For the authoritative current bounded implementation state and next-slice select
 - `KVM_CAP_SET_TSS_ADDR`
 - `KVM_CAP_EXT_CPUID`
 - `KVM_CAP_SET_IDENTITY_MAP_ADDR`
+- `KVM_CAP_GET_MSR_FEATURES`
 
 GitHub-hosted CI may run without usable `/dev/kvm`; pure tests remain mandatory there, and the environment-sensitive KVM tests report unavailable host capability without treating it as a VMM correctness failure.
 
@@ -92,7 +97,7 @@ cargo run -- run-debug-port
 
 ## Safety boundary
 
-Unsafe operations are limited to Linux KVM `ioctl` calls, conversion of successful KVM-created file descriptors into owned descriptors, and `mmap`/`munmap` for `kvm_run` and guest RAM. Variable-length KVM ABIs are represented by bounded `repr(C)` buffers with returned counts validated before slices are formed. Flat guest bytes are copied only through checked guest-memory ranges. The x86 `kvm_run` I/O union is accessed only through tested UAPI layouts. Both OUT copying and IN write-back use `data_offset + size * count` only after checked conversion, overflow, and mapping-bounds validation; IN additionally requires an exact response-length match. Raw pointers into `kvm_run` never cross into VM-exit policy, execution-loop, or device code. No guest physical address is treated as a host pointer.
+Unsafe operations are limited to Linux KVM `ioctl` calls, conversion of successful KVM-created file descriptors into owned descriptors, and `mmap`/`munmap` for `kvm_run` and guest RAM. Variable-length KVM ABIs are represented by bounded `repr(C)` buffers with returned counts validated before slices are formed. Flat guest bytes are copied only through checked guest-memory ranges. The x86 `kvm_run` I/O and system-event views are accessed only through tested UAPI layouts and only after the mapping is known large enough for the required prefix. System-event `ndata` is bounded by the fixed 16-word UAPI capacity before any payload slice is formed. Both OUT copying and IN write-back use `data_offset + size * count` only after checked conversion, overflow, and mapping-bounds validation; IN additionally requires an exact response-length match. Raw pointers into `kvm_run` never cross into VM-exit policy, execution-loop, or device code. No guest physical address is treated as a host pointer.
 
 CPU/MSR snapshot comparison is pure Rust over owned values. Restore boundaries delegate to the existing validated KVM setters and deliberately do not claim transactionality, rollback, repair, or atomic point-in-time capture. MSR partial writes retain structured diagnostics for the processed prefix rather than pretending the operation was all-or-nothing.
 
