@@ -49,6 +49,8 @@ The deterministic `run-debug-port` fixture loads `MOV AL, 'K'; OUT 0xe9, AL; HLT
 
 The deterministic port-input fixture loads `IN AL, 0xe9; MOV [0x2000], AL; HLT` at `0x1000` and also uses an exit budget of 2. The debug device supplies byte `R`, the vCPU layer writes that response into the exact checked KVM input buffer, the common loop re-enters KVM, and the guest stores the consumed byte into RAM at `0x2000` before halting with RIP `0x1006`.
 
+The deterministic `run-cpuid` fixture executes the existing guest-observed CPUID proof and prints the guest's `CPUID(1).ECX`, `CPUID(0x40000001).EAX`, whether the three currently masked LAPIC-dependent feature bits remain clear, and the terminal HLT report. The CLI reuses the library fixture directly; it does not introduce a second CPUID policy, feature mask, or guest program.
+
 The deterministic `state-roundtrip` fixture creates vCPU 0 without running guest code, uses an intentionally empty guest MSR policy for host portability, captures reference composite CPU state at real-mode RIP `0x1000`, changes the configured state to RIP `0x1200`, proves that the changed snapshot no longer matches, then restores and verifies the original snapshot through the existing bounded composite restore-and-verify path. It reports typed changed/restored comparison results and does not claim whole-VM, guest-memory, device-state, migration, checkpoint, atomic/quiesced snapshot, rollback, or retry semantics.
 
 KVM-aware state regressions also exercise real vCPU capture/compare/restore/verify paths when `/dev/kvm` is available. These snapshots cover the owned vCPU CPU-state boundaries listed above; they are **not** whole-VM, guest-memory, device-state, migration, checkpoint, or atomic/quiesced snapshot semantics.
@@ -81,11 +83,12 @@ cargo test --all-targets --all-features
 cargo run -- probe
 cargo run -- lifecycle
 cargo run -- state-roundtrip
+cargo run -- run-cpuid
 cargo run -- run-hlt
 cargo run -- run-debug-port
 ```
 
-`probe` validates host KVM capabilities and the bounded supported-CPUID query. `lifecycle` creates a VM, configures the reserved x86 KVM pages, registers the fixed RAM region, creates vCPU 0, applies the validated CPUID contract, maps `kvm_run`, then shuts down cleanly. `state-roundtrip` exercises the deterministic composite CPU-state capture/change/restore-and-verify path without executing guest code. `run-hlt` exercises the bounded terminal HLT path. `run-debug-port` exercises checked KVM port output, the minimal `PortIoBus`, common bounded execution, I/O completion by re-entry, and final HLT termination. The port-input path is currently exercised through the library API and integration regression rather than a separate CLI command.
+`probe` validates host KVM capabilities and the bounded supported-CPUID query. `lifecycle` creates a VM, configures the reserved x86 KVM pages, registers the fixed RAM region, creates vCPU 0, applies the validated CPUID contract, maps `kvm_run`, then shuts down cleanly. `state-roundtrip` exercises the deterministic composite CPU-state capture/change/restore-and-verify path without executing guest code. `run-cpuid` exposes the existing deterministic guest-observed configured-CPUID proof; when KVM is unavailable or inaccessible it propagates the existing structured environment error instead of falling through as an unknown successful command. `run-hlt` exercises the bounded terminal HLT path. `run-debug-port` exercises checked KVM port output, the minimal `PortIoBus`, common bounded execution, I/O completion by re-entry, and final HLT termination. The port-input path is currently exercised through the library API and integration regression rather than a separate CLI command.
 
 ## Safety boundary
 
