@@ -336,11 +336,13 @@ fn verify_cpu_policy_readback(
         ),
     };
 
-    Err(Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
-        id: id.get(),
-        operation: "verify KVM_GET_CPUID2 policy",
-        source: io::Error::new(io::ErrorKind::InvalidData, detail),
-    }))
+    Err(Error::HostEnvironment(
+        HostEnvironmentError::VcpuOperation {
+            id: id.get(),
+            operation: "verify KVM_GET_CPUID2 policy",
+            source: io::Error::new(io::ErrorKind::InvalidData, detail),
+        },
+    ))
 }
 
 fn cpuid_entry_from_kvm(entry: sys::KvmCpuidEntry2) -> CpuidEntry {
@@ -387,11 +389,7 @@ fn malformed_supported_cpuid(reported: u32, capacity: usize) -> Error {
     )
 }
 
-fn validate_vcpu_cpuid_count(
-    id: VcpuId,
-    reported: u32,
-    capacity: usize,
-) -> Result<usize, Error> {
+fn validate_vcpu_cpuid_count(id: VcpuId, reported: u32, capacity: usize) -> Result<usize, Error> {
     let invalid = || malformed_vcpu_cpuid(id, reported, capacity);
     let count = usize::try_from(reported).map_err(|_| invalid())?;
     if count == 0 || count > capacity {
@@ -584,19 +582,23 @@ mod tests {
         );
         assert!(matches!(
             validate_vcpu_cpuid_count(VcpuId::BOOT, 0, 256),
-            Err(Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
-                id: 0,
-                operation: "validate KVM_GET_CPUID2 response",
-                ..
-            }))
+            Err(Error::HostEnvironment(
+                HostEnvironmentError::VcpuOperation {
+                    id: 0,
+                    operation: "validate KVM_GET_CPUID2 response",
+                    ..
+                }
+            ))
         ));
         assert!(matches!(
             validate_vcpu_cpuid_count(VcpuId::BOOT, 257, 256),
-            Err(Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
-                id: 0,
-                operation: "validate KVM_GET_CPUID2 response",
-                ..
-            }))
+            Err(Error::HostEnvironment(
+                HostEnvironmentError::VcpuOperation {
+                    id: 0,
+                    operation: "validate KVM_GET_CPUID2 response",
+                    ..
+                }
+            ))
         ));
     }
 
@@ -611,11 +613,13 @@ mod tests {
         let policy = policy_fixture();
         assert!(matches!(
             verify_cpu_policy_readback(&policy, VcpuId::BOOT, &[]),
-            Err(Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
-                id: 0,
-                operation: "verify KVM_GET_CPUID2 policy",
-                ..
-            }))
+            Err(Error::HostEnvironment(
+                HostEnvironmentError::VcpuOperation {
+                    id: 0,
+                    operation: "verify KVM_GET_CPUID2 policy",
+                    ..
+                }
+            ))
         ));
     }
 
@@ -626,11 +630,13 @@ mod tests {
         actual[0].ecx ^= 1;
         assert!(matches!(
             verify_cpu_policy_readback(&policy, VcpuId::BOOT, &actual),
-            Err(Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
-                id: 0,
-                operation: "verify KVM_GET_CPUID2 policy",
-                ..
-            }))
+            Err(Error::HostEnvironment(
+                HostEnvironmentError::VcpuOperation {
+                    id: 0,
+                    operation: "verify KVM_GET_CPUID2 policy",
+                    ..
+                }
+            ))
         ));
     }
 
