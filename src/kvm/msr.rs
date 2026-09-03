@@ -138,6 +138,36 @@ impl HostMsrFeatureValues {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostMsrModelCandidate {
+    source_observation: HostMsrFeatureValues,
+    values: Vec<MsrFeatureValue>,
+}
+
+impl HostMsrModelCandidate {
+    pub(crate) fn from_observation(observation: &HostMsrFeatureValues) -> Self {
+        let values = observation.model_immutable_values().copied().collect();
+        debug_assert!(values
+            .iter()
+            .all(|value| value.stability() == MsrFeatureStability::ModelImmutable));
+
+        Self {
+            source_observation: observation.clone(),
+            values,
+        }
+    }
+
+    #[must_use]
+    pub fn source_observation(&self) -> &HostMsrFeatureValues {
+        &self.source_observation
+    }
+
+    #[must_use]
+    pub fn values(&self) -> &[MsrFeatureValue] {
+        &self.values
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +290,53 @@ mod tests {
         assert!(snapshot.values().is_empty());
         assert_eq!(snapshot.model_immutable_values().count(), 0);
         assert_eq!(snapshot.host_mutable_values().count(), 0);
+    }
+
+    #[test]
+    fn model_candidate_excludes_mutable_values_and_preserves_immutable_order() {
+        let immutable_a = MsrFeatureValue::new(MsrIndex::new(0x3a), 0x1111);
+        let mutable = MsrFeatureValue::new(MSR_IA32_UCODE_REV, 0x2222);
+        let immutable_b = MsrFeatureValue::new(MsrIndex::new(0x10a), 0x3333);
+        let observation =
+            HostMsrFeatureValues::from_values(vec![immutable_a, mutable, immutable_b]);
+        let candidate = HostMsrModelCandidate::from_observation(&observation);
+
+        assert_eq!(candidate.values(), &[immutable_a, immutable_b]);
+        assert!(candidate
+            .values()
+            .iter()
+            .all(|value| value.stability() == MsrFeatureStability::ModelImmutable));
+    }
+
+    #[test]
+    fn model_candidate_keeps_complete_owned_source_provenance() {
+        let observation = HostMsrFeatureValues::from_values(vec![
+            MsrFeatureValue::new(MsrIndex::new(0x3a), 0x1111),
+            MsrFeatureValue::new(MSR_IA32_UCODE_REV, 0x2222),
+        ]);
+        let candidate = HostMsrModelCandidate::from_observation(&observation);
+
+        assert_eq!(candidate.source_observation(), &observation);
+        assert_eq!(candidate.source_observation().host_mutable_values().count(), 1);
+    }
+
+    #[test]
+    fn all_mutable_observation_produces_empty_candidate_with_provenance() {
+        let mutable = MsrFeatureValue::new(MSR_IA32_UCODE_REV, 0x2222);
+        let observation = HostMsrFeatureValues::from_values(vec![mutable]);
+        let candidate = HostMsrModelCandidate::from_observation(&observation);
+
+        assert!(candidate.values().is_empty());
+        assert_eq!(candidate.source_observation().values(), &[mutable]);
+    }
+
+    #[test]
+    fn empty_observation_produces_empty_candidate_and_provenance() {
+        let observation = HostMsrFeatureValues::from_values(Vec::new());
+        let candidate = HostMsrModelCandidate::from_observation(&observation);
+
+        assert!(candidate.values().is_empty());
+        assert!(candidate.source_observation().values().is_empty());
     }
 
     #[test]
