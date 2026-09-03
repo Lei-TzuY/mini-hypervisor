@@ -472,7 +472,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classifies_hlt_io_shutdown_fail_entry_internal_error_system_event_and_preserves_unknown_reason() {
+    fn classifies_hlt_io_shutdown_fail_entry_internal_error_system_event_and_preserves_unknown_reason(
+    ) {
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_HLT), VcpuExit::Hlt);
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_IO), VcpuExit::Io);
         assert_eq!(
