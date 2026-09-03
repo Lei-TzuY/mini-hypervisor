@@ -16,29 +16,27 @@ The repository currently has typed, owned boundaries for:
 - composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison, read-only snapshot-bound verification, bounded non-transactional restore, restore-and-verify, and a deterministic public/CLI round-trip fixture;
 - centralized VM-exit dispatch with typed HLT and legacy shutdown terminal exits, typed `KVM_EXIT_FAIL_ENTRY`, capability-gated `KVM_EXIT_INTERNAL_ERROR` optional diagnostics, and `KVM_EXIT_SYSTEM_EVENT` diagnostics, bounded execution budgets, ordered completed-exit reason traces on successful results, budget-exhaustion, unhandled-exit, fail-entry, internal-error, malformed internal-error-data, and system-event diagnostics, plus the minimal bidirectional debug port-I/O device;
 - deterministic CLI command dispatch that preserves structured hypervisor failures for known commands and rejects unknown commands with a usage failure before any KVM access;
-- public README synchronized through the Phase 62 optional internal-error-data decoding boundary; architecture and safety documentation remain synchronized through the Phase 61 documentation pass.
+- public README, architecture, and safety documentation synchronized through the Phase 63 documentation pass with the integrated Phase 62 capability-gated internal-error optional-payload boundary.
 
-## Phase 62 — capability-gated internal-error optional payload decoding
+## Phase 63 — internal-error optional payload architecture and safety synchronization
 
-The current bounded slice consumes `KVM_EXIT_INTERNAL_ERROR` optional `ndata`/`data[16]` only on hosts that positively report `KVM_CAP_INTERNAL_ERROR_DATA`, while preserving the existing suberror-only behavior on hosts without that optional capability. It extends diagnostics only and does not add recovery or lifecycle policy.
+The current bounded slice reconciles `ARCHITECTURE.md` and `docs/safety-assumptions.md` with the already integrated Phase 62 capability-gated `KVM_EXIT_INTERNAL_ERROR` optional-payload diagnostics. It changes no Rust source, test source, KVM ABI behavior, execution policy, required-capability contract, state mutation, or guest lifecycle semantics.
 
 Correctness contract:
 
-- `KVM_CAP_INTERNAL_ERROR_DATA` remains optional and is not added to the five required KVM extensions;
-- the already observed optional support boolean is propagated from `KvmBackend` through `Vm` into each created `Vcpu` without changing CPUID, memory, state, or execution setup;
-- every `KVM_EXIT_INTERNAL_ERROR` continues to expose the always-available raw `suberror` as owned typed state;
-- when optional data support is absent or non-positive, the decoder forms only the existing base view, does not read `ndata` or `data[16]`, and `VcpuInternalError::data()` returns `None`;
-- when optional data support is positive, the decoder may form the fixed full x86 internal-error payload view only after the vCPU has inherited that host fact;
-- capability-enabled decoding treats kernel `ndata` as untrusted metadata, requires `ndata <= 16` before any slice is formed, and copies only the declared words into owned Rust state;
-- capability-enabled `ndata == 0` is distinguishable from capability absence: it produces available-but-empty optional data rather than `None`;
-- a malformed capability-enabled `ndata` becomes structured `InvalidInternalErrorDataCount` diagnostics retaining vCPU id, raw `suberror`, reported `ndata`, fixed capacity, and the ordered completed-exit trace;
-- normal structured `InternalError` diagnostics retain the raw `suberror`, optional owned data when available, and the complete ordered completed-exit trace without issuing a secondary register-read ioctl;
-- no raw pointer or borrowed optional internal-error payload crosses into dispatch or execution diagnostics;
-- no suberror-specific interpretation, emulation recovery, retry, replacement execution, lifecycle action, new KVM requirement, MMIO, interrupts, SMP, long-mode/Linux boot, migration, resumable execution, or guest-memory/device snapshot behavior is introduced;
-- focused pure regressions lock base-vs-capability-enabled decoding, zero/full/malformed data counts, owned dispatch/trace preservation, and the public optional-data accessor, while the environment-sensitive KVM regression confirms the backend capability observation is propagated to created vCPUs when `/dev/kvm` is usable.
+- architecture and safety documentation continue to distinguish the five required KVM extensions from optional `KVM_CAP_INTERNAL_ERROR_DATA`; a missing or non-positive observation remains valid and preserves the base `suberror`-only decoder path;
+- documentation records that the positive optional-support fact is propagated from `KvmBackend` through `Vm` into each created `Vcpu` without changing CPUID, memory, state, or execution setup;
+- the base internal-error view remains the only view formed when optional support is absent, and `VcpuInternalError::data()` is documented as `None` on that path;
+- only a vCPU that inherited positive optional support may form the fixed full x86 internal-error payload view containing `suberror`, `ndata`, and `data[16]`;
+- kernel `ndata` is documented as untrusted metadata that must be `<= 16` before any Rust slice is formed, with only declared words copied into owned state;
+- capability-enabled `ndata == 0` remains distinguishable from unavailable optional data as available-but-empty data;
+- architecture/safety text documents structured `InvalidInternalErrorDataCount` diagnostics and preservation of the ordered completed-exit trace for malformed optional-data counts;
+- ownership text reflects that typed internal-error state and execution diagnostics contain only copied Rust data and no pointer or borrow into `kvm_run`;
+- documentation does not imply suberror/data-specific interpretation, emulation recovery, retry, replacement execution, lifecycle action, a new required capability, MMIO, interrupts, SMP, long-mode/Linux boot, migration, resumable execution, or guest-memory/device snapshot behavior;
+- this slice changes documentation only; repository Format/Clippy/Test CI remains the unchanged integration gate.
 
 ## Next bounded slice
 
 No broader implementation slice is preselected by this commit.
 
-After Phase 62 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, CPU-model, state-model, memory, CLI, lifecycle-policy, capability, or architecture work. Do not infer internal-error suberror-specific recovery/retry, fail-entry retry/placement policy, system-event reset/reboot/crash policy, MMIO, interrupts, long-mode boot, SMP, migration, resumable execution, guest-memory/device snapshots, or another CLI command automatically from this optional diagnostic decoding boundary.
+After Phase 63 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, CPU-model, state-model, memory, CLI, lifecycle-policy, capability, or architecture work. Do not infer internal-error suberror/data-specific recovery or retry, fail-entry retry/placement policy, system-event reset/reboot/crash policy, MMIO, interrupts, long-mode boot, SMP, migration, resumable execution, guest-memory/device snapshots, or another CLI command automatically from this documentation synchronization pass.
