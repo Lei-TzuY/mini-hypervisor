@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MsrIndex(u32);
@@ -668,7 +668,7 @@ impl GuestMsrAccessPolicy {
         host: &HostMsrIndexList,
         requested: &[MsrIndex],
     ) -> Result<Self, GuestMsrPolicyError> {
-        let mut seen = HashSet::with_capacity(requested.len());
+        let mut seen = HashMap::with_capacity(requested.len());
         let mut entries = Vec::with_capacity(requested.len());
 
         for (position, index) in requested.iter().copied().enumerate() {
