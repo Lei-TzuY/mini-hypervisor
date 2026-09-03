@@ -15,6 +15,107 @@ pub struct CpuidEntry {
     pub edx: u32,
 }
 
+impl CpuidEntry {
+    #[must_use]
+    pub const fn key(self) -> CpuidPolicyKey {
+        CpuidPolicyKey::new(self.function, self.index)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CpuidPolicyKey {
+    function: u32,
+    index: u32,
+}
+
+impl CpuidPolicyKey {
+    #[must_use]
+    pub const fn new(function: u32, index: u32) -> Self {
+        Self { function, index }
+    }
+
+    #[must_use]
+    pub const fn function(self) -> u32 {
+        self.function
+    }
+
+    #[must_use]
+    pub const fn index(self) -> u32 {
+        self.index
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CpuidPolicyField {
+    Flags,
+    Eax,
+    Ebx,
+    Ecx,
+    Edx,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuidPolicyEntryMismatch {
+    key: CpuidPolicyKey,
+    reference_entry: CpuidEntry,
+    observed_entry: CpuidEntry,
+    differing_fields: Vec<CpuidPolicyField>,
+}
+
+impl CpuidPolicyEntryMismatch {
+    fn between(reference_entry: CpuidEntry, observed_entry: CpuidEntry) -> Option<Self> {
+        debug_assert_eq!(reference_entry.key(), observed_entry.key());
+
+        let mut differing_fields = Vec::with_capacity(5);
+        if reference_entry.flags != observed_entry.flags {
+            differing_fields.push(CpuidPolicyField::Flags);
+        }
+        if reference_entry.eax != observed_entry.eax {
+            differing_fields.push(CpuidPolicyField::Eax);
+        }
+        if reference_entry.ebx != observed_entry.ebx {
+            differing_fields.push(CpuidPolicyField::Ebx);
+        }
+        if reference_entry.ecx != observed_entry.ecx {
+            differing_fields.push(CpuidPolicyField::Ecx);
+        }
+        if reference_entry.edx != observed_entry.edx {
+            differing_fields.push(CpuidPolicyField::Edx);
+        }
+
+        if differing_fields.is_empty() {
+            None
+        } else {
+            Some(Self {
+                key: reference_entry.key(),
+                reference_entry,
+                observed_entry,
+                differing_fields,
+            })
+        }
+    }
+
+    #[must_use]
+    pub const fn key(&self) -> CpuidPolicyKey {
+        self.key
+    }
+
+    #[must_use]
+    pub const fn reference_entry(&self) -> CpuidEntry {
+        self.reference_entry
+    }
+
+    #[must_use]
+    pub const fn observed_entry(&self) -> CpuidEntry {
+        self.observed_entry
+    }
+
+    #[must_use]
+    pub fn differing_fields(&self) -> &[CpuidPolicyField] {
+        &self.differing_fields
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostCpuid {
     entries: Vec<CpuidEntry>,
@@ -57,6 +158,96 @@ impl GuestCpuPolicy {
     #[must_use]
     pub fn entries(&self) -> &[CpuidEntry] {
         &self.entries
+    }
+
+    #[must_use]
+    pub fn compare(&self, observed: &Self) -> GuestCpuPolicyComparison {
+        let missing_from_observed = self
+            .entries
+            .iter()
+            .copied()
+            .filter(|reference| {
+                !observed
+                    .entries
+                    .iter()
+                    .any(|candidate| candidate.key() == reference.key())
+            })
+            .collect();
+        let extra_in_observed = observed
+            .entries
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                !self
+                    .entries
+                    .iter()
+                    .any(|reference| reference.key() == candidate.key())
+            })
+            .collect();
+        let entry_mismatches = self
+            .entries
+            .iter()
+            .filter_map(|reference| {
+                observed
+                    .entries
+                    .iter()
+                    .find(|candidate| candidate.key() == reference.key())
+                    .and_then(|candidate| {
+                        CpuidPolicyEntryMismatch::between(*reference, *candidate)
+                    })
+            })
+            .collect();
+
+        GuestCpuPolicyComparison {
+            reference: self.clone(),
+            observed: observed.clone(),
+            missing_from_observed,
+            extra_in_observed,
+            entry_mismatches,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuestCpuPolicyComparison {
+    reference: GuestCpuPolicy,
+    observed: GuestCpuPolicy,
+    missing_from_observed: Vec<CpuidEntry>,
+    extra_in_observed: Vec<CpuidEntry>,
+    entry_mismatches: Vec<CpuidPolicyEntryMismatch>,
+}
+
+impl GuestCpuPolicyComparison {
+    #[must_use]
+    pub fn reference(&self) -> &GuestCpuPolicy {
+        &self.reference
+    }
+
+    #[must_use]
+    pub fn observed(&self) -> &GuestCpuPolicy {
+        &self.observed
+    }
+
+    #[must_use]
+    pub fn missing_from_observed(&self) -> &[CpuidEntry] {
+        &self.missing_from_observed
+    }
+
+    #[must_use]
+    pub fn extra_in_observed(&self) -> &[CpuidEntry] {
+        &self.extra_in_observed
+    }
+
+    #[must_use]
+    pub fn entry_mismatches(&self) -> &[CpuidPolicyEntryMismatch] {
+        &self.entry_mismatches
+    }
+
+    #[must_use]
+    pub fn is_exact_match(&self) -> bool {
+        self.missing_from_observed.is_empty()
+            && self.extra_in_observed.is_empty()
+            && self.entry_mismatches.is_empty()
     }
 }
 
@@ -177,10 +368,7 @@ mod tests {
     #[test]
     fn cpuid_policy_key_uses_function_and_index() {
         let entry = entry(0x8000_0001, 7, 1);
-        assert_eq!(
-            entry.key(),
-            CpuidPolicyKey::new(0x8000_0001, 7)
-        );
+        assert_eq!(entry.key(), CpuidPolicyKey::new(0x8000_0001, 7));
         assert_eq!(entry.key().function(), 0x8000_0001);
         assert_eq!(entry.key().index(), 7);
     }
