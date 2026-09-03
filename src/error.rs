@@ -274,8 +274,7 @@ impl std::error::Error for HostEnvironmentError {
             | Self::VcpuRunMapping { source, .. }
             | Self::VcpuOperation { source, .. }
             | Self::Io { source, .. } => Some(source),
-            Self::VcpuMsrPartialWrite { .. }
-            | Self::VcpuMsrInvalidWriteCompletion { .. } => None,
+            Self::VcpuMsrPartialWrite { .. } | Self::VcpuMsrInvalidWriteCompletion { .. } => None,
         }
     }
 }
