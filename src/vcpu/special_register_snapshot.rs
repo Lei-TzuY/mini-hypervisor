@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn segment_snapshot_copies_semantic_fields_and_ignores_uapi_padding() {
-        let mut a = segment(3, 0xaa);
+        let a = segment(3, 0xaa);
         let mut b = a;
         b.padding = 0x55;
 
