@@ -8,8 +8,7 @@ use std::ptr::NonNull;
 
 mod register_snapshot;
 pub use register_snapshot::{
-    VcpuRegisterField, VcpuRegisterMismatch, VcpuRegisterSnapshot,
-    VcpuRegisterSnapshotComparison,
+    VcpuRegisterField, VcpuRegisterMismatch, VcpuRegisterSnapshot, VcpuRegisterSnapshotComparison,
 };
 
 mod msr_readback;
