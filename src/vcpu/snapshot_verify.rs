@@ -1,9 +1,9 @@
-use super::{
+use crate::error::Error;
+use crate::kvm::msr::value_set::{GuestMsrSnapshot, GuestMsrSnapshotComparison};
+use crate::vcpu::{
     Vcpu, VcpuRegisterSnapshot, VcpuRegisterSnapshotComparison, VcpuSpecialRegisterSnapshot,
     VcpuSpecialRegisterSnapshotComparison,
 };
-use crate::error::Error;
-use crate::kvm::msr::value_set::{GuestMsrSnapshot, GuestMsrSnapshotComparison};
 
 impl Vcpu {
     pub fn verify_register_snapshot(
