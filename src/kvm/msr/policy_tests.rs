@@ -74,6 +74,9 @@ fn guest_policy_owns_entries_after_sources_are_dropped() {
     };
 
     assert_eq!(policy.entries()[0].index(), MsrIndex::new(0x1b));
-    assert_eq!(policy.entries()[0].authority(), MsrAccessAuthority::ReadWrite);
+    assert_eq!(
+        policy.entries()[0].authority(),
+        MsrAccessAuthority::ReadWrite
+    );
     assert_eq!(policy.entries()[1].index(), MsrIndex::new(0x10));
 }
