@@ -38,10 +38,8 @@ const REQUIRED_EXTENSIONS: [(&str, i32); 5] = [
     ("KVM_CAP_GET_MSR_FEATURES", KVM_CAP_GET_MSR_FEATURES),
 ];
 
-const OPTIONAL_EXTENSIONS: [(&str, i32); 1] = [(
-    "KVM_CAP_INTERNAL_ERROR_DATA",
-    KVM_CAP_INTERNAL_ERROR_DATA,
-)];
+const OPTIONAL_EXTENSIONS: [(&str, i32); 1] =
+    [("KVM_CAP_INTERNAL_ERROR_DATA", KVM_CAP_INTERNAL_ERROR_DATA)];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capability {
