@@ -1,5 +1,6 @@
 use super::{
     vcpu_operation, Vcpu, VcpuDescriptorTableState, VcpuSegmentState, VcpuSpecialRegisterSnapshot,
+    VcpuSpecialRegisterSnapshotComparison,
 };
 use crate::error::Error;
 use crate::kvm::sys;
@@ -112,6 +113,15 @@ impl Vcpu {
         let sregs = encode_snapshot(snapshot);
         sys::set_sregs(self.fd.as_raw_fd(), &sregs)
             .map_err(|source| vcpu_operation(self.id, "KVM_SET_SREGS", source))
+    }
+
+    pub fn restore_and_verify_special_register_snapshot(
+        &self,
+        snapshot: &VcpuSpecialRegisterSnapshot,
+    ) -> Result<VcpuSpecialRegisterSnapshotComparison, Error> {
+        self.restore_special_register_snapshot(snapshot)?;
+        let observed = self.capture_special_register_snapshot()?;
+        Ok(snapshot.compare(&observed))
     }
 }
 
