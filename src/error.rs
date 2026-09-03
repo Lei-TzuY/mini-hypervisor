@@ -139,6 +139,15 @@ pub enum VmExitError {
         rflags: u64,
         exit_reasons: Vec<u32>,
     },
+    KvmUnknownExit {
+        vcpu_id: u16,
+        hardware_exit_reason: u64,
+        exit_reasons: Vec<u32>,
+    },
+    KvmUnknownPayloadUnavailable {
+        vcpu_id: u16,
+        exit_reason: u32,
+    },
     EntryFailure {
         vcpu_id: u16,
         hardware_entry_failure_reason: u64,
@@ -469,6 +478,21 @@ impl fmt::Display for VmExitError {
             } => write!(
                 f,
                 "unhandled VM exit on vCPU {vcpu_id}: reason={reason}, rip={rip:#x}, rflags={rflags:#x}"
+            ),
+            Self::KvmUnknownExit {
+                vcpu_id,
+                hardware_exit_reason,
+                ..
+            } => write!(
+                f,
+                "KVM reported unknown hardware exit on vCPU {vcpu_id}: hardware_exit_reason={hardware_exit_reason:#x}"
+            ),
+            Self::KvmUnknownPayloadUnavailable {
+                vcpu_id,
+                exit_reason,
+            } => write!(
+                f,
+                "vCPU {vcpu_id} has no KVM-unknown payload for exit reason {exit_reason}"
             ),
             Self::EntryFailure {
                 vcpu_id,
