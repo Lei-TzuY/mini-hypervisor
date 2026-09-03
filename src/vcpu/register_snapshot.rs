@@ -4,6 +4,81 @@ use crate::kvm::sys;
 use std::os::fd::AsRawFd;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcpuRegisterField {
+    Rax,
+    Rbx,
+    Rcx,
+    Rdx,
+    Rsi,
+    Rdi,
+    Rsp,
+    Rbp,
+    R8,
+    R9,
+    R10,
+    R11,
+    R12,
+    R13,
+    R14,
+    R15,
+    Rip,
+    Rflags,
+}
+
+const REGISTER_FIELDS: [VcpuRegisterField; 18] = [
+    VcpuRegisterField::Rax,
+    VcpuRegisterField::Rbx,
+    VcpuRegisterField::Rcx,
+    VcpuRegisterField::Rdx,
+    VcpuRegisterField::Rsi,
+    VcpuRegisterField::Rdi,
+    VcpuRegisterField::Rsp,
+    VcpuRegisterField::Rbp,
+    VcpuRegisterField::R8,
+    VcpuRegisterField::R9,
+    VcpuRegisterField::R10,
+    VcpuRegisterField::R11,
+    VcpuRegisterField::R12,
+    VcpuRegisterField::R13,
+    VcpuRegisterField::R14,
+    VcpuRegisterField::R15,
+    VcpuRegisterField::Rip,
+    VcpuRegisterField::Rflags,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VcpuRegisterMismatch {
+    field: VcpuRegisterField,
+    reference_value: u64,
+    observed_value: u64,
+}
+
+impl VcpuRegisterMismatch {
+    const fn new(field: VcpuRegisterField, reference_value: u64, observed_value: u64) -> Self {
+        Self {
+            field,
+            reference_value,
+            observed_value,
+        }
+    }
+
+    #[must_use]
+    pub const fn field(self) -> VcpuRegisterField {
+        self.field
+    }
+
+    #[must_use]
+    pub const fn reference_value(self) -> u64 {
+        self.reference_value
+    }
+
+    #[must_use]
+    pub const fn observed_value(self) -> u64 {
+        self.observed_value
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VcpuRegisterSnapshot {
     rax: u64,
     rbx: u64,
@@ -137,6 +212,80 @@ impl VcpuRegisterSnapshot {
     #[must_use]
     pub const fn rflags(&self) -> u64 {
         self.rflags
+    }
+
+    #[must_use]
+    pub fn compare(&self, observed: &Self) -> VcpuRegisterSnapshotComparison {
+        let mut mismatches = Vec::new();
+        for field in REGISTER_FIELDS {
+            let reference_value = self.value(field);
+            let observed_value = observed.value(field);
+            if reference_value != observed_value {
+                mismatches.push(VcpuRegisterMismatch::new(
+                    field,
+                    reference_value,
+                    observed_value,
+                ));
+            }
+        }
+
+        VcpuRegisterSnapshotComparison {
+            reference: *self,
+            observed: *observed,
+            mismatches,
+        }
+    }
+
+    const fn value(&self, field: VcpuRegisterField) -> u64 {
+        match field {
+            VcpuRegisterField::Rax => self.rax,
+            VcpuRegisterField::Rbx => self.rbx,
+            VcpuRegisterField::Rcx => self.rcx,
+            VcpuRegisterField::Rdx => self.rdx,
+            VcpuRegisterField::Rsi => self.rsi,
+            VcpuRegisterField::Rdi => self.rdi,
+            VcpuRegisterField::Rsp => self.rsp,
+            VcpuRegisterField::Rbp => self.rbp,
+            VcpuRegisterField::R8 => self.r8,
+            VcpuRegisterField::R9 => self.r9,
+            VcpuRegisterField::R10 => self.r10,
+            VcpuRegisterField::R11 => self.r11,
+            VcpuRegisterField::R12 => self.r12,
+            VcpuRegisterField::R13 => self.r13,
+            VcpuRegisterField::R14 => self.r14,
+            VcpuRegisterField::R15 => self.r15,
+            VcpuRegisterField::Rip => self.rip,
+            VcpuRegisterField::Rflags => self.rflags,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcpuRegisterSnapshotComparison {
+    reference: VcpuRegisterSnapshot,
+    observed: VcpuRegisterSnapshot,
+    mismatches: Vec<VcpuRegisterMismatch>,
+}
+
+impl VcpuRegisterSnapshotComparison {
+    #[must_use]
+    pub const fn reference(&self) -> &VcpuRegisterSnapshot {
+        &self.reference
+    }
+
+    #[must_use]
+    pub const fn observed(&self) -> &VcpuRegisterSnapshot {
+        &self.observed
+    }
+
+    #[must_use]
+    pub fn mismatches(&self) -> &[VcpuRegisterMismatch] {
+        &self.mismatches
+    }
+
+    #[must_use]
+    pub fn is_exact_match(&self) -> bool {
+        self.mismatches.is_empty()
     }
 }
 
