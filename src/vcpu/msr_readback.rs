@@ -1,6 +1,6 @@
 use super::{vcpu_operation, Vcpu};
 use crate::error::Error;
-use crate::kvm::msr::MsrIndex;
+use crate::kvm::msr::{GuestMsrAccessPolicy, GuestMsrValueSet, MsrIndex};
 use crate::kvm::sys;
 use std::io;
 use std::os::fd::AsRawFd;
@@ -58,6 +58,65 @@ impl Vcpu {
         decode_vcpu_msr_response(indices, returned, &request.entries[..indices.len()])
             .map_err(|source| vcpu_operation(self.id, "validate KVM_GET_MSRS response", source))
     }
+
+    pub fn capture_msrs(&self, policy: &GuestMsrAccessPolicy) -> Result<GuestMsrValueSet, Error> {
+        let indices = policy_msr_indices(policy);
+        if indices.is_empty() {
+            return materialize_policy_capture(policy, &[]).map_err(|source| {
+                vcpu_operation(self.id, "materialize guest MSR capture", source)
+            });
+        }
+
+        let readback = self.msrs(&indices)?;
+        let captured: Vec<(MsrIndex, u64)> = readback
+            .values()
+            .iter()
+            .map(|value| (value.index(), value.value()))
+            .collect();
+        materialize_policy_capture(policy, &captured)
+            .map_err(|source| vcpu_operation(self.id, "materialize guest MSR capture", source))
+    }
+}
+
+fn policy_msr_indices(policy: &GuestMsrAccessPolicy) -> Vec<MsrIndex> {
+    policy.entries().iter().map(|entry| entry.index()).collect()
+}
+
+fn materialize_policy_capture(
+    policy: &GuestMsrAccessPolicy,
+    captured: &[(MsrIndex, u64)],
+) -> io::Result<GuestMsrValueSet> {
+    if captured.len() != policy.entries().len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "guest MSR capture contains {} values for {} policy entries",
+                captured.len(),
+                policy.entries().len()
+            ),
+        ));
+    }
+
+    for (position, (entry, (captured_index, _))) in policy
+        .entries()
+        .iter()
+        .zip(captured.iter().copied())
+        .enumerate()
+    {
+        if entry.index() != captured_index {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "guest MSR capture changed index at entry {position}: expected {:#x}, got {:#x}",
+                    entry.index().get(),
+                    captured_index.get()
+                ),
+            ));
+        }
+    }
+
+    GuestMsrValueSet::from_policy(policy, captured)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
 }
 
 fn prepare_vcpu_msr_request(
@@ -144,6 +203,7 @@ fn decode_vcpu_msr_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kvm::msr::HostMsrIndexList;
 
     fn entry(index: u32, data: u64) -> sys::KvmMsrEntry {
         sys::KvmMsrEntry {
@@ -151,6 +211,77 @@ mod tests {
             reserved: 0,
             data,
         }
+    }
+
+    fn policy(indices: &[u32]) -> GuestMsrAccessPolicy {
+        let host = HostMsrIndexList::from_validated_raw(indices);
+        let requested: Vec<MsrIndex> = indices.iter().copied().map(MsrIndex::new).collect();
+        GuestMsrAccessPolicy::from_host(&host, &requested).unwrap()
+    }
+
+    #[test]
+    fn policy_index_extraction_preserves_policy_order() {
+        let policy = policy(&[0x10a, 0x3a, 0x48]);
+
+        assert_eq!(
+            policy_msr_indices(&policy),
+            vec![
+                MsrIndex::new(0x10a),
+                MsrIndex::new(0x3a),
+                MsrIndex::new(0x48),
+            ]
+        );
+    }
+
+    #[test]
+    fn capture_materialization_preserves_exact_values_and_policy_order() {
+        let policy = policy(&[0x10a, 0x3a]);
+        let captured = [
+            (MsrIndex::new(0x10a), 0x1111_2222_3333_4444),
+            (MsrIndex::new(0x3a), 0xaaaa_bbbb_cccc_dddd),
+        ];
+
+        let values = materialize_policy_capture(&policy, &captured).unwrap();
+
+        assert_eq!(values.values().len(), 2);
+        assert_eq!(values.values()[0].index(), captured[0].0);
+        assert_eq!(values.values()[0].value(), captured[0].1);
+        assert_eq!(values.values()[1].index(), captured[1].0);
+        assert_eq!(values.values()[1].value(), captured[1].1);
+    }
+
+    #[test]
+    fn capture_materialization_accepts_empty_policy_and_capture() {
+        let host = HostMsrIndexList::from_validated_raw(&[0x10]);
+        let policy = GuestMsrAccessPolicy::from_host(&host, &[]).unwrap();
+
+        let values = materialize_policy_capture(&policy, &[]).unwrap();
+
+        assert!(values.values().is_empty());
+    }
+
+    #[test]
+    fn capture_materialization_rejects_partial_prefix() {
+        let policy = policy(&[0x10, 0x1b]);
+        let captured = [(MsrIndex::new(0x10), 1)];
+
+        let error = materialize_policy_capture(&policy, &captured).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("1 values for 2 policy entries"));
+    }
+
+    #[test]
+    fn capture_materialization_rejects_changed_or_reordered_index() {
+        let policy = policy(&[0x10, 0x1b]);
+        let captured = [(MsrIndex::new(0x1b), 1), (MsrIndex::new(0x10), 2)];
+
+        let error = materialize_policy_capture(&policy, &captured).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error
+            .to_string()
+            .contains("entry 0: expected 0x10, got 0x1b"));
     }
 
     #[test]
