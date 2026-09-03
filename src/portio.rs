@@ -120,10 +120,7 @@ mod tests {
         let mut bus = PortIoBus::with_debug_port_input(b'R');
         let io = input(DEBUG_PORT, 1, 1);
 
-        assert_eq!(
-            bus.dispatch(&io).unwrap(),
-            PortIoService::Input(vec![b'R'])
-        );
+        assert_eq!(bus.dispatch(&io).unwrap(), PortIoService::Input(vec![b'R']));
         assert_eq!(bus.debug_output(), Some(&[][..]));
     }
 
