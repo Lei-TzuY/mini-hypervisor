@@ -83,6 +83,23 @@ fn attach_completed_exit_trace(error: Error, exit_reasons: &[u32]) -> Error {
                 exit_reasons: exit_reasons.to_vec(),
             })
         }
+        Error::VmExit(VmExitError::EntryFailure {
+            vcpu_id,
+            hardware_entry_failure_reason,
+            cpu,
+            ..
+        }) => {
+            debug_assert_eq!(
+                exit_reasons.last().copied(),
+                Some(VcpuExit::FailEntry.reason())
+            );
+            Error::VmExit(VmExitError::EntryFailure {
+                vcpu_id,
+                hardware_entry_failure_reason,
+                cpu,
+                exit_reasons: exit_reasons.to_vec(),
+            })
+        }
         Error::VmExit(VmExitError::UnsupportedSystemEvent {
             vcpu_id,
             event_type,
@@ -277,6 +294,29 @@ mod tests {
                 rflags: 0x2,
                 exit_reasons,
             }) if exit_reasons == [sys::KVM_EXIT_IO, 0xfeed_beef]
+        ));
+    }
+
+    #[test]
+    fn fail_entry_error_trace_is_replaced_with_complete_execution_trace() {
+        let fail_entry_reason = VcpuExit::FailEntry.reason();
+        let error = Error::VmExit(VmExitError::EntryFailure {
+            vcpu_id: 4,
+            hardware_entry_failure_reason: 0xdead_beef,
+            cpu: 9,
+            exit_reasons: vec![fail_entry_reason],
+        });
+
+        let result = attach_completed_exit_trace(error, &[sys::KVM_EXIT_IO, fail_entry_reason]);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::EntryFailure {
+                vcpu_id: 4,
+                hardware_entry_failure_reason: 0xdead_beef,
+                cpu: 9,
+                exit_reasons,
+            }) if exit_reasons == [sys::KVM_EXIT_IO, fail_entry_reason]
         ));
     }
 
