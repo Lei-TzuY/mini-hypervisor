@@ -1,10 +1,12 @@
 pub mod cpu;
+pub mod msr;
 pub(crate) mod sys;
 
 use crate::error::{Error, GuestMemoryError, HostEnvironmentError, KvmCapabilityError};
 use crate::memory::{GuestMemory, GuestMemoryRegion, GuestPhysAddr, KVM_MEMORY_ALIGNMENT};
 use crate::vcpu::{Vcpu, VcpuId};
 use cpu::{CpuidEntry, GuestCpuPolicy, HostCpuid};
+use msr::HostMsrIndexList;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -19,6 +21,7 @@ const KVM_IDENTITY_MAP_ADDR: u64 = 0xfeff_c000;
 const KVM_TSS_ADDR: u64 = KVM_IDENTITY_MAP_ADDR + KVM_MEMORY_ALIGNMENT;
 const KVM_RESERVED_X86_SIZE: u64 = 4 * KVM_MEMORY_ALIGNMENT;
 const KVM_MAX_SUPPORTED_CPUID_ENTRIES: usize = 256;
+const KVM_MAX_MSR_INDEX_LIST_ENTRIES: usize = 1024;
 
 const REQUIRED_EXTENSIONS: [(&str, i32); 4] = [
     ("KVM_CAP_USER_MEMORY", KVM_CAP_USER_MEMORY),
@@ -85,6 +88,7 @@ pub struct KvmBackend {
     fd: File,
     capabilities: HostCapabilities,
     host_cpuid: HostCpuid,
+    host_msr_indices: HostMsrIndexList,
     cpu_policy: GuestCpuPolicy,
 }
 
@@ -117,12 +121,14 @@ impl KvmBackend {
         };
         capabilities.validate()?;
         let host_cpuid = query_host_cpuid(&fd)?;
+        let host_msr_indices = query_host_msr_indices(&fd)?;
         let cpu_policy = GuestCpuPolicy::from_host(&host_cpuid);
 
         Ok(Self {
             fd,
             capabilities,
             host_cpuid,
+            host_msr_indices,
             cpu_policy,
         })
     }
@@ -135,6 +141,11 @@ impl KvmBackend {
     #[must_use]
     pub fn host_cpuid(&self) -> &HostCpuid {
         &self.host_cpuid
+    }
+
+    #[must_use]
+    pub fn host_msr_indices(&self) -> &HostMsrIndexList {
+        &self.host_msr_indices
     }
 
     #[must_use]
@@ -271,6 +282,25 @@ fn query_host_cpuid(fd: &File) -> Result<HostCpuid, Error> {
     Ok(HostCpuid::from_entries(entries))
 }
 
+fn query_host_msr_indices(fd: &File) -> Result<HostMsrIndexList, Error> {
+    let mut probe = sys::KvmMsrList::<0>::new();
+    match sys::get_msr_index_list(fd.as_raw_fd(), &mut probe) {
+        Err(source) if source.raw_os_error() == Some(libc::E2BIG) => {}
+        Err(source) => return Err(host_io("KVM_GET_MSR_INDEX_LIST probe", source)),
+        Ok(()) => {}
+    }
+
+    validate_msr_index_count(probe.nmsrs, KVM_MAX_MSR_INDEX_LIST_ENTRIES)?;
+
+    let mut buffer = sys::KvmMsrList::<KVM_MAX_MSR_INDEX_LIST_ENTRIES>::new();
+    sys::get_msr_index_list(fd.as_raw_fd(), &mut buffer)
+        .map_err(|source| host_io("KVM_GET_MSR_INDEX_LIST", source))?;
+    let count = validate_msr_index_count(buffer.nmsrs, KVM_MAX_MSR_INDEX_LIST_ENTRIES)?;
+    Ok(HostMsrIndexList::from_validated_raw(
+        &buffer.indices[..count],
+    ))
+}
+
 fn apply_cpu_policy(policy: &GuestCpuPolicy, id: VcpuId, fd: &OwnedFd) -> Result<(), Error> {
     let mut buffer = sys::KvmCpuid2::<KVM_MAX_SUPPORTED_CPUID_ENTRIES>::new();
     let count = policy.entries().len();
@@ -385,6 +415,25 @@ fn malformed_supported_cpuid(reported: u32, capacity: usize) -> Error {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("KVM reported {reported} supported CPUID entries; expected 1..={capacity}"),
+        ),
+    )
+}
+
+fn validate_msr_index_count(reported: u32, capacity: usize) -> Result<usize, Error> {
+    let count =
+        usize::try_from(reported).map_err(|_| malformed_msr_index_count(reported, capacity))?;
+    if count == 0 || count > capacity {
+        return Err(malformed_msr_index_count(reported, capacity));
+    }
+    Ok(count)
+}
+
+fn malformed_msr_index_count(reported: u32, capacity: usize) -> Error {
+    host_io(
+        "validate KVM_GET_MSR_INDEX_LIST response",
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("KVM reported {reported} MSR indices; expected 1..={capacity}"),
         ),
     )
 }
@@ -568,6 +617,26 @@ mod tests {
             validate_supported_cpuid_count(257, 256),
             Err(Error::HostEnvironment(HostEnvironmentError::Io {
                 operation: "validate KVM_GET_SUPPORTED_CPUID response",
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn validates_msr_index_count_against_project_bound() {
+        assert_eq!(validate_msr_index_count(1, 1024).unwrap(), 1);
+        assert_eq!(validate_msr_index_count(1024, 1024).unwrap(), 1024);
+        assert!(matches!(
+            validate_msr_index_count(0, 1024),
+            Err(Error::HostEnvironment(HostEnvironmentError::Io {
+                operation: "validate KVM_GET_MSR_INDEX_LIST response",
+                ..
+            }))
+        ));
+        assert!(matches!(
+            validate_msr_index_count(1025, 1024),
+            Err(Error::HostEnvironment(HostEnvironmentError::Io {
+                operation: "validate KVM_GET_MSR_INDEX_LIST response",
                 ..
             }))
         ));

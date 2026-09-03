@@ -2,7 +2,7 @@
 
 ## Trust model
 
-The Linux KVM kernel interface and explicitly supplied host process configuration are trusted. Guest-controlled addresses, lengths, CPU state, port-I/O metadata, future MMIO requests, and future device requests are untrusted at userspace policy boundaries. Kernel-returned variable-length metadata such as supported-CPUID and vCPU CPUID read-back entry counts is also validated before it is used for Rust slicing or copied into typed state.
+The Linux KVM kernel interface and explicitly supplied host process configuration are trusted. Guest-controlled addresses, lengths, CPU state, port-I/O metadata, future MMIO requests, and future device requests are untrusted at userspace policy boundaries. Kernel-returned variable-length metadata such as supported-CPUID, vCPU CPUID read-back, and MSR-index counts is also validated before it is used for Rust slicing or copied into typed state.
 
 The current HLT, debug-port, and CPUID fixtures are repository-owned test inputs rather than arbitrary external guest content. `FlatGuestImage` nevertheless applies range and entry validation so later callers do not acquire an unchecked loading path by accident.
 
@@ -27,6 +27,18 @@ The current VMM intentionally has no in-kernel LAPIC/IRQ-chip model. Linux KVM d
 Every `Vm::create_vcpu` call serializes the already-derived guest policy into a fresh bounded KVM buffer and applies it with `KVM_SET_CPUID2`. Before the `Vcpu` object is returned, the same descriptor is queried with bounded `KVM_GET_CPUID2`. The returned count is independently validated, entries are decoded into owned typed values, and the complete ordered list must exactly equal the submitted `GuestCpuPolicy` across function, index, flags, EAX, EBX, ECX, and EDX. A SET failure, GET failure, malformed count, count mismatch, or field mismatch closes the newly created descriptor through `OwnedFd` drop and returns a named vCPU-operation error. Higher layers therefore cannot reach this project's `KVM_RUN` path through a vCPU whose configured CPUID contract was not verified after submission.
 
 The deterministic CPUID proof executes only two fixed leaves. Its reviewed 28-byte real-mode program stores CPUID(1).ECX at guest physical `0x2000` and CPUID(0x40000001).EAX at `0x2004`, then halts. The host does not inspect either result until the terminal HLT report has been produced. The entire eight-byte result range is read through `GuestMemory::read`, so guest-written addresses still pass the normal checked guest-memory boundary before they become host observations. Pure tests separately lock the byte sequence, little-endian decoding, and the predicate used to identify the three masked LAPIC-dependent bits.
+
+### MSR index capability discovery
+
+`KVM_GET_MSR_INDEX_LIST` uses the variable-length `struct kvm_msr_list` ABI: a 4-byte `nmsrs` field followed by a trailing array of `u32` indices. `KvmMsrList<N>` models this as one aligned `repr(C)` object instead of casting an arbitrary byte buffer. Pure tests lock the zero-entry and one-entry sizes, the trailing-array offset, and the exact ioctl request value.
+
+Discovery uses two bounded queries. The first query supplies `KvmMsrList<0>`. Linux KVM writes the required count back to `nmsrs` before returning `E2BIG` when the supplied capacity is too small, so `E2BIG` is accepted as expected only at this probe boundary; any other probe error remains a host-I/O failure. The returned required count must be in `1..=1024`. The 1024 limit is an explicit project defensive bound, not an assertion that Linux permanently caps this ABI at 1024 entries.
+
+Only after the probe count passes validation does the backend issue the second query with a fixed `KvmMsrList<1024>`. The second returned `nmsrs` is independently validated in `1..=1024` before indexing the trailing array. A second-query failure, zero count, or count beyond the project bound is rejected rather than triggering unbounded allocation or unchecked slicing.
+
+Validated raw indices are copied into owned `MsrIndex` values inside `HostMsrIndexList`. Duplicate kernel indices are normalized by retaining the first occurrence while preserving the kernel-reported order of retained indices; pure tests lock both behaviors. The raw variable-length buffer and its pointer never leave the KVM module.
+
+This snapshot is capability discovery only. It is retained by `KvmBackend`, is not copied into `Vm` or `Vcpu`, and does not itself authorize guest MSR access. This milestone issues neither `KVM_GET_MSRS` nor `KVM_SET_MSRS`, reads no guest MSR value, writes no guest MSR value, and derives no guest MSR allow/deny policy.
 
 ### VM and memory setup
 
@@ -58,4 +70,4 @@ The minimal `PortIoBus` recognizes only debug port `0xe9`. The device accepts by
 
 ## Not yet present
 
-There is no guest virtual-address translation, external guest-image parser, MMIO, interrupt injection, configurable/migratable CPU model, guest MSR policy, virtqueue, disk backend, snapshot decoder, dynamic device registration, scheduler, or guest-controlled device descriptor parsing in this revision. The current CPUID contract is deliberately host-derived and conservatively masked rather than a stable cross-host CPU profile. Unsupported exits and unsupported port requests are rejected with structured diagnostics rather than serviced heuristically.
+There is no guest virtual-address translation, external guest-image parser, MMIO, interrupt injection, configurable/migratable CPU model, guest MSR policy or guest MSR value lifecycle, virtqueue, disk backend, snapshot decoder, dynamic device registration, scheduler, or guest-controlled device descriptor parsing in this revision. The backend does have a bounded typed host MSR-index capability snapshot, but it does not confer guest MSR semantics. The current CPUID contract is deliberately host-derived and conservatively masked rather than a stable cross-host CPU profile. Unsupported exits and unsupported port requests are rejected with structured diagnostics rather than serviced heuristically.
