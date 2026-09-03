@@ -6,7 +6,9 @@ use crate::error::{Error, GuestMemoryError, HostEnvironmentError, KvmCapabilityE
 use crate::memory::{GuestMemory, GuestMemoryRegion, GuestPhysAddr, KVM_MEMORY_ALIGNMENT};
 use crate::vcpu::{Vcpu, VcpuId};
 use cpu::{CpuidEntry, GuestCpuPolicy, HostCpuid};
-use msr::{HostMsrFeatureIndexList, HostMsrIndexList};
+use msr::{
+    HostMsrFeatureIndexList, HostMsrFeatureValues, HostMsrIndexList, MsrFeatureValue, MsrIndex,
+};
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -92,6 +94,7 @@ pub struct KvmBackend {
     host_cpuid: HostCpuid,
     host_msr_indices: HostMsrIndexList,
     host_msr_feature_indices: HostMsrFeatureIndexList,
+    host_msr_feature_values: HostMsrFeatureValues,
     cpu_policy: GuestCpuPolicy,
 }
 
@@ -126,6 +129,8 @@ impl KvmBackend {
         let host_cpuid = query_host_cpuid(&fd)?;
         let host_msr_indices = query_host_msr_indices(&fd)?;
         let host_msr_feature_indices = query_host_msr_feature_indices(&fd)?;
+        let host_msr_feature_values =
+            query_host_msr_feature_values(&fd, &host_msr_feature_indices)?;
         let cpu_policy = GuestCpuPolicy::from_host(&host_cpuid);
 
         Ok(Self {
@@ -134,6 +139,7 @@ impl KvmBackend {
             host_cpuid,
             host_msr_indices,
             host_msr_feature_indices,
+            host_msr_feature_values,
             cpu_policy,
         })
     }
@@ -156,6 +162,11 @@ impl KvmBackend {
     #[must_use]
     pub fn host_msr_feature_indices(&self) -> &HostMsrFeatureIndexList {
         &self.host_msr_feature_indices
+    }
+
+    #[must_use]
+    pub fn host_msr_feature_values(&self) -> &HostMsrFeatureValues {
+        &self.host_msr_feature_values
     }
 
     #[must_use]
@@ -328,6 +339,94 @@ fn query_host_msr_feature_indices(fd: &File) -> Result<HostMsrFeatureIndexList, 
     Ok(HostMsrFeatureIndexList::from_validated_raw(
         &buffer.indices[..count],
     ))
+}
+
+fn query_host_msr_feature_values(
+    fd: &File,
+    indices: &HostMsrFeatureIndexList,
+) -> Result<HostMsrFeatureValues, Error> {
+    let expected = indices.indices();
+    if expected.is_empty() {
+        return Ok(HostMsrFeatureValues::from_values(Vec::new()));
+    }
+
+    debug_assert!(expected.len() <= KVM_MAX_MSR_INDEX_LIST_ENTRIES);
+    let mut buffer = sys::KvmMsrs::<KVM_MAX_MSR_INDEX_LIST_ENTRIES>::new();
+    buffer.nmsrs = u32::try_from(expected.len()).expect("validated MSR feature count fits u32");
+    for (entry, index) in buffer.entries[..expected.len()]
+        .iter_mut()
+        .zip(expected.iter().copied())
+    {
+        entry.index = index.get();
+    }
+
+    let returned = sys::get_msrs(fd.as_raw_fd(), &mut buffer)
+        .map_err(|source| host_io("KVM_GET_MSRS feature values", source))?;
+    decode_host_msr_feature_values(expected, returned, &buffer.entries[..expected.len()])
+}
+
+fn decode_host_msr_feature_values(
+    expected: &[MsrIndex],
+    returned: usize,
+    entries: &[sys::KvmMsrEntry],
+) -> Result<HostMsrFeatureValues, Error> {
+    if returned != expected.len() {
+        let detail = if returned < expected.len() {
+            format!(
+                "KVM_GET_MSRS returned {returned} of {} requested feature MSRs; first unread index {:#x}",
+                expected.len(),
+                expected[returned].get()
+            )
+        } else {
+            format!(
+                "KVM_GET_MSRS returned {returned} feature MSRs after {} were requested",
+                expected.len()
+            )
+        };
+        return Err(host_io(
+            "validate KVM_GET_MSRS feature response",
+            io::Error::new(io::ErrorKind::InvalidData, detail),
+        ));
+    }
+
+    if entries.len() < expected.len() {
+        return Err(host_io(
+            "validate KVM_GET_MSRS feature response",
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "KVM_GET_MSRS response buffer has {} entries for {} requested feature MSRs",
+                    entries.len(),
+                    expected.len()
+                ),
+            ),
+        ));
+    }
+
+    let mut values = Vec::with_capacity(expected.len());
+    for (position, (expected_index, entry)) in expected
+        .iter()
+        .copied()
+        .zip(entries.iter().copied())
+        .enumerate()
+    {
+        if entry.index != expected_index.get() {
+            return Err(host_io(
+                "validate KVM_GET_MSRS feature response",
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "KVM_GET_MSRS changed feature index at entry {position}: expected {:#x}, got {:#x}",
+                        expected_index.get(),
+                        entry.index
+                    ),
+                ),
+            ));
+        }
+        values.push(MsrFeatureValue::new(expected_index, entry.data));
+    }
+
+    Ok(HostMsrFeatureValues::from_values(values))
 }
 
 fn apply_cpu_policy(policy: &GuestCpuPolicy, id: VcpuId, fd: &OwnedFd) -> Result<(), Error> {
@@ -717,6 +816,79 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn exact_msr_feature_value_response_is_accepted() {
+        let expected = [MsrIndex::new(0x3a), MsrIndex::new(0x10a)];
+        let entries = [
+            sys::KvmMsrEntry {
+                index: 0x3a,
+                reserved: 0,
+                data: 0x1111_2222_3333_4444,
+            },
+            sys::KvmMsrEntry {
+                index: 0x10a,
+                reserved: 0,
+                data: 0xaaaa_bbbb_cccc_dddd,
+            },
+        ];
+        let snapshot = decode_host_msr_feature_values(&expected, 2, &entries).unwrap();
+        assert_eq!(snapshot.values().len(), 2);
+        assert_eq!(snapshot.values()[0].index(), expected[0]);
+        assert_eq!(snapshot.values()[0].value(), 0x1111_2222_3333_4444);
+        assert_eq!(snapshot.values()[1].index(), expected[1]);
+        assert_eq!(snapshot.values()[1].value(), 0xaaaa_bbbb_cccc_dddd);
+    }
+
+    #[test]
+    fn partial_msr_feature_value_response_is_rejected_with_first_unread_index() {
+        let expected = [MsrIndex::new(0x3a), MsrIndex::new(0x10a)];
+        let entries = [
+            sys::KvmMsrEntry {
+                index: 0x3a,
+                reserved: 0,
+                data: 1,
+            },
+            sys::KvmMsrEntry {
+                index: 0x10a,
+                reserved: 0,
+                data: 0,
+            },
+        ];
+        let error = decode_host_msr_feature_values(&expected, 1, &entries).unwrap_err();
+        match error {
+            Error::HostEnvironment(HostEnvironmentError::Io { operation, source }) => {
+                assert_eq!(operation, "validate KVM_GET_MSRS feature response");
+                assert!(source.to_string().contains("returned 1 of 2"));
+                assert!(source.to_string().contains("0x10a"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn msr_feature_value_response_rejects_index_drift() {
+        let expected = [MsrIndex::new(0x3a)];
+        let entries = [sys::KvmMsrEntry {
+            index: 0x48,
+            reserved: 0,
+            data: 7,
+        }];
+        let error = decode_host_msr_feature_values(&expected, 1, &entries).unwrap_err();
+        match error {
+            Error::HostEnvironment(HostEnvironmentError::Io { operation, source }) => {
+                assert_eq!(operation, "validate KVM_GET_MSRS feature response");
+                assert!(source.to_string().contains("expected 0x3a, got 0x48"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_msr_feature_value_response_is_valid() {
+        let snapshot = decode_host_msr_feature_values(&[], 0, &[]).unwrap();
+        assert!(snapshot.values().is_empty());
     }
 
     #[test]
