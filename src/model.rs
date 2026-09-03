@@ -35,8 +35,7 @@ mod tests {
     use super::*;
     use crate::kvm::cpu::{CpuidEntry, GuestCpuPolicy, HostCpuid};
     use crate::kvm::msr::{
-        HostMsrFeatureValues, HostMsrModelCandidate, MsrFeatureValue, MsrIndex,
-        MSR_IA32_UCODE_REV,
+        HostMsrFeatureValues, HostMsrModelCandidate, MsrFeatureValue, MsrIndex, MSR_IA32_UCODE_REV,
     };
 
     fn guest_policy(entries: Vec<CpuidEntry>) -> GuestCpuPolicy {
@@ -88,9 +87,7 @@ mod tests {
         let candidate = CpuModelCandidate::new(&guest_cpu_policy, &host_msr_model_candidate);
 
         assert_eq!(
-            candidate
-                .host_msr_model_candidate()
-                .source_observation(),
+            candidate.host_msr_model_candidate().source_observation(),
             &source_observation
         );
         assert_eq!(
