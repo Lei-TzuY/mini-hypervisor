@@ -1,7 +1,8 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::kvm::KvmBackend;
 use mini_hypervisor::{
-    run_debug_port_guest, run_hlt_guest, run_state_snapshot_roundtrip, verify_kvm_lifecycle,
+    run_cpuid_guest, run_debug_port_guest, run_hlt_guest, run_state_snapshot_roundtrip,
+    verify_kvm_lifecycle,
 };
 use std::process::ExitCode;
 
@@ -46,6 +47,20 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
             );
             Ok(())
         }
+        Some("run-cpuid") => {
+            let result = run_cpuid_guest(VmConfig::default())?;
+            println!("cpuid(1).ecx: {:#010x}", result.cpuid1_ecx());
+            println!(
+                "cpuid(0x40000001).eax: {:#010x}",
+                result.kvm_features_eax()
+            );
+            println!(
+                "masked LAPIC-dependent features clear: {}",
+                result.masked_lapic_features_clear()
+            );
+            println!("{}", result.report());
+            Ok(())
+        }
         Some("run-hlt") => {
             let report = run_hlt_guest(VmConfig::default())?;
             println!("{report}");
@@ -68,7 +83,7 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
         }
         Some(other) => {
             eprintln!(
-                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-hlt|run-debug-port]"
+                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port]"
             );
             eprintln!("unknown command: {other}");
             Ok(())
