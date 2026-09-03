@@ -222,6 +222,7 @@ impl KvmBackend {
             vcpu_mmap_size: usize::try_from(self.capabilities.vcpu_mmap_size)
                 .expect("validated positive i32 always fits usize"),
             cpu_policy: self.cpu_policy.clone(),
+            supports_internal_error_data: self.capabilities.supports_internal_error_data(),
         })
     }
 }
@@ -232,6 +233,7 @@ pub struct Vm {
     guest_memory: Option<GuestMemory>,
     vcpu_mmap_size: usize,
     cpu_policy: GuestCpuPolicy,
+    supports_internal_error_data: bool,
 }
 
 impl Vm {
@@ -278,7 +280,12 @@ impl Vm {
         apply_cpu_policy(&self.cpu_policy, id, &fd)?;
         let readback = read_vcpu_cpuid(id, &fd)?;
         verify_cpu_policy_readback(&self.cpu_policy, id, &readback)?;
-        Vcpu::from_kvm_fd(id, fd, self.vcpu_mmap_size)
+        Vcpu::from_kvm_fd(
+            id,
+            fd,
+            self.vcpu_mmap_size,
+            self.supports_internal_error_data,
+        )
     }
 
     fn unregister_guest_memory(&self) -> io::Result<()> {
