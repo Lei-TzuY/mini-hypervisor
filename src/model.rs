@@ -1,5 +1,6 @@
 use crate::kvm::cpu::{GuestCpuPolicy, GuestCpuPolicyComparison};
 use crate::kvm::msr::{HostMsrModelCandidate, HostMsrModelComparison};
+use crate::kvm::KvmBackend;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuModelCandidate {
@@ -40,6 +41,14 @@ impl CpuModelCandidate {
     }
 }
 
+impl KvmBackend {
+    #[must_use]
+    pub fn cpu_model_candidate(&self) -> CpuModelCandidate {
+        let host_msr_model_candidate = self.host_msr_feature_values().model_candidate();
+        CpuModelCandidate::new(self.cpu_policy(), &host_msr_model_candidate)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuModelComparison {
     guest_cpu_policy_comparison: GuestCpuPolicyComparison,
@@ -55,6 +64,12 @@ impl CpuModelComparison {
     #[must_use]
     pub fn host_msr_model_comparison(&self) -> &HostMsrModelComparison {
         &self.host_msr_model_comparison
+    }
+
+    #[must_use]
+    pub fn is_exact_match(&self) -> bool {
+        self.guest_cpu_policy_comparison.is_exact_match()
+            && self.host_msr_model_comparison.is_exact_match()
     }
 }
 
@@ -197,6 +212,7 @@ mod tests {
         assert_eq!(comparison.host_msr_model_comparison(), &expected_msr);
         assert!(comparison.guest_cpu_policy_comparison().is_exact_match());
         assert!(comparison.host_msr_model_comparison().is_exact_match());
+        assert!(comparison.is_exact_match());
     }
 
     #[test]
@@ -219,6 +235,7 @@ mod tests {
         assert_eq!(comparison.host_msr_model_comparison(), &expected_msr);
         assert!(!comparison.guest_cpu_policy_comparison().is_exact_match());
         assert!(comparison.host_msr_model_comparison().is_exact_match());
+        assert!(!comparison.is_exact_match());
     }
 
     #[test]
@@ -247,6 +264,7 @@ mod tests {
         assert_eq!(comparison.host_msr_model_comparison(), &expected_msr);
         assert!(comparison.guest_cpu_policy_comparison().is_exact_match());
         assert!(!comparison.host_msr_model_comparison().is_exact_match());
+        assert!(!comparison.is_exact_match());
         assert_eq!(
             comparison
                 .host_msr_model_comparison()
@@ -318,6 +336,7 @@ mod tests {
                 .len(),
             1
         );
+        assert!(!comparison.is_exact_match());
     }
 
     #[test]
@@ -333,6 +352,7 @@ mod tests {
 
         assert!(comparison.guest_cpu_policy_comparison().is_exact_match());
         assert!(comparison.host_msr_model_comparison().is_exact_match());
+        assert!(comparison.is_exact_match());
         assert_eq!(comparison.clone(), comparison);
     }
 }
