@@ -6,6 +6,9 @@ use std::ops::Range;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::ptr::NonNull;
 
+mod msr_readback;
+pub use msr_readback::{VcpuMsrValue, VcpuMsrValues};
+
 const REAL_MODE_MAX_RIP: u64 = u16::MAX as u64;
 const CR0_PROTECTED_MODE_ENABLE: u64 = 1;
 const CR0_PAGING_ENABLE: u64 = 1 << 31;
