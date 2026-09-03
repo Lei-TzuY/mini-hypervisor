@@ -13,24 +13,25 @@ The repository currently has typed, owned boundaries for:
 - owned vCPU general-register snapshots, pure 18-field reference-to-observed comparison, snapshot-bound restore, and restore-and-verify;
 - owned vCPU special-register snapshots covering segment, descriptor-table, control-register, EFER, APIC-base, and interrupt-bitmap state without exposing KVM UAPI padding, plus pure deterministic semantic-field comparison, snapshot-bound restore, and restore-and-verify;
 - composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison, bounded non-transactional restore, and restore-and-verify;
-- centralized VM-exit dispatch with typed HLT and shutdown terminal exits, bounded execution budgets, ordered completed-exit reason traces on successful results and budget-exhaustion diagnostics, and the minimal bidirectional debug port-I/O device.
+- centralized VM-exit dispatch with typed HLT and shutdown terminal exits, bounded execution budgets, ordered completed-exit reason traces on successful results, budget-exhaustion diagnostics, and unhandled-exit diagnostics, plus the minimal bidirectional debug port-I/O device.
 
-## Phase 45 — typed KVM shutdown terminal exit
+## Phase 46 — unhandled-exit completed trace diagnostics
 
-The current bounded slice classifies `KVM_EXIT_SHUTDOWN` as the typed `VcpuExit::Shutdown` terminal condition and routes it through the existing stopped-execution report path instead of treating reason 8 as an unhandled exit.
+The current bounded slice extends `VmExitError::Unhandled` with an owned ordered `exit_reasons` trace so an unsupported VM exit no longer discards the successful KVM exits observed before dispatch rejected the current reason.
 
 Correctness contract:
 
-- the private Linux KVM UAPI boundary defines `KVM_EXIT_SHUTDOWN = 8` and a focused UAPI regression locks that value;
-- `VcpuExit::from_raw(KVM_EXIT_SHUTDOWN)` returns `VcpuExit::Shutdown`, while `VcpuExit::Shutdown.reason()` returns the same raw reason; HLT, I/O, and unknown-reason classification remain unchanged;
-- shutdown is terminal rather than serviceable: dispatch performs no port-I/O parsing or response writeback and returns `VmExitDisposition::Stopped` after capturing the same vCPU id, RIP, and RFLAGS context retained for HLT reports;
-- the bounded execution loop records the shutdown reason exactly once through the existing successful-exit bookkeeping path, so a successful shutdown result has a final ordered trace entry equal to the terminal report reason and does not issue an extra `KVM_RUN`;
-- a KVM-aware regression uses a real-mode zero-limit IDT followed by `INT3` to induce a triple-fault shutdown when KVM is available, requiring one completed exit, no serviced I/O exits, a typed shutdown terminal report, and an ordered `[KVM_EXIT_SHUTDOWN]` trace;
-- unknown KVM exit reasons remain structured `Unhandled` errors with register context; this slice does not broaden terminal handling beyond the legacy shutdown reason;
-- this slice does not add `KVM_EXIT_SYSTEM_EVENT` payload handling, reset/crash semantics, MMIO, interrupts, long-mode boot, SMP, device expansion, migration orchestration, guest-memory/device snapshots, resumable execution, or rollback semantics.
+- `VmExitError::Unhandled` owns an `exit_reasons: Vec<u32>` while preserving the existing vCPU id, raw reason, RIP, RFLAGS, and display text;
+- direct dispatch of one unknown `VcpuExit` produces a local trace containing exactly that raw reason, because that exit has already completed before dispatch begins;
+- `run_vcpu_until_stopped` continues recording each successful `Vcpu::run_once()` result before dispatch and, only when dispatch returns `Unhandled`, replaces the local one-element trace with the execution loop's complete ordered trace;
+- the execution trace contains every successful KVM exit exactly once, including the current unhandled reason as its final entry; no failed KVM run can appear in it;
+- trace attachment does not issue another `KVM_RUN`, retry dispatch, alter exit-budget accounting, service or replay port I/O, or change HLT/shutdown terminal behavior;
+- non-`Unhandled` dispatch errors are propagated unchanged and do not gain this trace in this slice;
+- focused public-surface and pure regressions lock owned trace storage, direct-dispatch local trace behavior, full-trace replacement, and unchanged propagation of other dispatch errors;
+- this slice does not add `KVM_EXIT_SYSTEM_EVENT` payload handling, MMIO, interrupts, long-mode boot, SMP, device expansion, migration orchestration, resumable execution, guest-memory/device snapshots, or rollback semantics.
 
 ## Next bounded slice
 
 No broader implementation slice is preselected by this commit.
 
-After Phase 45 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, and this authoritative roadmap before choosing further execution, architecture-documentation, or state-model work. In particular, do not infer that `KVM_EXIT_SYSTEM_EVENT`, MMIO, interrupts, long-mode boot, SMP, device expansion, migration orchestration, or guest-memory/device snapshots are automatically next merely because the legacy KVM shutdown exit is now typed and terminal.
+After Phase 46 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, and this authoritative roadmap before choosing further execution, architecture-documentation, or state-model work. Do not infer that `KVM_EXIT_SYSTEM_EVENT`, MMIO, interrupts, long-mode boot, SMP, migration, or resumable execution are automatically next merely because successful, budget-exhausted, and unhandled execution paths now retain ordered completed-exit diagnostics.

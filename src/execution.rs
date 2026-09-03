@@ -47,7 +47,9 @@ pub fn run_vcpu_until_stopped(
         let exit = vcpu.run_once()?;
         record_completed_exit(&mut budget, &mut exit_reasons, exit.reason());
 
-        match dispatch_vcpu_exit(vcpu, exit, port_io)? {
+        let disposition = dispatch_vcpu_exit(vcpu, exit, port_io)
+            .map_err(|error| attach_completed_exit_trace(error, &exit_reasons))?;
+        match disposition {
             VmExitDisposition::Continue(io) => io_exits.push(io),
             VmExitDisposition::Stopped(report) => {
                 debug_assert_eq!(exit_reasons.len(), budget.completed() as usize);
@@ -60,6 +62,28 @@ pub fn run_vcpu_until_stopped(
                 });
             }
         }
+    }
+}
+
+fn attach_completed_exit_trace(error: Error, exit_reasons: &[u32]) -> Error {
+    match error {
+        Error::VmExit(VmExitError::Unhandled {
+            vcpu_id,
+            reason,
+            rip,
+            rflags,
+            ..
+        }) => {
+            debug_assert_eq!(exit_reasons.last().copied(), Some(reason));
+            Error::VmExit(VmExitError::Unhandled {
+                vcpu_id,
+                reason,
+                rip,
+                rflags,
+                exit_reasons: exit_reasons.to_vec(),
+            })
+        }
+        error => error,
     }
 }
 
@@ -191,5 +215,48 @@ mod tests {
 
         assert_eq!(exit_reasons, [sys::KVM_EXIT_IO, sys::KVM_EXIT_HLT]);
         assert_eq!(exit_reasons.len(), budget.completed() as usize);
+    }
+
+    #[test]
+    fn unhandled_error_trace_is_replaced_with_complete_execution_trace() {
+        let unknown_reason = 0xfeed_beef;
+        let error = Error::VmExit(VmExitError::Unhandled {
+            vcpu_id: 7,
+            reason: unknown_reason,
+            rip: 0x1234,
+            rflags: 0x2,
+            exit_reasons: vec![unknown_reason],
+        });
+
+        let result = attach_completed_exit_trace(error, &[sys::KVM_EXIT_IO, unknown_reason]);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::Unhandled {
+                vcpu_id: 7,
+                reason: 0xfeed_beef,
+                rip: 0x1234,
+                rflags: 0x2,
+                exit_reasons,
+            }) if exit_reasons == [sys::KVM_EXIT_IO, 0xfeed_beef]
+        ));
+    }
+
+    #[test]
+    fn trace_annotation_leaves_other_dispatch_errors_unchanged() {
+        let error = Error::VmExit(VmExitError::InvalidIoDirection {
+            vcpu_id: 3,
+            direction: 9,
+        });
+
+        let result = attach_completed_exit_trace(error, &[sys::KVM_EXIT_IO]);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::InvalidIoDirection {
+                vcpu_id: 3,
+                direction: 9,
+            })
+        ));
     }
 }

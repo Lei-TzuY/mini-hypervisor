@@ -97,6 +97,7 @@ fn unhandled_exit(vcpu_id: VcpuId, reason: u32, registers: VcpuRegisters) -> Err
         reason,
         rip: registers.rip,
         rflags: registers.rflags,
+        exit_reasons: vec![reason],
     })
 }
 
@@ -130,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn unhandled_dispatch_preserves_reason_and_register_context() {
+    fn unhandled_dispatch_preserves_reason_register_context_and_local_trace() {
         let result = unhandled_exit(VcpuId::new(7), 0xfeed_beef, REGISTERS);
 
         assert!(matches!(
@@ -140,7 +141,8 @@ mod tests {
                 reason: 0xfeed_beef,
                 rip: 0x1001,
                 rflags: 0x2,
-            })
+                exit_reasons,
+            }) if exit_reasons == [0xfeed_beef]
         ));
     }
 }
