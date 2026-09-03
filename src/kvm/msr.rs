@@ -171,6 +171,134 @@ impl HostMsrModelCandidate {
     pub fn values(&self) -> &[MsrFeatureValue] {
         &self.values
     }
+
+    #[must_use]
+    pub fn compare(&self, observed: &Self) -> HostMsrModelComparison {
+        let missing_from_observed = self
+            .values
+            .iter()
+            .copied()
+            .filter(|reference| {
+                !observed
+                    .values
+                    .iter()
+                    .any(|candidate| candidate.index() == reference.index())
+            })
+            .collect();
+        let extra_in_observed = observed
+            .values
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                !self
+                    .values
+                    .iter()
+                    .any(|reference| reference.index() == candidate.index())
+            })
+            .collect();
+        let value_mismatches = self
+            .values
+            .iter()
+            .filter_map(|reference| {
+                observed
+                    .values
+                    .iter()
+                    .find(|candidate| candidate.index() == reference.index())
+                    .and_then(|candidate| {
+                        (candidate.value() != reference.value()).then_some(
+                            MsrModelValueMismatch::new(
+                                reference.index(),
+                                reference.value(),
+                                candidate.value(),
+                            ),
+                        )
+                    })
+            })
+            .collect();
+
+        HostMsrModelComparison {
+            reference: self.clone(),
+            observed: observed.clone(),
+            missing_from_observed,
+            extra_in_observed,
+            value_mismatches,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MsrModelValueMismatch {
+    index: MsrIndex,
+    reference_value: u64,
+    observed_value: u64,
+}
+
+impl MsrModelValueMismatch {
+    const fn new(index: MsrIndex, reference_value: u64, observed_value: u64) -> Self {
+        Self {
+            index,
+            reference_value,
+            observed_value,
+        }
+    }
+
+    #[must_use]
+    pub const fn index(self) -> MsrIndex {
+        self.index
+    }
+
+    #[must_use]
+    pub const fn reference_value(self) -> u64 {
+        self.reference_value
+    }
+
+    #[must_use]
+    pub const fn observed_value(self) -> u64 {
+        self.observed_value
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostMsrModelComparison {
+    reference: HostMsrModelCandidate,
+    observed: HostMsrModelCandidate,
+    missing_from_observed: Vec<MsrFeatureValue>,
+    extra_in_observed: Vec<MsrFeatureValue>,
+    value_mismatches: Vec<MsrModelValueMismatch>,
+}
+
+impl HostMsrModelComparison {
+    #[must_use]
+    pub fn reference(&self) -> &HostMsrModelCandidate {
+        &self.reference
+    }
+
+    #[must_use]
+    pub fn observed(&self) -> &HostMsrModelCandidate {
+        &self.observed
+    }
+
+    #[must_use]
+    pub fn missing_from_observed(&self) -> &[MsrFeatureValue] {
+        &self.missing_from_observed
+    }
+
+    #[must_use]
+    pub fn extra_in_observed(&self) -> &[MsrFeatureValue] {
+        &self.extra_in_observed
+    }
+
+    #[must_use]
+    pub fn value_mismatches(&self) -> &[MsrModelValueMismatch] {
+        &self.value_mismatches
+    }
+
+    #[must_use]
+    pub fn is_exact_match(&self) -> bool {
+        self.missing_from_observed.is_empty()
+            && self.extra_in_observed.is_empty()
+            && self.value_mismatches.is_empty()
+    }
 }
 
 #[cfg(test)]
