@@ -18,6 +18,7 @@ pub const KVM_SET_REGS: libc::c_ulong = 0x4090_AE82;
 pub const KVM_GET_SREGS: libc::c_ulong = 0x8138_AE83;
 pub const KVM_SET_SREGS: libc::c_ulong = 0x4138_AE84;
 pub const KVM_GET_MSRS: libc::c_ulong = 0xC008_AE88;
+pub const KVM_SET_MSRS: libc::c_ulong = 0x4008_AE89;
 pub const KVM_SET_CPUID2: libc::c_ulong = 0x4008_AE90;
 pub const KVM_GET_CPUID2: libc::c_ulong = 0xC008_AE91;
 pub const KVM_EXIT_IO: u32 = 2;
@@ -312,6 +313,32 @@ pub fn get_msrs<const N: usize>(fd: RawFd, msrs: &mut KvmMsrs<N>) -> io::Result<
     })
 }
 
+pub fn set_msrs<const N: usize>(fd: RawFd, msrs: &KvmMsrs<N>) -> io::Result<usize> {
+    let requested = usize::try_from(msrs.nmsrs).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "KVM MSR request count does not fit usize",
+        )
+    })?;
+    if requested > N {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("KVM MSR request count {requested} exceeds buffer capacity {N}"),
+        ));
+    }
+
+    // SAFETY: `msrs` is one contiguous readable repr(C) header followed by N initialized entries,
+    // and the checked `nmsrs` field guarantees KVM cannot read beyond that trailing array.
+    let result = unsafe { libc::ioctl(fd, KVM_SET_MSRS, msrs) };
+    let returned = cvt_ioctl(result)?;
+    usize::try_from(returned).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "KVM_SET_MSRS returned a negative success count",
+        )
+    })
+}
+
 pub fn get_supported_cpuid<const N: usize>(fd: RawFd, cpuid: &mut KvmCpuid2<N>) -> io::Result<()> {
     // SAFETY: `cpuid` is one contiguous repr(C) header plus N entries. KVM uses `nent` to bound
     // writes to the trailing variable-length array, and the caller initializes it to N.
@@ -466,6 +493,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<KvmMsrs<1>>(), 24);
         assert_eq!(std::mem::offset_of!(KvmMsrs<1>, entries), 8);
         assert_eq!(KVM_GET_MSRS, 0xC008_AE88);
+        assert_eq!(KVM_SET_MSRS, 0x4008_AE89);
     }
 
     #[test]
@@ -480,8 +508,10 @@ mod tests {
     fn msr_value_ioctl_rejects_count_above_backing_capacity_before_syscall() {
         let mut msrs = KvmMsrs::<1>::new();
         msrs.nmsrs = 2;
-        let error = get_msrs(-1, &mut msrs).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        let get_error = get_msrs(-1, &mut msrs).unwrap_err();
+        assert_eq!(get_error.kind(), io::ErrorKind::InvalidInput);
+        let set_error = set_msrs(-1, &msrs).unwrap_err();
+        assert_eq!(set_error.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]
