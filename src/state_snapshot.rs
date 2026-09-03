@@ -1,3 +1,6 @@
+#[path = "vcpu/snapshot_verify.rs"]
+mod component_snapshot_verify;
+
 use crate::error::Error;
 use crate::kvm::msr::value_set::{GuestMsrSnapshot, GuestMsrSnapshotComparison};
 use crate::kvm::msr::GuestMsrAccessPolicy;
