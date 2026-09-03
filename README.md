@@ -8,7 +8,8 @@ The repository currently implements the KVM lifecycle foundation, one bounded gu
 
 - open `/dev/kvm` with structured environment errors;
 - require KVM API version 12;
-- check `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, `KVM_CAP_EXT_CPUID`, `KVM_CAP_SET_IDENTITY_MAP_ADDR`, and `KVM_CAP_GET_MSR_FEATURES`;
+- check required `KVM_CAP_USER_MEMORY`, `KVM_CAP_SET_TSS_ADDR`, `KVM_CAP_EXT_CPUID`, `KVM_CAP_SET_IDENTITY_MAP_ADDR`, and `KVM_CAP_GET_MSR_FEATURES` extensions;
+- additionally observe `KVM_CAP_INTERNAL_ERROR_DATA` through `KVM_CHECK_EXTENSION` as optional host metadata without making support a backend requirement;
 - obtain and validate the `kvm_run` mmap size;
 - retrieve KVM's supported x86 CPUID set into one fixed-capacity 256-entry `repr(C)` buffer and reject zero or out-of-capacity returned counts;
 - derive a bounded configured guest CPUID contract that clears LAPIC-dependent x2APIC, TSC-deadline, and KVM PV-unhalt feature bits while this VMM has no in-kernel LAPIC model;
@@ -65,11 +66,11 @@ Exit-budget exhaustion is not a terminal guest report. If the last permitted exi
 
 `KVM_EXIT_FAIL_ENTRY` is now classified and decoded into owned typed diagnostic state. The VMM preserves KVM's raw `hardware_entry_failure_reason` and `cpu` fields and stops the execution attempt with a structured error; it does not reinterpret those architecture-specific diagnostics into retry, CPU-affinity, placement, or recovery policy and does not issue a secondary register read that could replace the original failure with another error.
 
-`KVM_EXIT_INTERNAL_ERROR` is now classified as a typed exit and decoded only through its always-available base field. The VMM copies the raw `suberror` into owned diagnostic state and returns a structured error without issuing a secondary register read. It deliberately does **not** require `KVM_CAP_INTERNAL_ERROR_DATA`, does not read capability-dependent `ndata` or `data[16]`, and does not infer emulation recovery, retry, replacement execution, or architecture-specific policy from the suberror. Optional internal-error data remains unsupported until a separate capability-aware design is introduced.
+`KVM_EXIT_INTERNAL_ERROR` is now classified as a typed exit and decoded only through its always-available base field. The backend additionally records the raw `KVM_CHECK_EXTENSION` observation for `KVM_CAP_INTERNAL_ERROR_DATA`; a missing/zero value is explicitly allowed and can be inspected through `HostCapabilities` without changing backend validity. The VMM still copies only the raw `suberror` into owned diagnostic state and returns a structured error without issuing a secondary register read. It does **not** read capability-dependent `ndata` or `data[16]`, and it does not infer emulation recovery, retry, replacement execution, or architecture-specific policy from the suberror. Optional internal-error payload decoding remains unsupported until a separate capability-aware design is introduced.
 
 `KVM_EXIT_SYSTEM_EVENT` is classified and decoded into owned typed payload state, but handling policy remains deliberately undefined: shutdown/reset/crash/wakeup/suspend/SEV-termination/TDX-fatal events are reported as structured unsupported diagnostics rather than being translated into reboot, termination, or other VM lifecycle actions. This is distinct from legacy `KVM_EXIT_SHUTDOWN`, which remains a typed terminal stop.
 
-This remains a single-vCPU, flat-binary, real-mode execution laboratory. It does **not** yet provide MMIO, multiple device families, interrupts, an in-kernel interrupt controller model, arbitrary/configurable CPU models, virtio, SMP, ELF loading, long-mode guest boot, Linux boot, migration orchestration, whole-VM snapshots, guest-memory/device snapshots, resumable execution, architectural rollback, fail-entry retry/placement policy, optional internal-error data/capability decoding or recovery policy, or implemented system-event lifecycle policy.
+This remains a single-vCPU, flat-binary, real-mode execution laboratory. It does **not** yet provide MMIO, multiple device families, interrupts, an in-kernel interrupt controller model, arbitrary/configurable CPU models, virtio, SMP, ELF loading, long-mode guest boot, Linux boot, migration orchestration, whole-VM snapshots, guest-memory/device snapshots, resumable execution, architectural rollback, fail-entry retry/placement policy, optional internal-error payload decoding or recovery policy, or implemented system-event lifecycle policy.
 
 For the authoritative current bounded implementation state and next-slice selection rules, see [ROADMAP.md](ROADMAP.md).
 
@@ -84,6 +85,8 @@ For the authoritative current bounded implementation state and next-slice select
 - `KVM_CAP_EXT_CPUID`
 - `KVM_CAP_SET_IDENTITY_MAP_ADDR`
 - `KVM_CAP_GET_MSR_FEATURES`
+
+`KVM_CAP_INTERNAL_ERROR_DATA` is observed when `/dev/kvm` is opened but remains optional; hosts reporting value 0 are still valid for the current base internal-error diagnostic boundary.
 
 GitHub-hosted CI may run without usable `/dev/kvm`; pure tests remain mandatory there, and the environment-sensitive KVM tests report unavailable host capability without treating it as a VMM correctness failure.
 
@@ -105,7 +108,7 @@ cargo run -- run-debug-port
 
 ## Safety boundary
 
-Unsafe operations are limited to Linux KVM `ioctl` calls, conversion of successful KVM-created file descriptors into owned descriptors, and `mmap`/`munmap` for `kvm_run` and guest RAM. Variable-length KVM ABIs are represented by bounded `repr(C)` buffers with returned counts validated before slices are formed. Flat guest bytes are copied only through checked guest-memory ranges. The x86 `kvm_run` I/O, fail-entry, internal-error-base, and system-event views are accessed only through tested UAPI layouts and only after the mapping is known large enough for every required prefix. Fail-entry diagnostics are copied immediately into owned scalar state. Internal-error handling copies only the always-available `suberror` and intentionally does not form or consume capability-dependent `ndata`/`data` state. System-event `ndata` is bounded by the fixed 16-word UAPI capacity before any payload slice is formed. Both OUT copying and IN write-back use `data_offset + size * count` only after checked conversion, overflow, and mapping-bounds validation; IN additionally requires an exact response-length match. Raw pointers into `kvm_run` never cross into VM-exit policy, execution-loop, or device code. No guest physical address is treated as a host pointer.
+Unsafe operations are limited to Linux KVM `ioctl` calls, conversion of successful KVM-created file descriptors into owned descriptors, and `mmap`/`munmap` for `kvm_run` and guest RAM. Variable-length KVM ABIs are represented by bounded `repr(C)` buffers with returned counts validated before slices are formed. Flat guest bytes are copied only through checked guest-memory ranges. The x86 `kvm_run` I/O, fail-entry, internal-error-base, and system-event views are accessed only through tested UAPI layouts and only after the mapping is known large enough for every required prefix. Fail-entry diagnostics are copied immediately into owned scalar state. Internal-error handling copies only the always-available `suberror` and intentionally does not form or consume capability-dependent `ndata`/`data` state even when the optional host capability observation is positive. System-event `ndata` is bounded by the fixed 16-word UAPI capacity before any payload slice is formed. Both OUT copying and IN write-back use `data_offset + size * count` only after checked conversion, overflow, and mapping-bounds validation; IN additionally requires an exact response-length match. Raw pointers into `kvm_run` never cross into VM-exit policy, execution-loop, or device code. No guest physical address is treated as a host pointer.
 
 CPU/MSR snapshot comparison and read-only verification are capture-and-compare operations over owned values and do not invoke restore or setter paths. Restore boundaries delegate to the existing validated KVM setters and deliberately do not claim transactionality, rollback, repair, or atomic point-in-time capture. MSR partial writes retain structured diagnostics for the processed prefix rather than pretending the operation was all-or-nothing.
 
