@@ -101,9 +101,7 @@ fn attach_completed_exit_trace(error: Error, exit_reasons: &[u32]) -> Error {
             })
         }
         Error::VmExit(VmExitError::InternalError {
-            vcpu_id,
-            suberror,
-            ..
+            vcpu_id, suberror, ..
         }) => {
             debug_assert_eq!(
                 exit_reasons.last().copied(),
