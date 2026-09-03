@@ -517,11 +517,9 @@ mod tests {
             missing,
         ])
         .model_candidate();
-        let observed = HostMsrFeatureValues::from_values(vec![MsrFeatureValue::new(
-            MsrIndex::new(0x3a),
-            1,
-        )])
-        .model_candidate();
+        let observed =
+            HostMsrFeatureValues::from_values(vec![MsrFeatureValue::new(MsrIndex::new(0x3a), 1)])
+                .model_candidate();
         let comparison = reference.compare(&observed);
 
         assert!(!comparison.is_exact_match());
@@ -533,11 +531,9 @@ mod tests {
     #[test]
     fn model_comparison_reports_observed_index_extra_to_reference() {
         let extra = MsrFeatureValue::new(MsrIndex::new(0x10a), 2);
-        let reference = HostMsrFeatureValues::from_values(vec![MsrFeatureValue::new(
-            MsrIndex::new(0x3a),
-            1,
-        )])
-        .model_candidate();
+        let reference =
+            HostMsrFeatureValues::from_values(vec![MsrFeatureValue::new(MsrIndex::new(0x3a), 1)])
+                .model_candidate();
         let observed = HostMsrFeatureValues::from_values(vec![
             MsrFeatureValue::new(MsrIndex::new(0x3a), 1),
             extra,
@@ -608,9 +604,8 @@ mod tests {
         let reference =
             HostMsrFeatureValues::from_values(vec![shared, missing, mismatch_reference])
                 .model_candidate();
-        let observed =
-            HostMsrFeatureValues::from_values(vec![mismatch_observed, shared, extra])
-                .model_candidate();
+        let observed = HostMsrFeatureValues::from_values(vec![mismatch_observed, shared, extra])
+            .model_candidate();
         let comparison = reference.compare(&observed);
 
         assert_eq!(comparison.missing_from_observed(), &[missing]);
