@@ -152,6 +152,29 @@ impl Vcpu {
 mod tests {
     use super::*;
 
+    fn snapshot(values: [u64; 18]) -> VcpuRegisterSnapshot {
+        VcpuRegisterSnapshot::from_kvm_regs(sys::KvmRegs {
+            rax: values[0],
+            rbx: values[1],
+            rcx: values[2],
+            rdx: values[3],
+            rsi: values[4],
+            rdi: values[5],
+            rsp: values[6],
+            rbp: values[7],
+            r8: values[8],
+            r9: values[9],
+            r10: values[10],
+            r11: values[11],
+            r12: values[12],
+            r13: values[13],
+            r14: values[14],
+            r15: values[15],
+            rip: values[16],
+            rflags: values[17],
+        })
+    }
+
     #[test]
     fn snapshot_copies_every_general_register_field_exactly() {
         let regs = sys::KvmRegs {
@@ -195,5 +218,95 @@ mod tests {
         assert_eq!(snapshot.r15(), 16);
         assert_eq!(snapshot.rip(), 17);
         assert_eq!(snapshot.rflags(), 18);
+    }
+
+    #[test]
+    fn identical_snapshots_compare_as_exact_match() {
+        let reference = snapshot([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+        let observed = reference;
+
+        let comparison = reference.compare(&observed);
+
+        assert!(comparison.is_exact_match());
+        assert!(comparison.mismatches().is_empty());
+        assert_eq!(comparison.reference(), &reference);
+        assert_eq!(comparison.observed(), &observed);
+    }
+
+    #[test]
+    fn one_field_difference_reports_field_and_both_values() {
+        let reference = snapshot([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+        let observed = snapshot([1, 2, 3, 44, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+
+        let comparison = reference.compare(&observed);
+
+        assert!(!comparison.is_exact_match());
+        assert_eq!(comparison.mismatches().len(), 1);
+        let mismatch = comparison.mismatches()[0];
+        assert_eq!(mismatch.field(), VcpuRegisterField::Rdx);
+        assert_eq!(mismatch.reference_value(), 4);
+        assert_eq!(mismatch.observed_value(), 44);
+    }
+
+    #[test]
+    fn multiple_differences_follow_canonical_register_order() {
+        let reference = snapshot([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+        let observed = snapshot([100, 2, 3, 4, 5, 6, 7, 8, 9, 1000, 11, 12, 13, 14, 15, 16, 1700, 1800]);
+
+        let fields: Vec<VcpuRegisterField> = reference
+            .compare(&observed)
+            .mismatches()
+            .iter()
+            .map(|mismatch| mismatch.field())
+            .collect();
+
+        assert_eq!(
+            fields,
+            vec![
+                VcpuRegisterField::Rax,
+                VcpuRegisterField::R9,
+                VcpuRegisterField::Rip,
+                VcpuRegisterField::Rflags,
+            ]
+        );
+    }
+
+    #[test]
+    fn rip_and_rflags_are_normal_field_mismatches() {
+        let reference = snapshot([0; 18]);
+        let mut observed_values = [0; 18];
+        observed_values[16] = 0x1000;
+        observed_values[17] = 0x2;
+        let observed = snapshot(observed_values);
+
+        let comparison = reference.compare(&observed);
+
+        assert_eq!(comparison.mismatches().len(), 2);
+        assert_eq!(comparison.mismatches()[0].field(), VcpuRegisterField::Rip);
+        assert_eq!(comparison.mismatches()[1].field(), VcpuRegisterField::Rflags);
+    }
+
+    #[test]
+    fn comparison_owns_complete_source_snapshots() {
+        let comparison = {
+            let reference = snapshot([1; 18]);
+            let observed = snapshot([2; 18]);
+            reference.compare(&observed)
+        };
+
+        assert_eq!(comparison.reference().rax(), 1);
+        assert_eq!(comparison.reference().rflags(), 1);
+        assert_eq!(comparison.observed().rax(), 2);
+        assert_eq!(comparison.observed().rflags(), 2);
+        assert_eq!(comparison.mismatches().len(), 18);
+    }
+
+    #[test]
+    fn comparison_clone_preserves_sources_and_findings() {
+        let reference = snapshot([3; 18]);
+        let observed = snapshot([4; 18]);
+        let comparison = reference.compare(&observed);
+
+        assert_eq!(comparison.clone(), comparison);
     }
 }
