@@ -731,6 +731,13 @@ impl std::fmt::Display for GuestMsrPolicyError {
 
 impl std::error::Error for GuestMsrPolicyError {}
 
+pub mod value_set;
+pub use value_set::{GuestMsrValue, GuestMsrValueSet, GuestMsrValueSetError};
+
 #[cfg(test)]
 #[path = "msr/policy_tests.rs"]
 mod policy_tests;
+
+#[cfg(test)]
+#[path = "msr/value_set_tests.rs"]
+mod value_set_tests;
