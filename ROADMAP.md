@@ -14,25 +14,24 @@ The repository currently has typed, owned boundaries for:
 - owned vCPU general-register snapshots, pure 18-field reference-to-observed comparison, snapshot-bound restore, and restore-and-verify;
 - owned vCPU special-register snapshots covering segment, descriptor-table, control-register, EFER, APIC-base, and interrupt-bitmap state without exposing KVM UAPI padding, plus pure deterministic semantic-field comparison, snapshot-bound restore, and restore-and-verify;
 - composite vCPU state snapshots that own the existing general-register, special-register, and policy-bound MSR snapshots together, with pure component-preserving comparison, read-only snapshot-bound verification, bounded non-transactional restore, restore-and-verify, and a deterministic public/CLI round-trip fixture;
-- centralized VM-exit dispatch with typed HLT and legacy shutdown terminal exits, bounded execution budgets, ordered completed-exit reason traces on successful results, budget-exhaustion diagnostics, and unhandled-exit diagnostics, plus the minimal bidirectional debug port-I/O device.
+- centralized VM-exit dispatch with typed HLT and legacy shutdown terminal exits, bounded execution budgets, ordered completed-exit reason traces on successful results, budget-exhaustion diagnostics, and unhandled-exit diagnostics, plus the minimal bidirectional debug port-I/O device;
+- deterministic CLI command dispatch that preserves structured hypervisor failures for known commands and rejects unknown commands with a usage failure before any KVM access.
 
-## Phase 51 — read-only composite vCPU state verification
+## Phase 52 — deterministic unknown-command CLI failure
 
-The current bounded slice adds one read-only verification boundary over an existing owned `VcpuStateSnapshot`, composing the existing composite capture and comparison paths without performing restore, repair, retry, or any other vCPU write.
+The current bounded slice fixes the binary command-dispatch contract so an unrecognized command is a process-level usage failure rather than a misleading successful invocation, without introducing CLI-only concepts into the library error taxonomy or changing any hypervisor behavior.
 
 Correctness contract:
 
-- `Vcpu::verify_state_snapshot(reference)` performs exactly one existing composite state capture using only `reference.msrs().policy()` as the MSR access authority; callers do not supply or widen a separate verification policy;
-- capture retains the existing canonical general-register → special-register → policy-bound MSR order and its existing short-circuit error behavior;
-- if capture fails, the existing error propagates unchanged and no comparison result is fabricated;
-- after a successful capture, verification delegates only to the existing pure `VcpuStateSnapshot::compare()` contract and returns its component-preserving `VcpuStateSnapshotComparison`;
-- an exact current state returns an exact comparison, while any mismatch is returned as comparison data rather than an error;
-- verification performs no restore, register write, special-register write, MSR write, retry, repair, rollback, or second capture;
-- focused KVM-aware regression verifies both exact and mismatching states and proves that mismatch verification leaves the already-changed vCPU state unchanged;
-- this read-only verification boundary does not make the underlying multi-ioctl composite capture atomic or quiesced and does not add migration compatibility, guest-memory/device capture, named CPU models, `KVM_EXIT_SYSTEM_EVENT`, MMIO, interrupts, SMP, long-mode/Linux boot, or resumable execution.
+- the binary-local `run()` boundary returns an `ExitCode` on successful dispatch while continuing to propagate the existing `mini_hypervisor::error::Error` for known commands that fail in the hypervisor/library layer;
+- every recognized command that completes successfully still returns `ExitCode::SUCCESS`, and existing structured hypervisor failures still flow through `main()` as `error: ...` with a non-zero process status;
+- an unknown command prints the existing usage line and `unknown command: <value>` to stderr, emits nothing to stdout, and returns the deterministic usage exit code `2`;
+- unknown-command handling performs no `KvmBackend::open()`, KVM ioctl, VM/vCPU creation, guest-memory mutation, guest execution, or other hypervisor work;
+- the focused binary regression is environment-independent and locks the exact exit code, empty stdout, usage text, unknown-command text, and separation from the structured `error: ...` hypervisor-failure path;
+- this slice does not change recognized command names, default `probe` behavior, library error variants, KVM ABI, VM/vCPU lifecycle, execution semantics, CPU/MSR policy, state snapshots, `KVM_EXIT_SYSTEM_EVENT`, MMIO, interrupts, SMP, long-mode/Linux boot, migration, or resumable execution.
 
 ## Next bounded slice
 
 No broader implementation slice is preselected by this commit.
 
-After Phase 51 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, architecture-documentation, CPU-model, or state-model work. Do not infer migration support, atomic/quiesced snapshots, guest-memory/device capture, `KVM_EXIT_SYSTEM_EVENT`, MMIO, interrupts, long-mode boot, SMP, resumable execution, or another CLI fixture automatically from the existence of read-only composite state verification.
+After Phase 52 is integrated and its exact post-merge `main` CI is verified, re-inspect the live repository state, open PRs/issues, recent commits, code/documentation drift, and this authoritative roadmap before selecting further execution, architecture-documentation, CPU-model, state-model, memory, or CLI work. Do not infer `KVM_EXIT_SYSTEM_EVENT`, MMIO, interrupts, long-mode boot, SMP, migration, resumable execution, guest-memory/device snapshots, or another CLI command automatically from deterministic unknown-command failure semantics.
