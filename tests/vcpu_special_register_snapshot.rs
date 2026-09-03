@@ -50,4 +50,10 @@ fn special_register_snapshot_observes_explicit_real_mode_state_when_kvm_is_avail
     drop(vcpu);
     assert_eq!(copied.cr0(), snapshot.cr0());
     assert_eq!(copied.interrupt_bitmap(), snapshot.interrupt_bitmap());
+
+    let comparison = snapshot.compare(&copied);
+    assert!(comparison.is_exact_match());
+    assert!(comparison.mismatches().is_empty());
+    assert_eq!(comparison.reference(), &snapshot);
+    assert_eq!(comparison.observed(), &copied);
 }

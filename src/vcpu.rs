@@ -13,7 +13,10 @@ pub use register_snapshot::{
 
 mod special_register_snapshot;
 pub use special_register_snapshot::{
-    VcpuDescriptorTableState, VcpuSegmentState, VcpuSpecialRegisterSnapshot,
+    VcpuDescriptorTableField, VcpuDescriptorTableRegister, VcpuDescriptorTableState,
+    VcpuInterruptBitmapWord, VcpuSegmentField, VcpuSegmentRegister, VcpuSegmentState,
+    VcpuSpecialRegisterField, VcpuSpecialRegisterMismatch, VcpuSpecialRegisterSnapshot,
+    VcpuSpecialRegisterSnapshotComparison,
 };
 
 mod msr_readback;
