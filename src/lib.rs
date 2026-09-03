@@ -32,6 +32,22 @@ const DEBUG_PORT_INPUT_GUEST_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1000);
 const DEBUG_PORT_INPUT_RESULT: GuestPhysAddr = GuestPhysAddr::new(0x2000);
 const DEBUG_PORT_INPUT_VALUE: u8 = b'R';
 const DEBUG_PORT_INPUT_GUEST_BYTES: [u8; 6] = [0xe4, 0xe9, 0xa2, 0x00, 0x20, 0xf4];
+const CPUID_GUEST_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1000);
+const CPUID_GUEST_RESULT: GuestPhysAddr = GuestPhysAddr::new(0x2000);
+const CPUID_GUEST_BYTES: [u8; 28] = [
+    0x66, 0xb8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+    0x0f, 0xa2, // cpuid
+    0x66, 0x89, 0xc8, // mov eax, ecx
+    0x66, 0xa3, 0x00, 0x20, // mov [0x2000], eax
+    0x66, 0xb8, 0x01, 0x00, 0x00, 0x40, // mov eax, 0x40000001
+    0x0f, 0xa2, // cpuid
+    0x66, 0xa3, 0x04, 0x20, // mov [0x2004], eax
+    0xf4, // hlt
+];
+const CPUID_EXIT_BUDGET: u32 = 1;
+const CPUID1_X2APIC: u32 = 1 << 21;
+const CPUID1_TSC_DEADLINE: u32 = 1 << 24;
+const KVM_FEATURE_PV_UNHALT: u32 = 1 << 7;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DebugPortGuestResult {
@@ -73,6 +89,35 @@ impl DebugPortInputGuestResult {
     #[must_use]
     pub const fn value(&self) -> u8 {
         self.value
+    }
+
+    #[must_use]
+    pub const fn report(&self) -> VmExitReport {
+        self.report
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuidGuestResult {
+    cpuid1_ecx: u32,
+    kvm_features_eax: u32,
+    report: VmExitReport,
+}
+
+impl CpuidGuestResult {
+    #[must_use]
+    pub const fn cpuid1_ecx(&self) -> u32 {
+        self.cpuid1_ecx
+    }
+
+    #[must_use]
+    pub const fn kvm_features_eax(&self) -> u32 {
+        self.kvm_features_eax
+    }
+
+    #[must_use]
+    pub const fn masked_lapic_features_clear(&self) -> bool {
+        masked_lapic_features_clear(self.cpuid1_ecx, self.kvm_features_eax)
     }
 
     #[must_use]
@@ -173,6 +218,46 @@ pub fn run_debug_port_input_guest(config: VmConfig) -> Result<DebugPortInputGues
     })
 }
 
+pub fn run_cpuid_guest(config: VmConfig) -> Result<CpuidGuestResult, Error> {
+    let image = FlatGuestImage::new(CPUID_GUEST_ENTRY, CPUID_GUEST_ENTRY, &CPUID_GUEST_BYTES)?;
+    let backend = KvmBackend::open()?;
+    let mut vm = backend.create_vm()?;
+    let mut memory = GuestMemory::new(LIFECYCLE_RAM_BASE, LIFECYCLE_RAM_SIZE)?;
+    image.load(&mut memory)?;
+    vm.register_guest_memory(memory)?;
+
+    debug_assert_eq!(config.vcpu_count(), 1);
+    let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
+    vcpu.initialize_real_mode(image.entry())?;
+    let mut port_io = PortIoBus::empty();
+    let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, CPUID_EXIT_BUDGET)?;
+
+    debug_assert_eq!(execution.completed_exits(), 1);
+    debug_assert!(execution.io_exits().is_empty());
+    let mut observed = [0_u8; 8];
+    vm.guest_memory()
+        .expect("registered guest memory remains owned by the VM")
+        .read(CPUID_GUEST_RESULT, &mut observed)?;
+    let (cpuid1_ecx, kvm_features_eax) = decode_cpuid_guest_result(observed);
+
+    Ok(CpuidGuestResult {
+        cpuid1_ecx,
+        kvm_features_eax,
+        report: execution.report(),
+    })
+}
+
+fn decode_cpuid_guest_result(observed: [u8; 8]) -> (u32, u32) {
+    let cpuid1_ecx = u32::from_le_bytes([observed[0], observed[1], observed[2], observed[3]]);
+    let kvm_features_eax = u32::from_le_bytes([observed[4], observed[5], observed[6], observed[7]]);
+    (cpuid1_ecx, kvm_features_eax)
+}
+
+const fn masked_lapic_features_clear(cpuid1_ecx: u32, kvm_features_eax: u32) -> bool {
+    let cpuid1_mask = CPUID1_X2APIC | CPUID1_TSC_DEADLINE;
+    cpuid1_ecx & cpuid1_mask == 0 && kvm_features_eax & KVM_FEATURE_PV_UNHALT == 0
+}
+
 fn required_single_io(
     execution: &VmExecutionResult,
     stage: &'static str,
@@ -187,4 +272,37 @@ fn required_single_io(
 
     debug_assert_eq!(execution.io_exits().len(), 1);
     Ok(io.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpuid_guest_machine_code_is_stable() {
+        assert_eq!(
+            CPUID_GUEST_BYTES,
+            [
+                0x66, 0xb8, 0x01, 0x00, 0x00, 0x00, 0x0f, 0xa2, 0x66, 0x89, 0xc8, 0x66, 0xa3, 0x00,
+                0x20, 0x66, 0xb8, 0x01, 0x00, 0x00, 0x40, 0x0f, 0xa2, 0x66, 0xa3, 0x04, 0x20, 0xf4,
+            ]
+        );
+        assert_eq!(CPUID_GUEST_BYTES.len(), 0x1c);
+    }
+
+    #[test]
+    fn decodes_cpuid_guest_result_as_little_endian_words() {
+        assert_eq!(
+            decode_cpuid_guest_result([0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x90]),
+            (0x1234_5678, 0x90ab_cdef)
+        );
+    }
+
+    #[test]
+    fn detects_each_lapic_dependent_feature_bit() {
+        assert!(masked_lapic_features_clear(0, 0));
+        assert!(!masked_lapic_features_clear(CPUID1_X2APIC, 0));
+        assert!(!masked_lapic_features_clear(CPUID1_TSC_DEADLINE, 0));
+        assert!(!masked_lapic_features_clear(0, KVM_FEATURE_PV_UNHALT));
+    }
 }

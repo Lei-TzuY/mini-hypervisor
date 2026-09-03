@@ -8,10 +8,13 @@ The current VM model supports exactly one RAM region plus a fixed high x86 KVM-r
 | --- | --- | --- |
 | `0x0000_0000..0x0020_0000` | RAM slot 0 | 2 MiB guest RAM |
 | `0x0000_1000..0x0000_1001` | flat guest bytes inside RAM | deterministic `HLT` fixture |
+| `0x0000_1000..0x0000_101c` | flat guest bytes inside RAM | deterministic CPUID-policy fixture |
+| `0x0000_2000..0x0000_2001` | guest result byte inside RAM | debug-port input fixture result |
+| `0x0000_2000..0x0000_2008` | guest result words inside RAM | CPUID(1).ECX and KVM-features EAX observations |
 | `0xfeff_c000..0xfeff_d000` | KVM x86 reserved | identity-map page |
 | `0xfeff_d000..0xff00_0000` | KVM x86 reserved | three-page TSS region |
 
-The flat-guest row is not a separate KVM memory slot; it documents the byte currently occupied by the test guest inside slot 0. The high reserved pages are configured through x86 VM ioctls rather than userspace RAM slots. No MMIO ranges exist yet.
+The fixture rows are not separate KVM memory slots. They document mutually exclusive repository-owned test images and result areas inside slot 0. The high reserved pages are configured through x86 VM ioctls rather than userspace RAM slots. No MMIO ranges exist yet.
 
 ## Address semantics
 
@@ -46,7 +49,7 @@ The guest-facing read/write helpers calculate and validate an offset before perf
 
 `FlatGuestImage` validates that its non-empty byte range does not overflow guest physical addressing and that its entry lies inside that byte range. Loading then delegates to `GuestMemory::write`, so image placement must also fit completely inside the configured RAM slot.
 
-The current HLT fixture is loaded at `0x1000`, which is within the current CS=0 real-mode RIP range and leaves low memory available for later boot-structure experiments.
+The current fixtures are loaded at `0x1000`, which is within the current CS=0 real-mode RIP range and leaves low memory available for result areas and later boot-structure experiments. The CPUID fixture writes two little-endian 32-bit observations to `0x2000` and `0x2004`; host code reads the complete `0x2000..0x2008` range only after the terminal HLT exit.
 
 ## Scope limit
 
