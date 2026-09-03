@@ -19,6 +19,7 @@ const KVM_CAP_USER_MEMORY: i32 = 3;
 const KVM_CAP_SET_TSS_ADDR: i32 = 4;
 const KVM_CAP_EXT_CPUID: i32 = 7;
 const KVM_CAP_SET_IDENTITY_MAP_ADDR: i32 = 37;
+const KVM_CAP_INTERNAL_ERROR_DATA: i32 = 40;
 const KVM_CAP_GET_MSR_FEATURES: i32 = 153;
 const KVM_IDENTITY_MAP_ADDR: u64 = 0xfeff_c000;
 const KVM_TSS_ADDR: u64 = KVM_IDENTITY_MAP_ADDR + KVM_MEMORY_ALIGNMENT;
@@ -37,6 +38,11 @@ const REQUIRED_EXTENSIONS: [(&str, i32); 5] = [
     ("KVM_CAP_GET_MSR_FEATURES", KVM_CAP_GET_MSR_FEATURES),
 ];
 
+const OPTIONAL_EXTENSIONS: [(&str, i32); 1] = [(
+    "KVM_CAP_INTERNAL_ERROR_DATA",
+    KVM_CAP_INTERNAL_ERROR_DATA,
+)];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capability {
     pub name: &'static str,
@@ -52,6 +58,20 @@ pub struct HostCapabilities {
 }
 
 impl HostCapabilities {
+    #[must_use]
+    pub fn internal_error_data_capability(&self) -> Option<Capability> {
+        self.extensions
+            .iter()
+            .copied()
+            .find(|capability| capability.id == KVM_CAP_INTERNAL_ERROR_DATA)
+    }
+
+    #[must_use]
+    pub fn supports_internal_error_data(&self) -> bool {
+        self.internal_error_data_capability()
+            .is_some_and(|capability| capability.value > 0)
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         if self.api_version != EXPECTED_KVM_API_VERSION {
             return Err(Error::KvmCapability(
@@ -115,8 +135,12 @@ impl KvmBackend {
         let vcpu_mmap_size = sys::ioctl_noarg(fd.as_raw_fd(), sys::KVM_GET_VCPU_MMAP_SIZE)
             .map_err(|source| host_io("KVM_GET_VCPU_MMAP_SIZE", source))?;
 
-        let mut extensions = Vec::with_capacity(REQUIRED_EXTENSIONS.len());
+        let mut extensions =
+            Vec::with_capacity(REQUIRED_EXTENSIONS.len() + OPTIONAL_EXTENSIONS.len());
         for (name, id) in REQUIRED_EXTENSIONS {
+            extensions.push(check_extension(&fd, name, id)?);
+        }
+        for (name, id) in OPTIONAL_EXTENSIONS {
             extensions.push(check_extension(&fd, name, id)?);
         }
 
