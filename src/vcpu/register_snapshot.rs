@@ -371,7 +371,9 @@ mod tests {
 
     #[test]
     fn identical_snapshots_compare_as_exact_match() {
-        let reference = snapshot([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+        let reference = snapshot([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+        ]);
         let observed = reference;
 
         let comparison = reference.compare(&observed);
@@ -384,8 +386,12 @@ mod tests {
 
     #[test]
     fn one_field_difference_reports_field_and_both_values() {
-        let reference = snapshot([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
-        let observed = snapshot([1, 2, 3, 44, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+        let reference = snapshot([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+        ]);
+        let observed = snapshot([
+            1, 2, 3, 44, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+        ]);
 
         let comparison = reference.compare(&observed);
 
@@ -399,8 +405,12 @@ mod tests {
 
     #[test]
     fn multiple_differences_follow_canonical_register_order() {
-        let reference = snapshot([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
-        let observed = snapshot([100, 2, 3, 4, 5, 6, 7, 8, 9, 1000, 11, 12, 13, 14, 15, 16, 1700, 1800]);
+        let reference = snapshot([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+        ]);
+        let observed = snapshot([
+            100, 2, 3, 4, 5, 6, 7, 8, 9, 1000, 11, 12, 13, 14, 15, 16, 1700, 1800,
+        ]);
 
         let fields: Vec<VcpuRegisterField> = reference
             .compare(&observed)
@@ -432,7 +442,10 @@ mod tests {
 
         assert_eq!(comparison.mismatches().len(), 2);
         assert_eq!(comparison.mismatches()[0].field(), VcpuRegisterField::Rip);
-        assert_eq!(comparison.mismatches()[1].field(), VcpuRegisterField::Rflags);
+        assert_eq!(
+            comparison.mismatches()[1].field(),
+            VcpuRegisterField::Rflags
+        );
     }
 
     #[test]
