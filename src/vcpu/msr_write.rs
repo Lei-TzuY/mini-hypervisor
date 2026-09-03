@@ -85,9 +85,7 @@ fn validate_vcpu_msr_write_completion(
 mod tests {
     use super::*;
     use crate::error::{Error, HostEnvironmentError};
-    use crate::kvm::msr::{
-        GuestMsrAccessPolicy, GuestMsrValueSet, HostMsrIndexList, MsrIndex,
-    };
+    use crate::kvm::msr::{GuestMsrAccessPolicy, GuestMsrValueSet, HostMsrIndexList, MsrIndex};
     use crate::kvm::sys;
     use crate::vcpu::VcpuId;
     use std::io;
