@@ -4,7 +4,7 @@
 
 The Linux KVM kernel interface and explicitly supplied host process configuration are trusted. Guest-controlled addresses, lengths, CPU state, port-I/O metadata, future MMIO requests, and future device requests are untrusted at userspace policy boundaries. Kernel-returned variable-length metadata such as the supported-CPUID entry count is also validated before it is used for Rust slicing or copied back into a vCPU ioctl.
 
-The current HLT and debug-port fixtures are repository-owned test inputs rather than arbitrary external guest content. `FlatGuestImage` nevertheless applies range and entry validation so later callers do not acquire an unchecked loading path by accident.
+The current HLT, debug-port, and CPUID fixtures are repository-owned test inputs rather than arbitrary external guest content. `FlatGuestImage` nevertheless applies range and entry validation so later callers do not acquire an unchecked loading path by accident.
 
 ## Unsafe boundary in the current milestone
 
@@ -22,6 +22,8 @@ The current VMM intentionally has no in-kernel LAPIC/IRQ-chip model. Linux KVM d
 
 Every `Vm::create_vcpu` call applies the already-validated set with `KVM_SET_CPUID2` before the `Vcpu` object is returned. A failure closes the newly created descriptor through `OwnedFd` drop and returns a named `KVM_SET_CPUID2` vCPU-operation error. Higher layers therefore cannot reach this project's `KVM_RUN` path through a vCPU that skipped CPUID setup.
 
+The deterministic CPUID proof executes only two fixed leaves. Its reviewed 28-byte real-mode program stores CPUID(1).ECX at guest physical `0x2000` and CPUID(0x40000001).EAX at `0x2004`, then halts. The host does not inspect either result until the terminal HLT report has been produced. The entire eight-byte result range is read through `GuestMemory::read`, so guest-written addresses still pass the normal checked guest-memory boundary before they become host observations. Pure tests separately lock the byte sequence, little-endian decoding, and the predicate used to identify the three masked LAPIC-dependent bits.
+
 ### VM and memory setup
 
 Before any vCPU exists, the VM backend configures KVM's x86 identity-map page and TSS pages in the reserved range `0xfeff_c000..0xff00_0000`. The required KVM capabilities are checked before VM creation, and guest RAM registration rejects overlap with this range.
@@ -38,7 +40,7 @@ KVM documents port-I/O operations as pending until userspace re-enters `KVM_RUN`
 
 When the configured budget is exhausted, the loop returns a structured `ExitBudgetExhausted` error with the vCPU id, configured limit, completed count, and last completed raw exit reason when available. Budget exhaustion is never converted into a terminal `VmExitReport`. If the final permitted exit was serviceable I/O, the userspace service may already be prepared, but without another permitted `KVM_RUN` the VMM does not claim that the pending KVM operation completed or snapshot registers as completed post-I/O state.
 
-`VmExecutionResult` stores only owned Rust data: copied `PortIoExit` metadata/payloads, a terminal report, and a count. It contains no pointer or borrow into `kvm_run`, guest RAM, or a vCPU descriptor.
+`VmExecutionResult` stores only owned Rust data: copied `PortIoExit` metadata/payloads, a terminal report, and a count. `CpuidGuestResult` likewise stores only copied 32-bit observations and a terminal report. Neither contains a pointer or borrow into `kvm_run`, guest RAM, or a vCPU descriptor.
 
 Guest RAM is a private anonymous mapping owned by `GuestMemory`. Region construction validates non-zero size, 4 KiB alignment, and guest-physical end arithmetic before `mmap` or KVM registration. After `KVM_SET_USER_MEMORY_REGION` succeeds, the `Vm` owns the mapping.
 

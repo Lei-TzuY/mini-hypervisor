@@ -53,6 +53,8 @@ The current interrupt model has no in-kernel LAPIC or IRQ chip. Linux KVM docume
 
 `KvmBackend` retains the validated set and clones it into each `Vm`. `Vm::create_vcpu` performs `KVM_CREATE_VCPU`, immediately applies the retained set with `KVM_SET_CPUID2`, and only then constructs/returns `Vcpu`. A failed CPUID application closes the fresh descriptor through `OwnedFd` drop. Therefore every vCPU reachable through the public lifecycle has an explicit CPUID configuration before `KVM_RUN` can occur.
 
+The deterministic CPUID fixture proves the configured contract from inside the guest rather than trusting host-side mutation alone. In real mode it executes `CPUID(1)`, stores ECX at guest physical `0x2000`, executes `CPUID(0x40000001)`, stores EAX at `0x2004`, then halts. After the terminal exit, host code reads the checked eight-byte result range and exposes the observations through `CpuidGuestResult`. The integration regression requires x2APIC, TSC-deadline, and PV-unhalt to remain clear in guest-observed state.
+
 ## x86 VM setup
 
 Immediately after `KVM_CREATE_VM`, before any vCPU can exist, the backend places the one-page identity-map region at `0xfeff_c000` and the three-page TSS region at `0xfeff_d000`. Together these reserve `0xfeff_c000..0xff00_0000`.
@@ -73,7 +75,7 @@ See [docs/memory-map.md](docs/memory-map.md).
 
 `FlatGuestImage` is deliberately narrower than a general executable loader. Construction requires a non-empty byte slice, rejects load-address overflow, and requires the entry point to lie inside the loaded image. Loading still goes through `GuestMemory::write`, so a valid image description cannot escape the configured RAM region.
 
-The HLT fixture contains only `HLT` at guest physical address `0x1000`. The port-output fixture contains `MOV AL, 'K'; OUT 0xe9, AL; HLT`. The port-input fixture contains `IN AL, 0xe9; MOV [0x2000], AL; HLT`. All use entry `0x1000`. ELF parsing and Linux boot conventions are intentionally absent.
+The HLT fixture contains only `HLT` at guest physical address `0x1000`. The port-output fixture contains `MOV AL, 'K'; OUT 0xe9, AL; HLT`. The port-input fixture contains `IN AL, 0xe9; MOV [0x2000], AL; HLT`. The CPUID-policy fixture is a reviewed 28-byte real-mode instruction stream that executes two CPUID leaves, stores two 32-bit observations at `0x2000..0x2008`, and halts. All use entry `0x1000`. ELF parsing and Linux boot conventions are intentionally absent.
 
 ## vCPU execution
 
@@ -95,7 +97,7 @@ Each completed exit is sent through `vmexit::dispatch_vcpu_exit`. Serviceable I/
 
 A zero budget fails before any guest run. When the budget has been fully consumed, the next run attempt fails with `VmExitError::ExitBudgetExhausted`, preserving vCPU id, configured budget, completed count, and the last completed raw exit reason when available. Exhaustion is not reported as guest termination. If the final permitted exit was serviceable port I/O, userspace may have prepared the service response but the VMM does not claim the pending KVM operation completed because no further `KVM_RUN` was permitted.
 
-The HLT fixture uses budget 1. Both deterministic port fixtures use budget 2, so their successful sequence is exactly one serviceable I/O exit followed by terminal HLT. Extra serviceable exits cannot be silently accepted: they consume the budget and prevent a terminal success report.
+The HLT and CPUID fixtures use budget 1. Both deterministic port fixtures use budget 2, so their successful sequence is exactly one serviceable I/O exit followed by terminal HLT. Extra serviceable exits cannot be silently accepted: they consume the budget and prevent a terminal success report.
 
 ## VM-exit dispatch
 
@@ -109,7 +111,7 @@ The HLT fixture uses budget 1. Both deterministic port fixtures use budget 2, so
 
 The dispatcher deliberately does **not** snapshot registers for an in-flight KVM I/O exit. KVM defines port-I/O operations as pending until userspace re-enters `KVM_RUN`; register state used as a completed-operation diagnostic is therefore taken only on a later terminal exit.
 
-The deterministic output fixture reaches HLT at RIP `0x1005`. The deterministic input fixture receives byte `R`, re-enters KVM so KVM transfers that byte into AL, executes `MOV [0x2000], AL`, and reaches HLT at RIP `0x1006`. Host code then reads guest RAM at `0x2000` and requires that it contains `R`.
+The deterministic output fixture reaches HLT at RIP `0x1005`. The deterministic input fixture receives byte `R`, re-enters KVM so KVM transfers that byte into AL, executes `MOV [0x2000], AL`, and reaches HLT at RIP `0x1006`. The CPUID fixture has no userspace-serviced exits and reaches HLT at RIP `0x101c`; host code then reads its two checked result words.
 
 ## Port-I/O bus and debug device
 
@@ -124,7 +126,7 @@ Unknown ports become `PortIoError::UnhandledPort`. Wider or multi-count operatio
 
 ## Ownership and lifetime
 
-`KvmBackend` owns `/dev/kvm`, validated host capabilities, and the sanitized supported-CPUID set. `Vm` owns the VM descriptor, a clone of that CPU contract, and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`. `PortIoBus` owns its optional debug device, configured input byte, and accepted output bytes. `VmExecutionResult` owns only safe copied exit metadata and the terminal report.
+`KvmBackend` owns `/dev/kvm`, validated host capabilities, and the sanitized supported-CPUID set. `Vm` owns the VM descriptor, a clone of that CPU contract, and its optional registered guest RAM. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`. `PortIoBus` owns its optional debug device, configured input byte, and accepted output bytes. `VmExecutionResult` and `CpuidGuestResult` own only copied safe Rust data and reports; neither contains a pointer or borrow into KVM shared memory or guest RAM.
 
 Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
@@ -146,7 +148,7 @@ Future MMIO, interrupt, snapshot, and stronger invariant categories will be adde
 
 There is no generic hypervisor backend trait yet. KVM is the only implementation, and an abstraction would not have a second consumer. The KVM-specific plumbing is nevertheless isolated so a later raw-VMX research backend would not require leaking ioctls into VM policy.
 
-There is no configurable or migration-stable CPU model yet. The current CPUID contract is intentionally the smallest explicit step: host/KVM-supported entries plus conservative masking for the absent LAPIC model.
+There is no configurable or migration-stable CPU model yet. The current CPUID contract is intentionally the smallest explicit step: host/KVM-supported entries plus conservative masking for the absent LAPIC model, now verified from guest-observed CPUID state.
 
 There is also no multi-region memory map yet. `GuestMemoryRegion::overlaps` exists to make range semantics explicit and tested, but the VM intentionally supports only slot 0 in this milestone.
 
@@ -156,4 +158,4 @@ The execution loop is not a scheduler. It owns no vCPU, thread, timer, or interr
 
 ## Next architectural milestone
 
-The next bounded slice should prove the configured CPU contract from inside the guest with one deterministic real-mode `CPUID` fixture. The guest should execute selected leaves, store the observed register values into checked guest RAM, halt through the existing bounded loop, and let the host verify that LAPIC-dependent bits intentionally masked by policy are not visible. It should not add a configurable CPU model, MSR policy, long-mode boot, interrupts, MMIO, SMP, or device expansion.
+The next bounded slice should separate host/KVM capability discovery from guest CPU policy construction with an explicit typed CPU-policy boundary. It should preserve the exact guest-visible behavior proven by the CPUID fixture, make the policy independently testable without `/dev/kvm`, and avoid introducing a migration-stable named CPU model, MSR policy, long-mode boot, interrupts, MMIO, SMP, or device expansion in the same slice.
