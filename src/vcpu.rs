@@ -7,7 +7,10 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::ptr::NonNull;
 
 mod register_snapshot;
-pub use register_snapshot::VcpuRegisterSnapshot;
+pub use register_snapshot::{
+    VcpuRegisterField, VcpuRegisterMismatch, VcpuRegisterSnapshot,
+    VcpuRegisterSnapshotComparison,
+};
 
 mod msr_readback;
 pub use msr_readback::{VcpuMsrValue, VcpuMsrValues};
