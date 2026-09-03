@@ -420,8 +420,8 @@ fn malformed_supported_cpuid(reported: u32, capacity: usize) -> Error {
 }
 
 fn validate_msr_index_count(reported: u32, capacity: usize) -> Result<usize, Error> {
-    let count = usize::try_from(reported)
-        .map_err(|_| malformed_msr_index_count(reported, capacity))?;
+    let count =
+        usize::try_from(reported).map_err(|_| malformed_msr_index_count(reported, capacity))?;
     if count == 0 || count > capacity {
         return Err(malformed_msr_index_count(reported, capacity));
     }
