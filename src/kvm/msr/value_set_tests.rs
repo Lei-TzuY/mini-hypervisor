@@ -1,5 +1,5 @@
-use super::*;
 use super::value_set::{GuestMsrSnapshot, GuestMsrSnapshotError};
+use super::*;
 
 fn policy(indices: &[u32]) -> GuestMsrAccessPolicy {
     let host = HostMsrIndexList::from_validated_raw(indices);
