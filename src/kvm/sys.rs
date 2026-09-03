@@ -5,6 +5,7 @@ pub const KVM_GET_API_VERSION: libc::c_ulong = 0xAE00;
 pub const KVM_CREATE_VM: libc::c_ulong = 0xAE01;
 pub const KVM_CHECK_EXTENSION: libc::c_ulong = 0xAE03;
 pub const KVM_GET_VCPU_MMAP_SIZE: libc::c_ulong = 0xAE04;
+pub const KVM_GET_SUPPORTED_CPUID: libc::c_ulong = 0xC008_AE05;
 pub const KVM_CREATE_VCPU: libc::c_ulong = 0xAE41;
 pub const KVM_SET_USER_MEMORY_REGION: libc::c_ulong = 0x4020_AE46;
 pub const KVM_SET_TSS_ADDR: libc::c_ulong = 0xAE47;
@@ -14,6 +15,7 @@ pub const KVM_GET_REGS: libc::c_ulong = 0x8090_AE81;
 pub const KVM_SET_REGS: libc::c_ulong = 0x4090_AE82;
 pub const KVM_GET_SREGS: libc::c_ulong = 0x8138_AE83;
 pub const KVM_SET_SREGS: libc::c_ulong = 0x4138_AE84;
+pub const KVM_SET_CPUID2: libc::c_ulong = 0x4008_AE90;
 pub const KVM_EXIT_IO: u32 = 2;
 pub const KVM_EXIT_HLT: u32 = 5;
 pub const KVM_EXIT_IO_IN: u8 = 0;
@@ -127,6 +129,51 @@ pub struct KvmSregs {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KvmCpuidEntry2 {
+    pub function: u32,
+    pub index: u32,
+    pub flags: u32,
+    pub eax: u32,
+    pub ebx: u32,
+    pub ecx: u32,
+    pub edx: u32,
+    pub padding: [u32; 3],
+}
+
+impl KvmCpuidEntry2 {
+    pub const ZERO: Self = Self {
+        function: 0,
+        index: 0,
+        flags: 0,
+        eax: 0,
+        ebx: 0,
+        ecx: 0,
+        edx: 0,
+        padding: [0; 3],
+    };
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct KvmCpuid2<const N: usize> {
+    pub nent: u32,
+    pub padding: u32,
+    pub entries: [KvmCpuidEntry2; N],
+}
+
+impl<const N: usize> KvmCpuid2<N> {
+    pub fn new() -> Self {
+        let nent = u32::try_from(N).expect("KVM CPUID entry capacity fits in u32");
+        Self {
+            nent,
+            padding: 0,
+            entries: [KvmCpuidEntry2::ZERO; N],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct KvmRunHeader {
     pub request_interrupt_window: u8,
     pub immediate_exit: u8,
@@ -164,6 +211,19 @@ pub fn ioctl_noarg(fd: RawFd, request: libc::c_ulong) -> io::Result<i32> {
 pub fn ioctl_with_arg(fd: RawFd, request: libc::c_ulong, arg: libc::c_ulong) -> io::Result<i32> {
     let result = unsafe { libc::ioctl(fd, request, arg) };
     cvt_ioctl(result)
+}
+
+pub fn get_supported_cpuid<const N: usize>(fd: RawFd, cpuid: &mut KvmCpuid2<N>) -> io::Result<()> {
+    // SAFETY: `cpuid` is one contiguous repr(C) header plus N entries. KVM uses `nent` to bound
+    // writes to the trailing variable-length array, and the caller initializes it to N.
+    let result = unsafe { libc::ioctl(fd, KVM_GET_SUPPORTED_CPUID, cpuid) };
+    cvt_ioctl(result).map(|_| ())
+}
+
+pub fn set_cpuid2<const N: usize>(fd: RawFd, cpuid: &KvmCpuid2<N>) -> io::Result<()> {
+    // SAFETY: `cpuid` is a readable repr(C) header followed by at least `nent` initialized entries.
+    let result = unsafe { libc::ioctl(fd, KVM_SET_CPUID2, cpuid) };
+    cvt_ioctl(result).map(|_| ())
 }
 
 pub fn set_user_memory_region(fd: RawFd, region: &KvmUserspaceMemoryRegion) -> io::Result<()> {
@@ -256,6 +316,24 @@ mod tests {
         assert_eq!(KVM_SET_REGS, 0x4090_AE82);
         assert_eq!(KVM_GET_SREGS, 0x8138_AE83);
         assert_eq!(KVM_SET_SREGS, 0x4138_AE84);
+    }
+
+    #[test]
+    fn cpuid_structures_match_x86_64_kvm_uapi_layout() {
+        assert_eq!(std::mem::size_of::<KvmCpuidEntry2>(), 40);
+        assert_eq!(std::mem::size_of::<KvmCpuid2<0>>(), 8);
+        assert_eq!(std::mem::size_of::<KvmCpuid2<1>>(), 48);
+        assert_eq!(std::mem::offset_of!(KvmCpuid2<1>, entries), 8);
+        assert_eq!(KVM_GET_SUPPORTED_CPUID, 0xC008_AE05);
+        assert_eq!(KVM_SET_CPUID2, 0x4008_AE90);
+    }
+
+    #[test]
+    fn cpuid_buffer_initializes_header_and_reserved_fields() {
+        let cpuid = KvmCpuid2::<3>::new();
+        assert_eq!(cpuid.nent, 3);
+        assert_eq!(cpuid.padding, 0);
+        assert_eq!(cpuid.entries, [KvmCpuidEntry2::ZERO; 3]);
     }
 
     #[test]
