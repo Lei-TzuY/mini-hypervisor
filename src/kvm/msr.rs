@@ -58,13 +58,8 @@ mod tests {
 
     #[test]
     fn duplicate_kernel_indices_keep_first_occurrence_order() {
-        let snapshot = HostMsrIndexList::from_validated_raw(&[
-            0x10,
-            0x1b,
-            0x10,
-            0xc000_0080,
-            0x1b,
-        ]);
+        let snapshot =
+            HostMsrIndexList::from_validated_raw(&[0x10, 0x1b, 0x10, 0xc000_0080, 0x1b]);
         assert_eq!(
             snapshot.indices(),
             &[
