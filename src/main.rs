@@ -50,10 +50,7 @@ fn run() -> Result<(), mini_hypervisor::error::Error> {
         Some("run-cpuid") => {
             let result = run_cpuid_guest(VmConfig::default())?;
             println!("cpuid(1).ecx: {:#010x}", result.cpuid1_ecx());
-            println!(
-                "cpuid(0x40000001).eax: {:#010x}",
-                result.kvm_features_eax()
-            );
+            println!("cpuid(0x40000001).eax: {:#010x}", result.kvm_features_eax());
             println!(
                 "masked LAPIC-dependent features clear: {}",
                 result.masked_lapic_features_clear()
