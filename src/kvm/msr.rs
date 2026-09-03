@@ -62,6 +62,44 @@ impl HostMsrFeatureIndexList {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MsrFeatureValue {
+    index: MsrIndex,
+    value: u64,
+}
+
+impl MsrFeatureValue {
+    pub(crate) const fn new(index: MsrIndex, value: u64) -> Self {
+        Self { index, value }
+    }
+
+    #[must_use]
+    pub const fn index(self) -> MsrIndex {
+        self.index
+    }
+
+    #[must_use]
+    pub const fn value(self) -> u64 {
+        self.value
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostMsrFeatureValues {
+    values: Vec<MsrFeatureValue>,
+}
+
+impl HostMsrFeatureValues {
+    pub(crate) fn from_values(values: Vec<MsrFeatureValue>) -> Self {
+        Self { values }
+    }
+
+    #[must_use]
+    pub fn values(&self) -> &[MsrFeatureValue] {
+        &self.values
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,6 +148,29 @@ mod tests {
     fn empty_feature_index_list_is_valid() {
         let snapshot = HostMsrFeatureIndexList::from_validated_raw(&[]);
         assert!(snapshot.indices().is_empty());
+    }
+
+    #[test]
+    fn feature_values_preserve_index_order_and_data() {
+        let snapshot = HostMsrFeatureValues::from_values(vec![
+            MsrFeatureValue::new(MsrIndex::new(0x3a), 0x1111_2222_3333_4444),
+            MsrFeatureValue::new(MsrIndex::new(0x10a), 0xaaaa_bbbb_cccc_dddd),
+        ]);
+        assert_eq!(
+            snapshot.values(),
+            &[
+                MsrFeatureValue::new(MsrIndex::new(0x3a), 0x1111_2222_3333_4444),
+                MsrFeatureValue::new(MsrIndex::new(0x10a), 0xaaaa_bbbb_cccc_dddd),
+            ]
+        );
+        assert_eq!(snapshot.values()[0].index(), MsrIndex::new(0x3a));
+        assert_eq!(snapshot.values()[1].value(), 0xaaaa_bbbb_cccc_dddd);
+    }
+
+    #[test]
+    fn empty_feature_value_snapshot_is_valid() {
+        let snapshot = HostMsrFeatureValues::from_values(Vec::new());
+        assert!(snapshot.values().is_empty());
     }
 
     #[test]

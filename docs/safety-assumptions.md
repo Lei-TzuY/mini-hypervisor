@@ -2,7 +2,7 @@
 
 ## Trust model
 
-The Linux KVM kernel interface and explicitly supplied host process configuration are trusted. Guest-controlled addresses, lengths, CPU state, port-I/O metadata, future MMIO requests, and future device requests are untrusted at userspace policy boundaries. Kernel-returned variable-length metadata such as supported-CPUID, vCPU CPUID read-back, general MSR-index counts, and MSR-feature-index counts is also validated before it is used for Rust slicing or copied into typed state.
+The Linux KVM kernel interface and explicitly supplied host process configuration are trusted. Guest-controlled addresses, lengths, CPU state, port-I/O metadata, future MMIO requests, and future device requests are untrusted at userspace policy boundaries. Kernel-returned variable-length metadata such as supported-CPUID, vCPU CPUID read-back, general MSR-index counts, MSR-feature-index counts, and system `KVM_GET_MSRS` completion/index metadata is also validated before it is used for Rust slicing or copied into typed state.
 
 The current HLT, debug-port, and CPUID fixtures are repository-owned test inputs rather than arbitrary external guest content. `FlatGuestImage` nevertheless applies range and entry validation so later callers do not acquire an unchecked loading path by accident.
 
@@ -42,7 +42,19 @@ Only after each probe count passes its own validation does the backend issue the
 
 Validated raw indices are copied into owned typed state. `HostMsrIndexList` and `HostMsrFeatureIndexList` both reuse `MsrIndex`, but they remain distinct types because the general MSR access set and the system feature-probing set have different semantics. Duplicate kernel indices in either list are normalized by retaining the first occurrence while preserving the kernel-reported order of retained indices; pure tests lock both behavior and the valid empty feature-list case. Raw variable-length buffers and their pointers never leave the KVM module.
 
-Both snapshots are capability discovery only. They are retained by `KvmBackend`, are not copied into `Vm` or `Vcpu`, and do not authorize guest MSR access. This milestone issues neither system nor vCPU `KVM_GET_MSRS`, issues no `KVM_SET_MSRS`, reads no guest MSR value, writes no guest MSR value, and derives no guest MSR allow/deny policy.
+### MSR feature-value capability discovery
+
+System-level `KVM_GET_MSRS` is used only after `KVM_CAP_GET_MSR_FEATURES` has already been required and only with indices from the validated `HostMsrFeatureIndexList`. This does not use a vCPU descriptor and therefore does not read guest MSR state.
+
+`KvmMsrs<N>` models the variable-length `struct kvm_msrs` ABI as an aligned `repr(C)` object with an 8-byte `nmsrs`/padding header followed immediately by a fixed array of 16-byte `KvmMsrEntry` values. Each entry contains the exact `u32 index`, reserved `u32`, and `u64 data` fields. Construction zeroes header padding plus every entry's index, reserved field, and data. Pure tests lock the header size, entry size, trailing-array offset, exact `KVM_GET_MSRS` request value, and zero initialization.
+
+Before the raw ioctl is issued, the wrapper converts `nmsrs` to `usize` and requires it to be no greater than the actual const-generic backing capacity. This check happens before the unsafe call; a focused regression supplies an invalid descriptor and an over-capacity header and still receives `InvalidInput`, proving the wrapper rejects the count before the kernel could observe the bad file descriptor. The backend uses the existing fixed 1024-entry project buffer and requests exactly the normalized feature-index count.
+
+KVM returns the number of entries successfully processed. Kernel MSR iteration stops at the first failing entry, so a short positive return is a partial result rather than a complete snapshot. The backend accepts typed feature values only when the return count exactly equals the requested count. Partial completion is rejected and reports the first unread requested index; a count greater than requested is also rejected. No successful prefix is exposed as `HostMsrFeatureValues` after a partial result.
+
+The request entry indices are userspace-provided and are expected to remain unchanged. After complete-count validation, the backend independently checks every returned entry index against the requested typed `MsrIndex` in the same order. An index mismatch rejects the whole response before any value is published. Only a complete, order-stable response is copied into owned `MsrFeatureValue { index, value }` entries. An empty feature-index list is a valid empty value snapshot and skips the ioctl entirely.
+
+The resulting `HostMsrFeatureValues` remains host capability discovery state. It is retained by `KvmBackend`, is not copied into `Vm` or `Vcpu`, does not authorize guest MSR access, and does not imply temporal or migration stability. KVM documents the microcode revision feature MSR as the exception to the otherwise immutable feature-MSR set because it tracks currently loaded microcode. This milestone therefore issues no vCPU `KVM_GET_MSRS`, no `KVM_SET_MSRS`, reads or writes no guest MSR value, and derives no guest MSR allow/deny/value policy.
 
 ### VM and memory setup
 
@@ -74,4 +86,4 @@ The minimal `PortIoBus` recognizes only debug port `0xe9`. The device accepts by
 
 ## Not yet present
 
-There is no guest virtual-address translation, external guest-image parser, MMIO, interrupt injection, configurable/migratable CPU model, guest MSR policy or guest MSR value lifecycle, host MSR feature-value snapshot, virtqueue, disk backend, snapshot decoder, dynamic device registration, scheduler, or guest-controlled device descriptor parsing in this revision. The backend does have bounded typed general and feature MSR-index capability snapshots, but they do not confer guest MSR semantics. The current CPUID contract is deliberately host-derived and conservatively masked rather than a stable cross-host CPU profile. Unsupported exits and unsupported port requests are rejected with structured diagnostics rather than serviced heuristically.
+There is no guest virtual-address translation, external guest-image parser, MMIO, interrupt injection, configurable/migratable CPU model, explicit MSR feature-value stability classification, guest MSR policy or guest MSR value lifecycle, virtqueue, disk backend, snapshot decoder, dynamic device registration, scheduler, or guest-controlled device descriptor parsing in this revision. The backend has bounded typed general MSR-index, feature-index, and feature-value capability snapshots, but none confers guest MSR semantics or migration stability. The current CPUID contract is deliberately host-derived and conservatively masked rather than a stable cross-host CPU profile. Unsupported exits and unsupported port requests are rejected with structured diagnostics rather than serviced heuristically.
