@@ -525,10 +525,7 @@ mod tests {
 
     #[test]
     fn exit_reason_round_trips_typed_classification() {
-        assert_eq!(
-            VcpuExit::KvmUnknown.reason(),
-            kvm_unknown::KVM_EXIT_UNKNOWN
-        );
+        assert_eq!(VcpuExit::KvmUnknown.reason(), kvm_unknown::KVM_EXIT_UNKNOWN);
         assert_eq!(VcpuExit::Hlt.reason(), sys::KVM_EXIT_HLT);
         assert_eq!(VcpuExit::Io.reason(), sys::KVM_EXIT_IO);
         assert_eq!(VcpuExit::Shutdown.reason(), sys::KVM_EXIT_SHUTDOWN);
