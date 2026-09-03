@@ -11,6 +11,11 @@ pub use register_snapshot::{
     VcpuRegisterField, VcpuRegisterMismatch, VcpuRegisterSnapshot, VcpuRegisterSnapshotComparison,
 };
 
+mod special_register_snapshot;
+pub use special_register_snapshot::{
+    VcpuDescriptorTableState, VcpuSegmentState, VcpuSpecialRegisterSnapshot,
+};
+
 mod msr_readback;
 pub use msr_readback::{VcpuMsrValue, VcpuMsrValues};
 
