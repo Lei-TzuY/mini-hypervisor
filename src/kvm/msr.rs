@@ -202,9 +202,15 @@ mod tests {
             ]
         );
         assert_eq!(snapshot.values()[0].index(), MsrIndex::new(0x3a));
-        assert_eq!(snapshot.values()[0].stability(), MsrFeatureStability::ModelImmutable);
+        assert_eq!(
+            snapshot.values()[0].stability(),
+            MsrFeatureStability::ModelImmutable
+        );
         assert_eq!(snapshot.values()[1].value(), 0xaaaa_bbbb_cccc_dddd);
-        assert_eq!(snapshot.values()[1].stability(), MsrFeatureStability::HostMutable);
+        assert_eq!(
+            snapshot.values()[1].stability(),
+            MsrFeatureStability::HostMutable
+        );
     }
 
     #[test]
@@ -233,11 +239,13 @@ mod tests {
         let immutable_a = MsrFeatureValue::new(MsrIndex::new(0x3a), 1);
         let mutable = MsrFeatureValue::new(MSR_IA32_UCODE_REV, 2);
         let immutable_b = MsrFeatureValue::new(MsrIndex::new(0x10a), 3);
-        let snapshot =
-            HostMsrFeatureValues::from_values(vec![immutable_a, mutable, immutable_b]);
+        let snapshot = HostMsrFeatureValues::from_values(vec![immutable_a, mutable, immutable_b]);
 
         assert_eq!(
-            snapshot.model_immutable_values().copied().collect::<Vec<_>>(),
+            snapshot
+                .model_immutable_values()
+                .copied()
+                .collect::<Vec<_>>(),
             vec![immutable_a, immutable_b]
         );
         assert_eq!(
