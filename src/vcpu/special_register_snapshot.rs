@@ -365,8 +365,14 @@ mod tests {
         assert_eq!(snapshot.ss(), VcpuSegmentState::from_kvm_segment(raw.ss));
         assert_eq!(snapshot.tr(), VcpuSegmentState::from_kvm_segment(raw.tr));
         assert_eq!(snapshot.ldt(), VcpuSegmentState::from_kvm_segment(raw.ldt));
-        assert_eq!(snapshot.gdt(), VcpuDescriptorTableState::from_kvm_dtable(raw.gdt));
-        assert_eq!(snapshot.idt(), VcpuDescriptorTableState::from_kvm_dtable(raw.idt));
+        assert_eq!(
+            snapshot.gdt(),
+            VcpuDescriptorTableState::from_kvm_dtable(raw.gdt)
+        );
+        assert_eq!(
+            snapshot.idt(),
+            VcpuDescriptorTableState::from_kvm_dtable(raw.idt)
+        );
         assert_eq!(snapshot.cr0(), 0x10);
         assert_eq!(snapshot.cr2(), 0x20);
         assert_eq!(snapshot.cr3(), 0x30);
