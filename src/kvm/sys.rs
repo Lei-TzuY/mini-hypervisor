@@ -3,6 +3,7 @@ use std::os::fd::RawFd;
 
 pub const KVM_GET_API_VERSION: libc::c_ulong = 0xAE00;
 pub const KVM_CREATE_VM: libc::c_ulong = 0xAE01;
+pub const KVM_GET_MSR_INDEX_LIST: libc::c_ulong = 0xC004_AE02;
 pub const KVM_CHECK_EXTENSION: libc::c_ulong = 0xAE03;
 pub const KVM_GET_VCPU_MMAP_SIZE: libc::c_ulong = 0xAE04;
 pub const KVM_GET_SUPPORTED_CPUID: libc::c_ulong = 0xC008_AE05;
@@ -174,6 +175,23 @@ impl<const N: usize> KvmCpuid2<N> {
 }
 
 #[repr(C)]
+#[derive(Debug)]
+pub struct KvmMsrList<const N: usize> {
+    pub nmsrs: u32,
+    pub indices: [u32; N],
+}
+
+impl<const N: usize> KvmMsrList<N> {
+    pub fn new() -> Self {
+        let nmsrs = u32::try_from(N).expect("KVM MSR index capacity fits in u32");
+        Self {
+            nmsrs,
+            indices: [0; N],
+        }
+    }
+}
+
+#[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct KvmRunHeader {
     pub request_interrupt_window: u8,
@@ -212,6 +230,14 @@ pub fn ioctl_noarg(fd: RawFd, request: libc::c_ulong) -> io::Result<i32> {
 pub fn ioctl_with_arg(fd: RawFd, request: libc::c_ulong, arg: libc::c_ulong) -> io::Result<i32> {
     let result = unsafe { libc::ioctl(fd, request, arg) };
     cvt_ioctl(result)
+}
+
+pub fn get_msr_index_list<const N: usize>(fd: RawFd, list: &mut KvmMsrList<N>) -> io::Result<()> {
+    // SAFETY: `list` is one contiguous repr(C) header plus N u32 indices. KVM reads `nmsrs` as
+    // the caller capacity, writes the required/actual count back, and never writes more than N
+    // trailing entries when the capacity is sufficient.
+    let result = unsafe { libc::ioctl(fd, KVM_GET_MSR_INDEX_LIST, list) };
+    cvt_ioctl(result).map(|_| ())
 }
 
 pub fn get_supported_cpuid<const N: usize>(fd: RawFd, cpuid: &mut KvmCpuid2<N>) -> io::Result<()> {
@@ -343,6 +369,21 @@ mod tests {
         assert_eq!(cpuid.nent, 3);
         assert_eq!(cpuid.padding, 0);
         assert_eq!(cpuid.entries, [KvmCpuidEntry2::ZERO; 3]);
+    }
+
+    #[test]
+    fn msr_index_list_matches_x86_64_kvm_uapi_layout() {
+        assert_eq!(std::mem::size_of::<KvmMsrList<0>>(), 4);
+        assert_eq!(std::mem::size_of::<KvmMsrList<1>>(), 8);
+        assert_eq!(std::mem::offset_of!(KvmMsrList<1>, indices), 4);
+        assert_eq!(KVM_GET_MSR_INDEX_LIST, 0xC004_AE02);
+    }
+
+    #[test]
+    fn msr_index_list_initializes_capacity_and_entries() {
+        let list = KvmMsrList::<3>::new();
+        assert_eq!(list.nmsrs, 3);
+        assert_eq!(list.indices, [0; 3]);
     }
 
     #[test]
