@@ -1,6 +1,12 @@
 const CPUID_FEATURES: u32 = 0x0000_0001;
 const CPUID_FEATURE_X2APIC: u32 = 1 << 21;
 const CPUID_FEATURE_TSC_DEADLINE: u32 = 1 << 24;
+const CPUID_XSTATE: u32 = 0x0000_000d;
+const CPUID_XSTATE_CONTROL: u32 = 0;
+const CPUID_XSTATE_FEATURES: u32 = 1;
+const CPUID_XSTATE_XSAVEC: u32 = 1 << 1;
+const CPUID_XSTATE_XSAVES: u32 = 1 << 3;
+const RESET_XSAVE_AREA_SIZE: u32 = 576;
 const KVM_CPUID_FEATURES: u32 = 0x4000_0001;
 const KVM_FEATURE_PV_UNHALT: u32 = 1 << 7;
 
@@ -142,11 +148,25 @@ impl GuestCpuPolicy {
     pub fn from_host(host: &HostCpuid) -> Self {
         let mut entries = host.entries.clone();
         for entry in &mut entries {
-            match entry.function {
-                CPUID_FEATURES => {
+            match (entry.function, entry.index) {
+                (CPUID_FEATURES, _) => {
                     entry.ecx &= !(CPUID_FEATURE_X2APIC | CPUID_FEATURE_TSC_DEADLINE);
                 }
-                KVM_CPUID_FEATURES => {
+                (CPUID_XSTATE, CPUID_XSTATE_CONTROL) => {
+                    // KVM owns CPUID.0xD.0:EBX at runtime and recomputes it from the vCPU's XCR0.
+                    // Before this project mutates XCR0, the architectural XSAVE image consists of
+                    // the 512-byte legacy region plus the 64-byte XSAVE header.
+                    entry.ebx = RESET_XSAVE_AREA_SIZE;
+                }
+                (CPUID_XSTATE, CPUID_XSTATE_FEATURES)
+                    if entry.eax & (CPUID_XSTATE_XSAVEC | CPUID_XSTATE_XSAVES) != 0 =>
+                {
+                    // KVM likewise owns CPUID.0xD.1:EBX when compacted XSAVE is exposed. With no
+                    // extended XCR0/XSS state enabled, compacted and standard reset images are both
+                    // the 576-byte architectural baseline.
+                    entry.ebx = RESET_XSAVE_AREA_SIZE;
+                }
+                (KVM_CPUID_FEATURES, _) => {
                     entry.eax &= !KVM_FEATURE_PV_UNHALT;
                 }
                 _ => {}
@@ -312,6 +332,67 @@ mod tests {
         assert_eq!(policy.entries()[0].ecx, 0x1);
         assert_eq!(policy.entries()[1].eax, 0x1);
         assert_eq!(policy.entries()[2], host.entries()[2]);
+    }
+
+    #[test]
+    fn policy_canonicalizes_kvm_runtime_xsave_sizes_for_reset_state() {
+        let host = HostCpuid::from_entries(vec![
+            CpuidEntry {
+                function: CPUID_XSTATE,
+                index: CPUID_XSTATE_CONTROL,
+                flags: 1,
+                eax: 0x7,
+                ebx: 0x340,
+                ecx: 0x340,
+                edx: 0,
+            },
+            CpuidEntry {
+                function: CPUID_XSTATE,
+                index: CPUID_XSTATE_FEATURES,
+                flags: 1,
+                eax: CPUID_XSTATE_XSAVEC | CPUID_XSTATE_XSAVES,
+                ebx: 0x340,
+                ecx: 0,
+                edx: 0,
+            },
+            CpuidEntry {
+                function: CPUID_XSTATE,
+                index: 2,
+                flags: 1,
+                eax: 0x100,
+                ebx: 0x240,
+                ecx: 0,
+                edx: 0,
+            },
+        ]);
+        let original = host.clone();
+
+        let policy = GuestCpuPolicy::from_host(&host);
+
+        assert_eq!(host, original);
+        assert_eq!(policy.entries()[0].ebx, RESET_XSAVE_AREA_SIZE);
+        assert_eq!(policy.entries()[0].eax, 0x7);
+        assert_eq!(policy.entries()[0].ecx, 0x340);
+        assert_eq!(policy.entries()[1].ebx, RESET_XSAVE_AREA_SIZE);
+        assert_eq!(policy.entries()[1].eax, CPUID_XSTATE_XSAVEC | CPUID_XSTATE_XSAVES);
+        assert_eq!(policy.entries()[2], host.entries()[2]);
+    }
+
+    #[test]
+    fn policy_preserves_xstate_features_ebx_without_compacted_xsave() {
+        let host = HostCpuid::from_entries(vec![CpuidEntry {
+            function: CPUID_XSTATE,
+            index: CPUID_XSTATE_FEATURES,
+            flags: 1,
+            eax: 1,
+            ebx: 0x1234,
+            ecx: 0x5678,
+            edx: 0x9abc,
+        }]);
+
+        let policy = GuestCpuPolicy::from_host(&host);
+
+        assert_eq!(policy.entries()[0], host.entries()[0]);
     }
 
     #[test]
