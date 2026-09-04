@@ -374,7 +374,10 @@ mod tests {
         assert_eq!(policy.entries()[0].eax, 0x7);
         assert_eq!(policy.entries()[0].ecx, 0x340);
         assert_eq!(policy.entries()[1].ebx, RESET_XSAVE_AREA_SIZE);
-        assert_eq!(policy.entries()[1].eax, CPUID_XSTATE_XSAVEC | CPUID_XSTATE_XSAVES);
+        assert_eq!(
+            policy.entries()[1].eax,
+            CPUID_XSTATE_XSAVEC | CPUID_XSTATE_XSAVES
+        );
         assert_eq!(policy.entries()[2], host.entries()[2]);
     }
 
