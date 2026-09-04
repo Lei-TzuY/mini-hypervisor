@@ -141,18 +141,19 @@ mod tests {
     use std::io;
 
     #[test]
-    fn error_sources_preserve_host_operation_and_underlying_io_cause() {
+    fn cli_diagnostics_preserve_operation_and_underlying_io_cause() {
         let error = Error::HostEnvironment(HostEnvironmentError::Io {
             operation: "KVM_GET_API_VERSION",
             source: io::Error::other("synthetic ioctl failure"),
         });
 
         assert_eq!(
+            error.to_string(),
+            "host I/O failure during KVM_GET_API_VERSION"
+        );
+        assert_eq!(
             error_sources(&error),
-            vec![
-                "host I/O failure during KVM_GET_API_VERSION".to_string(),
-                "synthetic ioctl failure".to_string(),
-            ]
+            vec!["synthetic ioctl failure".to_string()]
         );
     }
 
