@@ -212,8 +212,8 @@ mod tests {
     use crate::memory::{GuestMemoryRegion, GuestPhysAddr};
 
     fn long_mode_layout() -> LongModeBootLayout {
-        let memory = GuestMemoryRegion::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE)
-            .unwrap();
+        let memory =
+            GuestMemoryRegion::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         LongModeBootLayout::new(memory, GuestPhysAddr::new(0x1_0000), 0x1f_f000).unwrap()
     }
 
