@@ -1,8 +1,8 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::kvm::KvmBackend;
 use mini_hypervisor::{
-    run_cpuid_guest, run_debug_port_guest, run_hlt_guest, run_state_snapshot_roundtrip,
-    verify_kvm_lifecycle,
+    run_cpuid_guest, run_debug_port_guest, run_hlt_guest, run_long_mode_guest,
+    run_state_snapshot_roundtrip, verify_kvm_lifecycle,
 };
 use std::process::ExitCode;
 
@@ -81,9 +81,15 @@ fn run() -> Result<ExitCode, mini_hypervisor::error::Error> {
             println!("{}", result.report());
             Ok(ExitCode::SUCCESS)
         }
+        Some("run-long-mode") => {
+            let result = run_long_mode_guest(VmConfig::default())?;
+            println!("long-mode proof: {:?}", result.proof());
+            println!("{}", result.report());
+            Ok(ExitCode::SUCCESS)
+        }
         Some(other) => {
             eprintln!(
-                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port]"
+                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port|run-long-mode]"
             );
             eprintln!("unknown command: {other}");
             Ok(ExitCode::from(2))
