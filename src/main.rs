@@ -1,10 +1,15 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::kvm::KvmBackend;
+use mini_hypervisor::vcpu::VcpuExit;
 use mini_hypervisor::{
     run_cpuid_guest, run_debug_port_guest, run_hlt_guest, run_long_mode_guest,
     run_state_snapshot_roundtrip, verify_kvm_lifecycle,
 };
 use std::process::ExitCode;
+
+const LONG_MODE_EXPECTED_PROOF: &[u8] = b"LM64";
+const LONG_MODE_EXPECTED_TERMINAL_RIP: u64 = 0x1_0024;
+const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 
 fn main() -> ExitCode {
     match run() {
@@ -83,9 +88,21 @@ fn run() -> Result<ExitCode, mini_hypervisor::error::Error> {
         }
         Some("run-long-mode") => {
             let result = run_long_mode_guest(VmConfig::default())?;
+            let report = result.report();
             println!("long-mode proof: {:?}", result.proof());
-            println!("{}", result.report());
-            Ok(ExitCode::SUCCESS)
+            println!("{report}");
+
+            if long_mode_proof_is_valid(
+                result.proof(),
+                report.exit(),
+                report.rip(),
+                report.rflags(),
+            ) {
+                Ok(ExitCode::SUCCESS)
+            } else {
+                eprintln!("long-mode deterministic proof contract failed");
+                Ok(ExitCode::FAILURE)
+            }
         }
         Some(other) => {
             eprintln!(
@@ -94,5 +111,51 @@ fn run() -> Result<ExitCode, mini_hypervisor::error::Error> {
             eprintln!("unknown command: {other}");
             Ok(ExitCode::from(2))
         }
+    }
+}
+
+fn long_mode_proof_is_valid(proof: &[u8], exit: VcpuExit, rip: u64, rflags: u64) -> bool {
+    proof == LONG_MODE_EXPECTED_PROOF
+        && exit == VcpuExit::Hlt
+        && rip == LONG_MODE_EXPECTED_TERMINAL_RIP
+        && rflags & X86_RFLAGS_RESERVED_BIT == X86_RFLAGS_RESERVED_BIT
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_mode_cli_proof_contract_requires_exact_proof_hlt_rip_and_rflags() {
+        assert!(long_mode_proof_is_valid(
+            b"LM64",
+            VcpuExit::Hlt,
+            LONG_MODE_EXPECTED_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!long_mode_proof_is_valid(
+            b"LM6?",
+            VcpuExit::Hlt,
+            LONG_MODE_EXPECTED_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!long_mode_proof_is_valid(
+            b"LM64",
+            VcpuExit::Shutdown,
+            LONG_MODE_EXPECTED_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!long_mode_proof_is_valid(
+            b"LM64",
+            VcpuExit::Hlt,
+            LONG_MODE_EXPECTED_TERMINAL_RIP - 1,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!long_mode_proof_is_valid(
+            b"LM64",
+            VcpuExit::Hlt,
+            LONG_MODE_EXPECTED_TERMINAL_RIP,
+            0,
+        ));
     }
 }
