@@ -338,11 +338,9 @@ mod tests {
         assert_eq!(base.emulation_instruction_size(), None);
         assert_eq!(base.emulation_instruction_bytes(), None);
 
-        let other = decode_internal_error_with_data(
-            VcpuId::BOOT,
-            raw_internal_error(2, 3, &[1, 2, 3]),
-        )
-        .unwrap();
+        let other =
+            decode_internal_error_with_data(VcpuId::BOOT, raw_internal_error(2, 3, &[1, 2, 3]))
+                .unwrap();
         assert_eq!(other.emulation_failure_flags(), None);
         assert_eq!(other.emulation_instruction_size(), None);
         assert_eq!(other.emulation_instruction_bytes(), None);
@@ -351,11 +349,9 @@ mod tests {
     #[test]
     fn emulation_failure_flags_preserve_unknown_bits_without_requiring_full_overlay() {
         let flags = (1_u64 << 63) | 1;
-        let decoded = decode_internal_error_with_data(
-            VcpuId::BOOT,
-            raw_internal_error(1, 1, &[flags]),
-        )
-        .unwrap();
+        let decoded =
+            decode_internal_error_with_data(VcpuId::BOOT, raw_internal_error(1, 1, &[flags]))
+                .unwrap();
 
         assert_eq!(decoded.emulation_failure_flags(), Some(flags));
         assert_eq!(decoded.emulation_instruction_size(), None);
@@ -392,11 +388,9 @@ mod tests {
         assert_eq!(without_flag.emulation_instruction_size(), None);
         assert_eq!(without_flag.emulation_instruction_bytes(), None);
 
-        let incomplete = decode_internal_error_with_data(
-            VcpuId::BOOT,
-            raw_internal_error(1, 2, &[1, words[0]]),
-        )
-        .unwrap();
+        let incomplete =
+            decode_internal_error_with_data(VcpuId::BOOT, raw_internal_error(1, 2, &[1, words[0]]))
+                .unwrap();
         assert_eq!(incomplete.emulation_instruction_size(), None);
         assert_eq!(incomplete.emulation_instruction_bytes(), None);
     }
