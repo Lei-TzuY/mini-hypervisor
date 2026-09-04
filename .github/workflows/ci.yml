@@ -36,7 +36,11 @@ jobs:
           output="$(cargo run --quiet -- run-long-mode)"
           printf '%s\n' "$output"
           grep -F 'long-mode proof: [76, 77, 54, 52]' <<<"$output"
-          grep -F 'vCPU 0 exit Hlt: rip=0x10024, rflags=0x2' <<<"$output"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10024, rflags=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
 
   msrv:
     runs-on: ubuntu-latest

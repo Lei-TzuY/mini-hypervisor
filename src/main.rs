@@ -158,12 +158,18 @@ mod tests {
     }
 
     #[test]
-    fn long_mode_cli_proof_contract_requires_exact_proof_hlt_rip_and_rflags() {
+    fn long_mode_cli_proof_contract_requires_exact_proof_hlt_rip_and_reserved_rflags_bit() {
         assert!(long_mode_proof_is_valid(
             b"LM64",
             VcpuExit::Hlt,
             LONG_MODE_EXPECTED_TERMINAL_RIP,
             X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(long_mode_proof_is_valid(
+            b"LM64",
+            VcpuExit::Hlt,
+            LONG_MODE_EXPECTED_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT | (1 << 4),
         ));
         assert!(!long_mode_proof_is_valid(
             b"LM6?",
