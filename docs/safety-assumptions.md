@@ -2,9 +2,9 @@
 
 ## Trust model
 
-The Linux KVM kernel interface and explicitly supplied host process configuration are trusted. Guest-originated addresses, lengths, CPU-visible values, port-I/O requests, exit metadata, and future device/MMIO inputs are not trusted merely because KVM produced or consumed them. Userspace validates every value that becomes a Rust slice length, host-memory offset, guest-memory range, state-policy input, or higher-level execution decision.
+The Linux KVM kernel interface and explicitly supplied host process configuration are trusted. Guest-originated addresses, lengths, CPU-visible values, port-I/O requests, exit metadata, executable-image metadata, and future device/MMIO inputs are not trusted merely because KVM or a caller produced or consumed them. Userspace validates every value that becomes a Rust slice length, host-memory offset, guest-memory range, state-policy input, or higher-level execution decision.
 
-The repository-owned HLT, debug-port, CPUID, and x86-64 long-mode fixtures are reviewed deterministic test inputs rather than arbitrary external guest binaries. `FlatGuestImage` still validates non-empty bytes, load-range arithmetic, and entry containment so the loader does not become an unchecked path when reused.
+The repository-owned HLT, debug-port, CPUID, x86-64 long-mode, and ELF64 proof fixtures are reviewed deterministic test inputs. `FlatGuestImage` still validates non-empty bytes, load-range arithmetic, and entry containment. `Elf64GuestImage` treats the supplied byte slice and all ELF header/program-header metadata as untrusted even when the deterministic fixture is the caller.
 
 The long-mode milestone does not accept arbitrary page tables or arbitrary special-register state from the guest or a caller. `LongModeBootLayout` is a validated fixed bootstrap description, and `Vcpu::initialize_long_mode` materializes only the project-defined state described below.
 
@@ -14,7 +14,7 @@ Raw unsafe host interaction remains limited to Linux KVM ioctls, ownership conve
 
 Kernel-returned variable-length metadata is never used as a Rust slice length before validation. This includes supported/read-back CPUID counts, general/feature MSR-index counts, system and vCPU MSR completion counts/index metadata, capability-enabled internal-error `ndata`, and system-event `ndata`.
 
-Pointers into `kvm_run`, temporary KVM request buffers, and host pointers for guest RAM do not escape into VM-exit policy, device policy, execution results, snapshot values, or long-mode layout values.
+Pointers into `kvm_run`, temporary KVM request buffers, and host pointers for guest RAM do not escape into VM-exit policy, device policy, execution results, snapshot values, long-mode layout values, or ELF64 image metadata.
 
 ## Guest memory and long-mode bootstrap safety
 
@@ -30,11 +30,21 @@ The x86-64 bootstrap requires one RAM region beginning at GPA 0 with at least 2 
 - a stack pointer above the mapped 2 MiB extent;
 - a stack top that would overlap the reserved page-table area under the fixed bootstrap contract.
 
-The deterministic milestone layout uses entry `0x10000` and stack pointer `0x1ff000`, well outside the page-table pages.
+The flat deterministic long-mode proof uses entry `0x10000`; the ELF64 proof supplies validated ELF entry `0x10100`; both use stack pointer `0x1ff000`, well outside the page-table pages.
 
 Page-table construction performs no raw pointer arithmetic. Three full 4 KiB pages at GPA `0x1000`, `0x2000`, and `0x3000` are zeroed through `GuestMemory::write`; only the first PML4, PDPT, and PD entries are then written. Their exact little-endian values are `0x2003`, `0x3003`, and `0x83`. This creates exactly one present/writable 2 MiB identity mapping for VA/GPA `0..0x20_0000`. No guest-controlled index, count, address, or page permission is used to size or select a host-memory slice.
 
 This fixed mapping is not a general guest virtual-address translation facility. No arbitrary VA→GPA mapping API, dynamic page-table allocation, MMIO mapping, guest-supplied page-table parser, or page-fault recovery policy exists in this milestone.
+
+## ELF64 loader safety
+
+`Elf64GuestImage::parse` accepts only ELF64 little-endian x86-64 `ET_EXEC`. It validates the fixed header size and program-header entry size, converts and bounds the complete program-header table before traversing it, and never trusts a file offset or count as a Rust slice boundary without checked conversion and arithmetic.
+
+For each `PT_LOAD`, validation requires non-zero memory size, `p_filesz <= p_memsz`, a file-backed range entirely inside the supplied bytes, and a guest range whose end cannot overflow. Segment alignment must be 0, 1, or a power of two; aligned segments must satisfy ELF offset/virtual-address congruence. The current fixed-map contract additionally requires `p_vaddr == p_paddr`, the entire segment inside `0..0x20_0000`, no overlap with bootstrap page tables `0x1000..0x4000`, and no overlap with another load segment.
+
+An ELF entry is accepted only inside the file-backed portion of an executable `PT_LOAD`; an entry that exists only in a zero-filled BSS tail is rejected. Materialization occurs only after the whole image has been validated. File-backed bytes are copied through checked `GuestMemory::write`, and each BSS tail is explicitly zeroed before KVM memory registration. The deterministic fixture intentionally contains a non-empty BSS tail so this behavior is regression-tested rather than merely documented.
+
+This loader does not perform relocation, load-bias selection, `ET_DYN`/PIE loading, dynamic linking/interpreter handoff, symbol resolution, section-driven loading, or arbitrary virtual-address mapping. Absence of those features is part of the safety boundary, not an implicit best-effort behavior.
 
 ## Long-mode vCPU state safety
 
@@ -42,15 +52,17 @@ This fixed mapping is not a general guest virtual-address translation facility. 
 
 The segment state is not supplied by guest bytes. CS is a fixed present ring-0 64-bit code segment with selector `0x8`, base 0, limit `0xffff_ffff`, `L=1`, and `DB=0`. DS/ES/FS/GS/SS use the fixed present ring-0 data-segment contract with selector `0x10`, base 0, and the same limit. RIP and RSP come only from the validated `LongModeBootLayout`; RFLAGS is initialized with architectural bit 1 set and all remaining general-register fields begin from zero.
 
-Failure of `KVM_GET_SREGS`, `KVM_SET_SREGS`, or `KVM_SET_REGS` is a named vCPU-operation error. The implementation does not retry a partially applied state sequence or claim transactional rollback. In the deterministic fixture, failure prevents a successful proof result.
+Failure of `KVM_GET_SREGS`, `KVM_SET_SREGS`, or `KVM_SET_REGS` is a named vCPU-operation error. The implementation does not retry a partially applied state sequence or claim transactional rollback. In deterministic proof paths, failure prevents a successful proof result.
 
-## Deterministic long-mode proof
+## Deterministic executable proofs
 
-The reviewed 36-byte x86-64 fixture is loaded at GPA/VA `0x10000`. It uses 64-bit-width instruction encodings, emits bytes `L`, `M`, `6`, and `4` through four byte-wide single-count OUT operations on the existing debug port `0xe9`, then executes `HLT`.
+The reviewed 36-byte flat x86-64 fixture is loaded at GPA/VA `0x10000`. It uses 64-bit-width instruction encodings, emits bytes `L`, `M`, `6`, and `4` through four byte-wide single-count OUT operations on the existing debug port `0xe9`, then executes `HLT`.
 
-The execution budget is exactly five completed exits. Success requires four serviced I/O exits in order followed by the typed terminal HLT report. The host-owned proof buffer must therefore equal `LM64`, and terminal RIP is `0x10024`. Budget exhaustion, another exit, malformed port-I/O metadata, an unsupported port operation, or KVM entry/execution failure is not converted into milestone success.
+The ELF64 proof wraps the same architectural proof code inside the production `ET_EXEC` loader path. Its validated executable segment begins at GPA/VA `0x10000`, entry is `0x10100`, and the segment has a larger memory size than file size so the loader must zero BSS before execution.
 
-The KVM-aware Rust regression follows the repository's general environment-sensitive convention. In addition, CI contains a strict milestone gate that directly runs the `run-long-mode` CLI with usable `/dev/kvm` and checks both the `LM64` output and terminal HLT/RIP. That strict gate fails if KVM is unavailable and is the evidence that the candidate actually executed the 64-bit guest rather than only validating pure state construction.
+Each proof uses an execution budget of exactly five completed exits. Success requires four serviced I/O exits in order followed by the typed terminal HLT report. The host-owned proof buffer must equal `LM64`; terminal RIP is `0x10024` for the flat fixture and `0x10124` for the ELF64 fixture. Budget exhaustion, another exit, malformed port-I/O metadata, an unsupported port operation, invalid executable metadata, or KVM entry/execution failure is not converted into milestone success.
+
+KVM-aware Rust regressions follow the repository's general environment-sensitive convention. In addition, CI contains strict gates that directly run both `run-long-mode` and `run-elf64` with usable `/dev/kvm`, check the exact `LM64` output, check each exact terminal HLT RIP, and require architectural RFLAGS bit 1. Those gates fail if KVM is unavailable and provide evidence that the candidate actually executed the 64-bit guest paths rather than only validating pure construction.
 
 ## Port-I/O and execution-loop safety
 
@@ -60,7 +72,7 @@ For `KVM_EXIT_IO_IN`, device policy returns owned response bytes. The vCPU layer
 
 KVM defines port-I/O completion as pending until userspace re-enters `KVM_RUN`. The execution loop therefore does not claim completed post-I/O state until a later completed exit. The explicit exit budget is checked before each run; only a successful completed KVM exit consumes one unit. Budget exhaustion remains a structured error, not a terminal guest report.
 
-The long-mode milestone reuses this path unchanged; it adds no new device model or raw I/O decoding.
+The long-mode and ELF64 milestones reuse this path unchanged; neither adds a new device model or raw I/O decoding path.
 
 ## CPUID and MSR safety boundaries
 
@@ -92,6 +104,6 @@ Successful `KVM_CREATE_VM` and `KVM_CREATE_VCPU` results are immediately wrapped
 
 ## Not yet present
 
-The repository now has one fixed 2 MiB x86-64 identity-mapped bootstrap, but still has **no general virtual-memory subsystem** and no arbitrary guest address-space construction. It also has no ELF loader, Linux boot protocol, MMIO model, APIC/interrupt controller, interrupt injection framework, virtio, SMP, dynamic device registration, disk backend, whole-VM/guest-memory/device snapshot orchestration, migration protocol, resumable execution, scheduler, exception recovery/injection policy, KVM-unknown recovery policy, fail-entry retry/placement policy, internal-error recovery policy, or system-event lifecycle policy.
+The repository now has one fixed 2 MiB x86-64 identity-mapped bootstrap and one bounded identity-mapped ELF64 `ET_EXEC` loader/execution path, but still has **no general virtual-memory subsystem** and no arbitrary guest address-space construction. It also has no ELF relocations, `ET_DYN`/PIE or dynamic-linker path, Linux boot protocol, MMIO model, APIC/interrupt controller, interrupt injection framework, virtio, SMP, dynamic device registration, disk backend, whole-VM/guest-memory/device snapshot orchestration, migration protocol, resumable execution, scheduler, exception recovery/injection policy, KVM-unknown recovery policy, fail-entry retry/placement policy, internal-error recovery policy, or system-event lifecycle policy.
 
-Those responsibilities require separately selected milestones. The long-mode milestone does not authorize them implicitly.
+Those responsibilities require separately selected milestones. The bounded ELF64 milestone does not authorize them implicitly.

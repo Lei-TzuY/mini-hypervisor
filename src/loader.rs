@@ -1,3 +1,5 @@
+pub mod elf64;
+
 use crate::error::{Error, GuestImageError};
 use crate::memory::{GuestMemory, GuestPhysAddr};
 

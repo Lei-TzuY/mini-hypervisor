@@ -1,5 +1,9 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::kvm::KvmBackend;
+use mini_hypervisor::loader::elf64::{
+    expected_proof as expected_elf64_proof, proof_terminal_rip as elf64_terminal_rip,
+    run_elf64_guest,
+};
 use mini_hypervisor::vcpu::VcpuExit;
 use mini_hypervisor::{
     run_cpuid_guest, run_debug_port_guest, run_hlt_guest, run_long_mode_guest,
@@ -117,9 +121,22 @@ fn run() -> Result<ExitCode, mini_hypervisor::error::Error> {
                 Ok(ExitCode::FAILURE)
             }
         }
+        Some("run-elf64") => {
+            let result = run_elf64_guest(VmConfig::default())?;
+            let report = result.report();
+            println!("elf64 proof: {:?}", result.proof());
+            println!("{report}");
+
+            if elf64_proof_is_valid(result.proof(), report.exit(), report.rip(), report.rflags()) {
+                Ok(ExitCode::SUCCESS)
+            } else {
+                eprintln!("ELF64 deterministic execution proof contract failed");
+                Ok(ExitCode::FAILURE)
+            }
+        }
         Some(other) => {
             eprintln!(
-                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port|run-long-mode]"
+                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port|run-long-mode|run-elf64]"
             );
             eprintln!("unknown command: {other}");
             Ok(ExitCode::from(2))
@@ -127,11 +144,40 @@ fn run() -> Result<ExitCode, mini_hypervisor::error::Error> {
     }
 }
 
-fn long_mode_proof_is_valid(proof: &[u8], exit: VcpuExit, rip: u64, rflags: u64) -> bool {
-    proof == LONG_MODE_EXPECTED_PROOF
+fn terminal_proof_is_valid(
+    proof: &[u8],
+    expected_proof: &[u8],
+    exit: VcpuExit,
+    rip: u64,
+    expected_rip: u64,
+    rflags: u64,
+) -> bool {
+    proof == expected_proof
         && exit == VcpuExit::Hlt
-        && rip == LONG_MODE_EXPECTED_TERMINAL_RIP
+        && rip == expected_rip
         && rflags & X86_RFLAGS_RESERVED_BIT == X86_RFLAGS_RESERVED_BIT
+}
+
+fn long_mode_proof_is_valid(proof: &[u8], exit: VcpuExit, rip: u64, rflags: u64) -> bool {
+    terminal_proof_is_valid(
+        proof,
+        LONG_MODE_EXPECTED_PROOF,
+        exit,
+        rip,
+        LONG_MODE_EXPECTED_TERMINAL_RIP,
+        rflags,
+    )
+}
+
+fn elf64_proof_is_valid(proof: &[u8], exit: VcpuExit, rip: u64, rflags: u64) -> bool {
+    terminal_proof_is_valid(
+        proof,
+        expected_elf64_proof(),
+        exit,
+        rip,
+        elf64_terminal_rip(),
+        rflags,
+    )
 }
 
 #[cfg(test)]
@@ -193,6 +239,40 @@ mod tests {
             b"LM64",
             VcpuExit::Hlt,
             LONG_MODE_EXPECTED_TERMINAL_RIP,
+            0,
+        ));
+    }
+
+    #[test]
+    fn elf64_cli_proof_contract_requires_exact_proof_hlt_rip_and_reserved_rflags_bit() {
+        assert!(elf64_proof_is_valid(
+            expected_elf64_proof(),
+            VcpuExit::Hlt,
+            elf64_terminal_rip(),
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!elf64_proof_is_valid(
+            b"LM6?",
+            VcpuExit::Hlt,
+            elf64_terminal_rip(),
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!elf64_proof_is_valid(
+            expected_elf64_proof(),
+            VcpuExit::Shutdown,
+            elf64_terminal_rip(),
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!elf64_proof_is_valid(
+            expected_elf64_proof(),
+            VcpuExit::Hlt,
+            elf64_terminal_rip() - 1,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!elf64_proof_is_valid(
+            expected_elf64_proof(),
+            VcpuExit::Hlt,
+            elf64_terminal_rip(),
             0,
         ));
     }
