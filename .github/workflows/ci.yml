@@ -22,3 +22,28 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --all-targets --all-features
+      - name: Build
+        run: cargo build --all-targets --all-features
+      - name: Rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --all-features
+      - name: Strict KVM long-mode proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet -- run-long-mode)"
+          printf '%s\n' "$output"
+          grep -F 'long-mode proof: [76, 77, 54, 52]' <<<"$output"
+          grep -F 'vCPU 0 exit Hlt: rip=0x10024, rflags=0x2' <<<"$output"
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.74.0
+      - name: Check MSRV
+        run: cargo check --all-targets --all-features
