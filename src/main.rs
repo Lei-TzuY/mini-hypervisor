@@ -144,7 +144,7 @@ mod tests {
     fn error_sources_preserve_host_operation_and_underlying_io_cause() {
         let error = Error::HostEnvironment(HostEnvironmentError::Io {
             operation: "KVM_GET_API_VERSION",
-            source: io::Error::new(io::ErrorKind::Other, "synthetic ioctl failure"),
+            source: io::Error::other("synthetic ioctl failure"),
         });
 
         assert_eq!(
