@@ -193,3 +193,11 @@ The emulation-specific accessors operate only after the capability-gated interna
 Instruction metadata is exposed only when `KVM_INTERNAL_ERROR_EMULATION_FLAG_INSTRUCTION_BYTES` is present and at least three owned optional words exist. The fixed overlay yields one raw `u8` instruction size and 15 owned instruction bytes. `emulation_instruction_size()` keeps the raw size observable even when it exceeds 15, while `emulation_instruction_bytes()` uses that size as a Rust slice length only when it is `<= 15`; oversized sizes therefore return no byte slice.
 
 These helpers read only already-owned data, form no raw pointer, borrow no shared mapping, issue no ioctl, and do not interpret arbitrary trailing debug words. They are diagnostic-only and grant no instruction emulation, retry, recovery, replacement execution, or lifecycle authority.
+
+## KVM exception diagnostic safety
+
+`KVM_EXIT_EXCEPTION` reason `1` uses a fixed x86 `kvm_run` view beginning at union offset 32. The payload is exactly two `u32` fields (`exception` and `error_code`), so the view is 8 bytes and requires only the first 40 bytes of the shared mapping; this remains below the existing 168-byte mapping-size floor. `Vcpu::exception_exit()` verifies that the current exit reason is exception before forming that view, and any other reason returns structured `ExceptionPayloadUnavailable` rather than reading the wrong union member.
+
+Both fields are copied immediately into owned `VcpuException` state before they leave the vCPU layer. Dispatch consumes that owned payload directly and deliberately avoids `KVM_GET_REGS` or another secondary vCPU ioctl, preventing a later host-call failure from replacing the completed exception diagnostic. The execution loop records reason `1` before dispatch and preserves the complete ordered completed-exit trace on the resulting structured exception error.
+
+Exception vector and error-code values are treated as opaque diagnostic metadata. They are not trusted as authorization for exception injection/reinjection, instruction emulation, retry, replacement execution, recovery, lifecycle mutation, or architecture-specific policy.
