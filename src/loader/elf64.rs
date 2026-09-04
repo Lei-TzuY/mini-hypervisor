@@ -3,8 +3,7 @@ use crate::error::Error;
 use crate::execution::run_vcpu_until_stopped;
 use crate::kvm::KvmBackend;
 use crate::long_mode::{
-    LongModeBootLayout, LONG_MODE_IDENTITY_MAP_SIZE, LONG_MODE_PAGE_TABLE_END,
-    LONG_MODE_PML4_ADDR,
+    LongModeBootLayout, LONG_MODE_IDENTITY_MAP_SIZE, LONG_MODE_PAGE_TABLE_END, LONG_MODE_PML4_ADDR,
 };
 use crate::memory::{GuestMemory, GuestPhysAddr};
 use crate::portio::PortIoBus;
@@ -42,16 +41,34 @@ const PROOF_CODE: [u8; 36] = [
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Elf64Error {
-    FileTooSmall { length: usize },
+    FileTooSmall {
+        length: usize,
+    },
     InvalidMagic,
-    UnsupportedClass { actual: u8 },
-    UnsupportedEndian { actual: u8 },
-    UnsupportedIdentVersion { actual: u8 },
-    UnsupportedType { actual: u16 },
-    UnsupportedMachine { actual: u16 },
-    UnsupportedVersion { actual: u32 },
-    InvalidHeaderSize { actual: u16 },
-    InvalidProgramHeaderSize { actual: u16 },
+    UnsupportedClass {
+        actual: u8,
+    },
+    UnsupportedEndian {
+        actual: u8,
+    },
+    UnsupportedIdentVersion {
+        actual: u8,
+    },
+    UnsupportedType {
+        actual: u16,
+    },
+    UnsupportedMachine {
+        actual: u16,
+    },
+    UnsupportedVersion {
+        actual: u32,
+    },
+    InvalidHeaderSize {
+        actual: u16,
+    },
+    InvalidProgramHeaderSize {
+        actual: u16,
+    },
     ProgramHeaderTableOutOfBounds {
         offset: u64,
         count: u16,
@@ -59,7 +76,9 @@ pub enum Elf64Error {
         file_length: usize,
     },
     NoLoadableSegments,
-    EmptyLoadSegment { index: u16 },
+    EmptyLoadSegment {
+        index: u16,
+    },
     SegmentVirtualPhysicalMismatch {
         index: u16,
         virtual_address: u64,
@@ -92,15 +111,23 @@ pub enum Elf64Error {
         address: u64,
         memory_size: u64,
     },
-    InvalidSegmentAlignment { index: u16, alignment: u64 },
+    InvalidSegmentAlignment {
+        index: u16,
+        alignment: u64,
+    },
     SegmentAlignmentMismatch {
         index: u16,
         offset: u64,
         virtual_address: u64,
         alignment: u64,
     },
-    LoadSegmentsOverlap { first: u16, second: u16 },
-    EntryNotInExecutableFileBackedSegment { entry: u64 },
+    LoadSegmentsOverlap {
+        first: u16,
+        second: u16,
+    },
+    EntryNotInExecutableFileBackedSegment {
+        entry: u64,
+    },
 }
 
 impl fmt::Display for Elf64Error {
@@ -331,14 +358,14 @@ impl<'a> Elf64GuestImage<'a> {
                 entry_size: program_header_size,
                 file_length: bytes.len(),
             })?;
-        let table_end = table_offset
-            .checked_add(table_size)
-            .ok_or(Elf64Error::ProgramHeaderTableOutOfBounds {
+        let table_end = table_offset.checked_add(table_size).ok_or(
+            Elf64Error::ProgramHeaderTableOutOfBounds {
                 offset: program_header_offset,
                 count: program_header_count,
                 entry_size: program_header_size,
                 file_length: bytes.len(),
-            })?;
+            },
+        )?;
         if table_end > bytes.len() {
             return Err(Elf64Error::ProgramHeaderTableOutOfBounds {
                 offset: program_header_offset,
@@ -524,9 +551,8 @@ impl<'a> Elf64GuestImage<'a> {
 
             if segment.memory_size > segment.file_size {
                 let zero_length = segment.memory_size - segment.file_size;
-                let zero_address = GuestPhysAddr::new(
-                    segment.guest_address.get() + segment.file_size as u64,
-                );
+                let zero_address =
+                    GuestPhysAddr::new(segment.guest_address.get() + segment.file_size as u64);
                 let zeros = vec![0_u8; zero_length];
                 memory.write(zero_address, &zeros)?;
             }
@@ -625,7 +651,12 @@ fn proof_fixture() -> Vec<u8> {
     bytes
 }
 
-const fn ranges_overlap(first_start: u64, first_end: u64, second_start: u64, second_end: u64) -> bool {
+const fn ranges_overlap(
+    first_start: u64,
+    first_end: u64,
+    second_start: u64,
+    second_end: u64,
+) -> bool {
     first_start < second_end && second_start < first_end
 }
 
@@ -721,7 +752,8 @@ mod tests {
     fn load_copies_file_bytes_and_explicitly_zeroes_bss() {
         let bytes = fixture();
         let image = Elf64GuestImage::parse(&bytes).unwrap();
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let dirty = vec![0xaa; PROOF_MEMORY_SIZE as usize];
         memory
             .write(GuestPhysAddr::new(PROOF_SEGMENT_ADDRESS), &dirty)
@@ -731,7 +763,10 @@ mod tests {
 
         let mut observed_file = vec![0_u8; bytes.len()];
         memory
-            .read(GuestPhysAddr::new(PROOF_SEGMENT_ADDRESS), &mut observed_file)
+            .read(
+                GuestPhysAddr::new(PROOF_SEGMENT_ADDRESS),
+                &mut observed_file,
+            )
             .unwrap();
         assert_eq!(observed_file, bytes);
         let mut observed_bss = vec![0xff; PROOF_MEMORY_SIZE as usize - bytes.len()];
@@ -748,7 +783,10 @@ mod tests {
     fn rejects_non_elf_and_non_x86_64_inputs() {
         let mut bytes = fixture();
         bytes[0] = 0;
-        assert_eq!(Elf64GuestImage::parse(&bytes), Err(Elf64Error::InvalidMagic));
+        assert_eq!(
+            Elf64GuestImage::parse(&bytes),
+            Err(Elf64Error::InvalidMagic)
+        );
 
         let mut bytes = fixture();
         write_u16(&mut bytes, 18, 3);
