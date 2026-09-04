@@ -19,12 +19,27 @@ const LARGE_PAGE_ENTRY_FLAGS: u64 = PAGE_TABLE_ENTRY_FLAGS | PAGE_SIZE_2_MIB;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LongModeConfigurationError {
-    RamMustStartAtZero { base: u64 },
-    RamTooSmall { size: u64, minimum: u64 },
-    EntryOutsideIdentityMap { entry: u64, mapped_size: u64 },
-    EntryOverlapsPageTables { entry: u64 },
-    StackPointerOutsideIdentityMap { stack_pointer: u64, mapped_size: u64 },
-    StackPointerOverlapsPageTables { stack_pointer: u64 },
+    RamMustStartAtZero {
+        base: u64,
+    },
+    RamTooSmall {
+        size: u64,
+        minimum: u64,
+    },
+    EntryOutsideIdentityMap {
+        entry: u64,
+        mapped_size: u64,
+    },
+    EntryOverlapsPageTables {
+        entry: u64,
+    },
+    StackPointerOutsideIdentityMap {
+        stack_pointer: u64,
+        mapped_size: u64,
+    },
+    StackPointerOverlapsPageTables {
+        stack_pointer: u64,
+    },
 }
 
 impl fmt::Display for LongModeConfigurationError {
@@ -94,9 +109,7 @@ impl LongModeBootLayout {
             });
         }
         if is_page_table_address(entry.get()) {
-            return Err(LongModeConfigurationError::EntryOverlapsPageTables {
-                entry: entry.get(),
-            });
+            return Err(LongModeConfigurationError::EntryOverlapsPageTables { entry: entry.get() });
         }
         if stack_pointer == 0 || stack_pointer > LONG_MODE_IDENTITY_MAP_SIZE {
             return Err(LongModeConfigurationError::StackPointerOutsideIdentityMap {
@@ -226,7 +239,8 @@ mod tests {
     #[test]
     fn installs_minimal_four_level_page_table_chain_with_one_two_mib_page() {
         let layout = layout();
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         layout.install_page_tables(&mut memory).unwrap();
 
         assert_eq!(
@@ -239,17 +253,11 @@ mod tests {
         );
         assert_eq!(read_u64(&memory, LONG_MODE_PD_ADDR), LARGE_PAGE_ENTRY_FLAGS);
         assert_eq!(
-            read_u64(
-                &memory,
-                GuestPhysAddr::new(LONG_MODE_PML4_ADDR.get() + 8)
-            ),
+            read_u64(&memory, GuestPhysAddr::new(LONG_MODE_PML4_ADDR.get() + 8)),
             0
         );
         assert_eq!(
-            read_u64(
-                &memory,
-                GuestPhysAddr::new(LONG_MODE_PDPT_ADDR.get() + 8)
-            ),
+            read_u64(&memory, GuestPhysAddr::new(LONG_MODE_PDPT_ADDR.get() + 8)),
             0
         );
         assert_eq!(
