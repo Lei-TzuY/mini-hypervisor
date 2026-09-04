@@ -8,6 +8,9 @@ const KVM_INTERNAL_ERROR_EMULATION: u32 = 1;
 const KVM_INTERNAL_ERROR_SIMUL_EX: u32 = 2;
 const KVM_INTERNAL_ERROR_DELIVERY_EV: u32 = 3;
 const KVM_INTERNAL_ERROR_UNEXPECTED_EXIT_REASON: u32 = 4;
+const KVM_INTERNAL_ERROR_EMULATION_FLAG_INSTRUCTION_BYTES: u64 = 1;
+const KVM_INTERNAL_ERROR_EMULATION_OVERLAY_WORDS: usize = 3;
+const KVM_INTERNAL_ERROR_EMULATION_INSTRUCTION_BYTES_CAPACITY: usize = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VcpuInternalErrorSuberror {
@@ -68,6 +71,49 @@ impl VcpuInternalError {
         } else {
             None
         }
+    }
+
+    #[must_use]
+    pub fn emulation_failure_flags(&self) -> Option<u64> {
+        if self.suberror_kind() != VcpuInternalErrorSuberror::Emulation {
+            return None;
+        }
+        self.data()?.first().copied()
+    }
+
+    #[must_use]
+    pub fn emulation_instruction_size(&self) -> Option<u8> {
+        self.emulation_instruction_overlay().map(|(size, _)| size)
+    }
+
+    #[must_use]
+    pub fn emulation_instruction_bytes(&self) -> Option<Vec<u8>> {
+        let (size, bytes) = self.emulation_instruction_overlay()?;
+        let size = usize::from(size);
+        if size > KVM_INTERNAL_ERROR_EMULATION_INSTRUCTION_BYTES_CAPACITY {
+            return None;
+        }
+        Some(bytes[..size].to_vec())
+    }
+
+    fn emulation_instruction_overlay(&self) -> Option<(u8, [u8; 15])> {
+        if self.suberror_kind() != VcpuInternalErrorSuberror::Emulation {
+            return None;
+        }
+        let data = self.data()?;
+        if data.len() < KVM_INTERNAL_ERROR_EMULATION_OVERLAY_WORDS {
+            return None;
+        }
+        if data[0] & KVM_INTERNAL_ERROR_EMULATION_FLAG_INSTRUCTION_BYTES == 0 {
+            return None;
+        }
+
+        let first = data[1].to_le_bytes();
+        let second = data[2].to_le_bytes();
+        let mut bytes = [0_u8; KVM_INTERNAL_ERROR_EMULATION_INSTRUCTION_BYTES_CAPACITY];
+        bytes[..7].copy_from_slice(&first[1..]);
+        bytes[7..].copy_from_slice(&second);
+        Some((first[0], bytes))
     }
 }
 
@@ -197,6 +243,16 @@ mod tests {
         }
     }
 
+    fn instruction_overlay_words(size: u8, bytes: [u8; 15]) -> [u64; 2] {
+        let mut overlay = [0_u8; 16];
+        overlay[0] = size;
+        overlay[1..].copy_from_slice(&bytes);
+        [
+            u64::from_le_bytes(overlay[..8].try_into().unwrap()),
+            u64::from_le_bytes(overlay[8..].try_into().unwrap()),
+        ]
+    }
+
     #[test]
     fn internal_error_prefixes_match_kvm_run_union_layout() {
         assert_eq!(
@@ -273,5 +329,82 @@ mod tests {
                 exit_reasons,
             }) if exit_reasons == [KVM_EXIT_INTERNAL_ERROR]
         ));
+    }
+
+    #[test]
+    fn emulation_metadata_is_absent_without_optional_data_or_for_other_suberrors() {
+        let base = decode_internal_error_base(KvmRunInternalErrorBase { suberror: 1 });
+        assert_eq!(base.emulation_failure_flags(), None);
+        assert_eq!(base.emulation_instruction_size(), None);
+        assert_eq!(base.emulation_instruction_bytes(), None);
+
+        let other =
+            decode_internal_error_with_data(VcpuId::BOOT, raw_internal_error(2, 3, &[1, 2, 3]))
+                .unwrap();
+        assert_eq!(other.emulation_failure_flags(), None);
+        assert_eq!(other.emulation_instruction_size(), None);
+        assert_eq!(other.emulation_instruction_bytes(), None);
+    }
+
+    #[test]
+    fn emulation_failure_flags_preserve_unknown_bits_without_requiring_full_overlay() {
+        let flags = (1_u64 << 63) | 1;
+        let decoded =
+            decode_internal_error_with_data(VcpuId::BOOT, raw_internal_error(1, 1, &[flags]))
+                .unwrap();
+
+        assert_eq!(decoded.emulation_failure_flags(), Some(flags));
+        assert_eq!(decoded.emulation_instruction_size(), None);
+        assert_eq!(decoded.emulation_instruction_bytes(), None);
+    }
+
+    #[test]
+    fn emulation_instruction_bytes_follow_the_fixed_x86_overlay() {
+        let mut bytes = [0_u8; 15];
+        bytes[..3].copy_from_slice(&[0x90, 0xcc, 0xf4]);
+        let words = instruction_overlay_words(3, bytes);
+        let decoded = decode_internal_error_with_data(
+            VcpuId::BOOT,
+            raw_internal_error(1, 3, &[1, words[0], words[1]]),
+        )
+        .unwrap();
+
+        assert_eq!(decoded.emulation_failure_flags(), Some(1));
+        assert_eq!(decoded.emulation_instruction_size(), Some(3));
+        assert_eq!(
+            decoded.emulation_instruction_bytes(),
+            Some(vec![0x90, 0xcc, 0xf4])
+        );
+    }
+
+    #[test]
+    fn emulation_instruction_metadata_requires_flag_and_complete_overlay() {
+        let words = instruction_overlay_words(1, [0x90; 15]);
+        let without_flag = decode_internal_error_with_data(
+            VcpuId::BOOT,
+            raw_internal_error(1, 3, &[0, words[0], words[1]]),
+        )
+        .unwrap();
+        assert_eq!(without_flag.emulation_instruction_size(), None);
+        assert_eq!(without_flag.emulation_instruction_bytes(), None);
+
+        let incomplete =
+            decode_internal_error_with_data(VcpuId::BOOT, raw_internal_error(1, 2, &[1, words[0]]))
+                .unwrap();
+        assert_eq!(incomplete.emulation_instruction_size(), None);
+        assert_eq!(incomplete.emulation_instruction_bytes(), None);
+    }
+
+    #[test]
+    fn oversized_emulation_instruction_size_is_visible_but_never_sliced() {
+        let words = instruction_overlay_words(16, [0xaa; 15]);
+        let decoded = decode_internal_error_with_data(
+            VcpuId::BOOT,
+            raw_internal_error(1, 3, &[1, words[0], words[1]]),
+        )
+        .unwrap();
+
+        assert_eq!(decoded.emulation_instruction_size(), Some(16));
+        assert_eq!(decoded.emulation_instruction_bytes(), None);
     }
 }
