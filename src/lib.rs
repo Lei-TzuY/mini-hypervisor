@@ -5,6 +5,7 @@ pub mod error;
 pub mod execution;
 pub mod kvm;
 pub mod loader;
+pub mod long_mode;
 pub mod memory;
 pub mod model;
 pub mod portio;
@@ -18,6 +19,7 @@ use execution::{run_vcpu_until_stopped, VmExecutionResult};
 use kvm::msr::GuestMsrAccessPolicy;
 use kvm::KvmBackend;
 use loader::FlatGuestImage;
+use long_mode::LongModeBootLayout;
 use memory::{GuestMemory, GuestPhysAddr};
 use portio::PortIoBus;
 use state_snapshot::VcpuStateSnapshotComparison;
@@ -54,6 +56,20 @@ const CPUID1_TSC_DEADLINE: u32 = 1 << 24;
 const KVM_FEATURE_PV_UNHALT: u32 = 1 << 7;
 const STATE_REFERENCE_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1000);
 const STATE_CHANGED_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1200);
+const LONG_MODE_GUEST_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1_0000);
+const LONG_MODE_GUEST_STACK_POINTER: u64 = 0x1f_f000;
+const LONG_MODE_GUEST_PROOF: &[u8; 4] = b"LM64";
+const LONG_MODE_GUEST_BYTES: [u8; 36] = [
+    0x48, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x4c, 0x4d, 0x36, 0x34, // movabs imm64, %rax
+    0x48, 0xc1, 0xe8, 0x20, // shr $32, %rax
+    0xba, 0xe9, 0x00, 0x00, 0x00, // mov $0xe9, %edx
+    0xee, // out %al, %dx  ('L')
+    0x48, 0xc1, 0xe8, 0x08, 0xee, // shr $8, %rax; out ('M')
+    0x48, 0xc1, 0xe8, 0x08, 0xee, // shr $8, %rax; out ('6')
+    0x48, 0xc1, 0xe8, 0x08, 0xee, // shr $8, %rax; out ('4')
+    0xf4, // hlt
+];
+const LONG_MODE_EXIT_BUDGET: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DebugPortGuestResult {
@@ -124,6 +140,30 @@ impl CpuidGuestResult {
     #[must_use]
     pub const fn masked_lapic_features_clear(&self) -> bool {
         masked_lapic_features_clear(self.cpuid1_ecx, self.kvm_features_eax)
+    }
+
+    #[must_use]
+    pub const fn report(&self) -> VmExitReport {
+        self.report
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LongModeGuestResult {
+    io_exits: Vec<PortIoExit>,
+    proof: Vec<u8>,
+    report: VmExitReport,
+}
+
+impl LongModeGuestResult {
+    #[must_use]
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
+
+    #[must_use]
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
     }
 
     #[must_use]
@@ -297,6 +337,41 @@ pub fn run_cpuid_guest(config: VmConfig) -> Result<CpuidGuestResult, Error> {
     })
 }
 
+pub fn run_long_mode_guest(config: VmConfig) -> Result<LongModeGuestResult, Error> {
+    let image = FlatGuestImage::new(
+        LONG_MODE_GUEST_ENTRY,
+        LONG_MODE_GUEST_ENTRY,
+        &LONG_MODE_GUEST_BYTES,
+    )?;
+    let backend = KvmBackend::open()?;
+    let mut vm = backend.create_vm()?;
+    let mut memory = GuestMemory::new(LIFECYCLE_RAM_BASE, LIFECYCLE_RAM_SIZE)?;
+    let layout = LongModeBootLayout::new(
+        memory.region(),
+        image.entry(),
+        LONG_MODE_GUEST_STACK_POINTER,
+    )
+    .expect("fixed deterministic long-mode fixture layout remains valid");
+    layout.install_page_tables(&mut memory)?;
+    image.load(&mut memory)?;
+    vm.register_guest_memory(memory)?;
+
+    debug_assert_eq!(config.vcpu_count(), 1);
+    let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
+    vcpu.initialize_long_mode(&layout)?;
+    let mut port_io = PortIoBus::with_debug_port();
+    let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, LONG_MODE_EXIT_BUDGET)?;
+
+    debug_assert_eq!(execution.completed_exits(), LONG_MODE_EXIT_BUDGET);
+    debug_assert_eq!(execution.io_exits().len(), LONG_MODE_GUEST_PROOF.len());
+    let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
+    Ok(LongModeGuestResult {
+        io_exits: execution.io_exits().to_vec(),
+        proof,
+        report: execution.report(),
+    })
+}
+
 fn decode_cpuid_guest_result(observed: [u8; 8]) -> (u32, u32) {
     let cpuid1_ecx = u32::from_le_bytes([observed[0], observed[1], observed[2], observed[3]]);
     let kvm_features_eax = u32::from_le_bytes([observed[4], observed[5], observed[6], observed[7]]);
@@ -338,6 +413,20 @@ mod tests {
             ]
         );
         assert_eq!(CPUID_GUEST_BYTES.len(), 0x1c);
+    }
+
+    #[test]
+    fn long_mode_guest_machine_code_is_stable() {
+        assert_eq!(
+            LONG_MODE_GUEST_BYTES,
+            [
+                0x48, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x4c, 0x4d, 0x36, 0x34, 0x48, 0xc1, 0xe8, 0x20,
+                0xba, 0xe9, 0x00, 0x00, 0x00, 0xee, 0x48, 0xc1, 0xe8, 0x08, 0xee, 0x48, 0xc1, 0xe8,
+                0x08, 0xee, 0x48, 0xc1, 0xe8, 0x08, 0xee, 0xf4,
+            ]
+        );
+        assert_eq!(LONG_MODE_GUEST_BYTES.len(), 0x24);
+        assert_eq!(LONG_MODE_GUEST_PROOF, b"LM64");
     }
 
     #[test]
