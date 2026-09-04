@@ -1,6 +1,8 @@
 use crate::error::{Error, VmExitError};
 use crate::portio::{PortIoBus, PortIoService};
-use crate::vcpu::{PortIoExit, Vcpu, VcpuExit, VcpuId, VcpuRegisters, VcpuSystemEventType};
+use crate::vcpu::{
+    PortIoExit, Vcpu, VcpuExit, VcpuId, VcpuMmioDirection, VcpuRegisters, VcpuSystemEventType,
+};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +67,16 @@ pub fn dispatch_vcpu_exit(
                 PortIoService::Input(response) => vcpu.write_port_io_input(&response)?,
             }
             Ok(VmExitDisposition::Continue(io))
+        }
+        VcpuExit::Mmio => {
+            let mmio = vcpu.mmio_exit()?;
+            Err(unsupported_mmio(
+                vcpu.id(),
+                mmio.phys_addr(),
+                mmio.direction(),
+                mmio.length(),
+                mmio.write_data(),
+            ))
         }
         VcpuExit::Hlt | VcpuExit::Shutdown => {
             let registers = vcpu.registers()?;
@@ -144,6 +156,23 @@ fn internal_error(vcpu_id: VcpuId, suberror: u32, data: Option<&[u64]>) -> Error
         suberror,
         data: data.map(<[u64]>::to_vec),
         exit_reasons: vec![VcpuExit::InternalError.reason()],
+    })
+}
+
+fn unsupported_mmio(
+    vcpu_id: VcpuId,
+    phys_addr: u64,
+    direction: VcpuMmioDirection,
+    length: u32,
+    write_data: &[u8],
+) -> Error {
+    Error::VmExit(VmExitError::UnsupportedMmio {
+        vcpu_id: vcpu_id.get(),
+        phys_addr,
+        length,
+        is_write: direction.is_write(),
+        write_data: write_data.to_vec(),
+        exit_reasons: vec![VcpuExit::Mmio.reason()],
     })
 }
 
@@ -258,6 +287,53 @@ mod tests {
                 data: Some(data),
                 exit_reasons,
             }) if data == [0x11, 0x22] && exit_reasons == [VcpuExit::InternalError.reason()]
+        ));
+    }
+
+    #[test]
+    fn mmio_read_dispatch_preserves_metadata_without_publishing_response_bytes() {
+        let result = unsupported_mmio(
+            VcpuId::new(5),
+            0xfee0_0010,
+            VcpuMmioDirection::Read,
+            4,
+            &[],
+        );
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::UnsupportedMmio {
+                vcpu_id: 5,
+                phys_addr: 0xfee0_0010,
+                length: 4,
+                is_write: false,
+                write_data,
+                exit_reasons,
+            }) if write_data.is_empty() && exit_reasons == [VcpuExit::Mmio.reason()]
+        ));
+    }
+
+    #[test]
+    fn mmio_write_dispatch_owns_declared_payload_and_local_trace() {
+        let result = unsupported_mmio(
+            VcpuId::new(5),
+            0xf000_1000,
+            VcpuMmioDirection::Write,
+            3,
+            &[0xaa, 0xbb, 0xcc],
+        );
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::UnsupportedMmio {
+                vcpu_id: 5,
+                phys_addr: 0xf000_1000,
+                length: 3,
+                is_write: true,
+                write_data,
+                exit_reasons,
+            }) if write_data == [0xaa, 0xbb, 0xcc]
+                && exit_reasons == [VcpuExit::Mmio.reason()]
         ));
     }
 
