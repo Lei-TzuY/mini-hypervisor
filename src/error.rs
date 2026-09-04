@@ -193,6 +193,29 @@ pub enum VmExitError {
         capacity: usize,
         exit_reasons: Vec<u32>,
     },
+    UnsupportedMmio {
+        vcpu_id: u16,
+        phys_addr: u64,
+        length: u32,
+        is_write: bool,
+        write_data: Vec<u8>,
+        exit_reasons: Vec<u32>,
+    },
+    MmioPayloadUnavailable {
+        vcpu_id: u16,
+        exit_reason: u32,
+    },
+    InvalidMmioLength {
+        vcpu_id: u16,
+        length: u32,
+        capacity: usize,
+        exit_reasons: Vec<u32>,
+    },
+    InvalidMmioDirection {
+        vcpu_id: u16,
+        is_write: u8,
+        exit_reasons: Vec<u32>,
+    },
     IoPayloadUnavailable {
         vcpu_id: u16,
         exit_reason: u32,
@@ -559,6 +582,39 @@ impl fmt::Display for VmExitError {
             } => write!(
                 f,
                 "vCPU {vcpu_id} reported invalid KVM system-event data count {ndata}; capacity is {capacity}"
+            ),
+            Self::UnsupportedMmio {
+                vcpu_id,
+                phys_addr,
+                length,
+                is_write,
+                write_data,
+                ..
+            } => write!(
+                f,
+                "unsupported KVM MMIO on vCPU {vcpu_id}: phys_addr={phys_addr:#x}, length={length}, is_write={is_write}, write_data={write_data:?}"
+            ),
+            Self::MmioPayloadUnavailable {
+                vcpu_id,
+                exit_reason,
+            } => write!(
+                f,
+                "vCPU {vcpu_id} has no MMIO payload for exit reason {exit_reason}"
+            ),
+            Self::InvalidMmioLength {
+                vcpu_id,
+                length,
+                capacity,
+                ..
+            } => write!(
+                f,
+                "vCPU {vcpu_id} reported invalid KVM MMIO length {length}; capacity is {capacity}"
+            ),
+            Self::InvalidMmioDirection {
+                vcpu_id, is_write, ..
+            } => write!(
+                f,
+                "vCPU {vcpu_id} reported invalid KVM MMIO is_write flag {is_write}"
             ),
             Self::IoPayloadUnavailable {
                 vcpu_id,
