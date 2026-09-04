@@ -361,3 +361,11 @@ The execution loop is not a scheduler. It owns no vCPU, thread, timer, or interr
 ## Next architectural milestone
 
 No architectural milestone is selected in this document. `ROADMAP.md` is the authoritative live source for next-slice selection; after each integrated slice and exact post-merge CI result, future work must be chosen from the then-current repository state rather than from a historical architecture note.
+
+## Internal-error emulation-failure metadata
+
+`VcpuInternalError` exposes read-only interpretation for the stable x86 `KVM_INTERNAL_ERROR_EMULATION` metadata already copied into its owned optional-data words. `emulation_failure_flags()` is available only when `suberror_kind()` is `Emulation` and at least the first optional word exists; it returns that complete raw `u64` flags word without masking unknown bits. This accessor does not change `suberror()`, `suberror_kind()`, `data()`, structured error shape, capability gating, dispatch, or execution behavior.
+
+The `KVM_INTERNAL_ERROR_EMULATION_FLAG_INSTRUCTION_BYTES` bit authorizes interpretation of the fixed instruction overlay only when at least three owned optional words exist. The overlay uses the raw kernel-reported `u8` instruction size plus the 15-byte instruction buffer encoded in the following two words. `emulation_instruction_size()` exposes the raw size exactly, including values greater than 15; `emulation_instruction_bytes()` returns only the declared prefix when the raw size is at most 15 and otherwise returns no slice. Missing flag, incomplete overlay, non-emulation suberrors, or unavailable optional data likewise produce no instruction metadata.
+
+These accessors are pure reads over already-owned `VcpuInternalError` data. They form no additional `kvm_run` view, perform no ioctl, extend no unsafe mapping lifetime, and do not interpret arbitrary trailing debug words or unknown flag bits. They provide diagnostics only: no instruction emulation, emulation recovery, retry, replacement execution, lifecycle action, or other execution policy is introduced.
