@@ -8,6 +8,9 @@ const KVM_INTERNAL_ERROR_EMULATION: u32 = 1;
 const KVM_INTERNAL_ERROR_SIMUL_EX: u32 = 2;
 const KVM_INTERNAL_ERROR_DELIVERY_EV: u32 = 3;
 const KVM_INTERNAL_ERROR_UNEXPECTED_EXIT_REASON: u32 = 4;
+const KVM_INTERNAL_ERROR_EMULATION_FLAG_INSTRUCTION_BYTES: u64 = 1;
+const KVM_INTERNAL_ERROR_EMULATION_OVERLAY_WORDS: usize = 3;
+const KVM_INTERNAL_ERROR_EMULATION_INSTRUCTION_BYTES_CAPACITY: usize = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VcpuInternalErrorSuberror {
@@ -68,6 +71,49 @@ impl VcpuInternalError {
         } else {
             None
         }
+    }
+
+    #[must_use]
+    pub fn emulation_failure_flags(&self) -> Option<u64> {
+        if self.suberror_kind() != VcpuInternalErrorSuberror::Emulation {
+            return None;
+        }
+        self.data()?.first().copied()
+    }
+
+    #[must_use]
+    pub fn emulation_instruction_size(&self) -> Option<u8> {
+        self.emulation_instruction_overlay().map(|(size, _)| size)
+    }
+
+    #[must_use]
+    pub fn emulation_instruction_bytes(&self) -> Option<Vec<u8>> {
+        let (size, bytes) = self.emulation_instruction_overlay()?;
+        let size = usize::from(size);
+        if size > KVM_INTERNAL_ERROR_EMULATION_INSTRUCTION_BYTES_CAPACITY {
+            return None;
+        }
+        Some(bytes[..size].to_vec())
+    }
+
+    fn emulation_instruction_overlay(&self) -> Option<(u8, [u8; 15])> {
+        if self.suberror_kind() != VcpuInternalErrorSuberror::Emulation {
+            return None;
+        }
+        let data = self.data()?;
+        if data.len() < KVM_INTERNAL_ERROR_EMULATION_OVERLAY_WORDS {
+            return None;
+        }
+        if data[0] & KVM_INTERNAL_ERROR_EMULATION_FLAG_INSTRUCTION_BYTES == 0 {
+            return None;
+        }
+
+        let first = data[1].to_le_bytes();
+        let second = data[2].to_le_bytes();
+        let mut bytes = [0_u8; KVM_INTERNAL_ERROR_EMULATION_INSTRUCTION_BYTES_CAPACITY];
+        bytes[..7].copy_from_slice(&first[1..]);
+        bytes[7..].copy_from_slice(&second);
+        Some((first[0], bytes))
     }
 }
 
