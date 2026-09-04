@@ -22,3 +22,34 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --all-targets --all-features
+      - name: Build
+        run: cargo build --all-targets --all-features
+      - name: Rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --all-features
+      - name: Strict KVM long-mode proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet -- run-long-mode)"
+          printf '%s\n' "$output"
+          grep -F 'long-mode proof: [76, 77, 54, 52]' <<<"$output"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10024, rflags=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.74.0
+      - name: Check MSRV shipped targets
+        # The manifest's rust-version contract applies to shipped library/binary targets.
+        # Stable CI above still compiles and executes every test target.
+        run: cargo check --all-features

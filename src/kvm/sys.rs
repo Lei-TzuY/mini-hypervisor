@@ -261,7 +261,9 @@ pub struct KvmRunIoPrefix {
 }
 
 pub fn ioctl_noarg(fd: RawFd, request: libc::c_ulong) -> io::Result<i32> {
-    let result = unsafe { libc::ioctl(fd, request) };
+    // KVM's _IO commands require the variadic ioctl operand to be exactly zero. Passing no Rust
+    // variadic argument can leave an unspecified register value that KVM rejects with EINVAL.
+    let result = unsafe { libc::ioctl(fd, request, 0 as libc::c_ulong) };
     cvt_ioctl(result)
 }
 
@@ -412,8 +414,7 @@ pub fn set_sregs(fd: RawFd, sregs: &KvmSregs) -> io::Result<()> {
 }
 
 pub fn run_vcpu(fd: RawFd) -> io::Result<()> {
-    let result = unsafe { libc::ioctl(fd, KVM_RUN) };
-    cvt_ioctl(result).map(|_| ())
+    ioctl_noarg(fd, KVM_RUN).map(|_| ())
 }
 
 fn cvt_ioctl(result: libc::c_int) -> io::Result<i32> {
