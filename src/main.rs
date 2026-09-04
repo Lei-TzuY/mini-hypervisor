@@ -16,9 +16,22 @@ fn main() -> ExitCode {
         Ok(exit_code) => exit_code,
         Err(error) => {
             eprintln!("error: {error}");
+            for source in error_sources(&error) {
+                eprintln!("caused by: {source}");
+            }
             ExitCode::FAILURE
         }
     }
+}
+
+fn error_sources(error: &(dyn std::error::Error + 'static)) -> Vec<String> {
+    let mut sources = Vec::new();
+    let mut current = error.source();
+    while let Some(source) = current {
+        sources.push(source.to_string());
+        current = source.source();
+    }
+    sources
 }
 
 fn run() -> Result<ExitCode, mini_hypervisor::error::Error> {
@@ -124,6 +137,24 @@ fn long_mode_proof_is_valid(proof: &[u8], exit: VcpuExit, rip: u64, rflags: u64)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mini_hypervisor::error::{Error, HostEnvironmentError};
+    use std::io;
+
+    #[test]
+    fn error_sources_preserve_host_operation_and_underlying_io_cause() {
+        let error = Error::HostEnvironment(HostEnvironmentError::Io {
+            operation: "KVM_GET_API_VERSION",
+            source: io::Error::new(io::ErrorKind::Other, "synthetic ioctl failure"),
+        });
+
+        assert_eq!(
+            error_sources(&error),
+            vec![
+                "host I/O failure during KVM_GET_API_VERSION".to_string(),
+                "synthetic ioctl failure".to_string(),
+            ]
+        );
+    }
 
     #[test]
     fn long_mode_cli_proof_contract_requires_exact_proof_hlt_rip_and_rflags() {
