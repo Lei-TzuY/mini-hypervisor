@@ -127,12 +127,7 @@ fn run() -> Result<ExitCode, mini_hypervisor::error::Error> {
             println!("elf64 proof: {:?}", result.proof());
             println!("{report}");
 
-            if elf64_proof_is_valid(
-                result.proof(),
-                report.exit(),
-                report.rip(),
-                report.rflags(),
-            ) {
+            if elf64_proof_is_valid(result.proof(), report.exit(), report.rip(), report.rflags()) {
                 Ok(ExitCode::SUCCESS)
             } else {
                 eprintln!("ELF64 deterministic execution proof contract failed");
