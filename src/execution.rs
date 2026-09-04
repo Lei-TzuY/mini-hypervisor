@@ -189,6 +189,50 @@ fn attach_completed_exit_trace(error: Error, exit_reasons: &[u32]) -> Error {
                 exit_reasons: exit_reasons.to_vec(),
             })
         }
+        Error::VmExit(VmExitError::UnsupportedMmio {
+            vcpu_id,
+            phys_addr,
+            length,
+            is_write,
+            write_data,
+            ..
+        }) => {
+            debug_assert_eq!(exit_reasons.last().copied(), Some(VcpuExit::Mmio.reason()));
+            Error::VmExit(VmExitError::UnsupportedMmio {
+                vcpu_id,
+                phys_addr,
+                length,
+                is_write,
+                write_data,
+                exit_reasons: exit_reasons.to_vec(),
+            })
+        }
+        Error::VmExit(VmExitError::InvalidMmioLength {
+            vcpu_id,
+            length,
+            capacity,
+            ..
+        }) => {
+            debug_assert_eq!(exit_reasons.last().copied(), Some(VcpuExit::Mmio.reason()));
+            Error::VmExit(VmExitError::InvalidMmioLength {
+                vcpu_id,
+                length,
+                capacity,
+                exit_reasons: exit_reasons.to_vec(),
+            })
+        }
+        Error::VmExit(VmExitError::InvalidMmioDirection {
+            vcpu_id,
+            is_write,
+            ..
+        }) => {
+            debug_assert_eq!(exit_reasons.last().copied(), Some(VcpuExit::Mmio.reason()));
+            Error::VmExit(VmExitError::InvalidMmioDirection {
+                vcpu_id,
+                is_write,
+                exit_reasons: exit_reasons.to_vec(),
+            })
+        }
         error => error,
     }
 }
@@ -438,6 +482,78 @@ mod tests {
                 capacity: 16,
                 exit_reasons,
             }) if exit_reasons == [sys::KVM_EXIT_IO, internal_error_reason]
+        ));
+    }
+
+    #[test]
+    fn mmio_error_trace_is_replaced_with_complete_execution_trace() {
+        let mmio_reason = VcpuExit::Mmio.reason();
+        let error = Error::VmExit(VmExitError::UnsupportedMmio {
+            vcpu_id: 7,
+            phys_addr: 0xfee0_0010,
+            length: 3,
+            is_write: true,
+            write_data: vec![0xaa, 0xbb, 0xcc],
+            exit_reasons: vec![mmio_reason],
+        });
+
+        let result = attach_completed_exit_trace(error, &[sys::KVM_EXIT_IO, mmio_reason]);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::UnsupportedMmio {
+                vcpu_id: 7,
+                phys_addr: 0xfee0_0010,
+                length: 3,
+                is_write: true,
+                write_data,
+                exit_reasons,
+            }) if write_data == [0xaa, 0xbb, 0xcc]
+                && exit_reasons == [sys::KVM_EXIT_IO, mmio_reason]
+        ));
+    }
+
+    #[test]
+    fn malformed_mmio_length_trace_is_replaced_with_complete_execution_trace() {
+        let mmio_reason = VcpuExit::Mmio.reason();
+        let error = Error::VmExit(VmExitError::InvalidMmioLength {
+            vcpu_id: 8,
+            length: 9,
+            capacity: 8,
+            exit_reasons: vec![mmio_reason],
+        });
+
+        let result = attach_completed_exit_trace(error, &[sys::KVM_EXIT_IO, mmio_reason]);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::InvalidMmioLength {
+                vcpu_id: 8,
+                length: 9,
+                capacity: 8,
+                exit_reasons,
+            }) if exit_reasons == [sys::KVM_EXIT_IO, mmio_reason]
+        ));
+    }
+
+    #[test]
+    fn malformed_mmio_direction_trace_is_replaced_with_complete_execution_trace() {
+        let mmio_reason = VcpuExit::Mmio.reason();
+        let error = Error::VmExit(VmExitError::InvalidMmioDirection {
+            vcpu_id: 9,
+            is_write: 2,
+            exit_reasons: vec![mmio_reason],
+        });
+
+        let result = attach_completed_exit_trace(error, &[sys::KVM_EXIT_IO, mmio_reason]);
+
+        assert!(matches!(
+            result,
+            Error::VmExit(VmExitError::InvalidMmioDirection {
+                vcpu_id: 9,
+                is_write: 2,
+                exit_reasons,
+            }) if exit_reasons == [sys::KVM_EXIT_IO, mmio_reason]
         ));
     }
 
