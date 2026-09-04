@@ -29,6 +29,9 @@ pub use kvm_unknown::VcpuKvmUnknownExit;
 mod fail_entry;
 pub use fail_entry::VcpuFailEntry;
 
+mod mmio;
+pub use mmio::{VcpuMmioDirection, VcpuMmioExit};
+
 mod internal_error;
 pub use internal_error::{VcpuInternalError, VcpuInternalErrorSuberror};
 
@@ -62,6 +65,7 @@ pub enum VcpuExit {
     KvmUnknown,
     Hlt,
     Io,
+    Mmio,
     Shutdown,
     FailEntry,
     InternalError,
@@ -75,6 +79,7 @@ impl VcpuExit {
         match reason {
             kvm_unknown::KVM_EXIT_UNKNOWN => Self::KvmUnknown,
             sys::KVM_EXIT_IO => Self::Io,
+            mmio::KVM_EXIT_MMIO => Self::Mmio,
             sys::KVM_EXIT_HLT => Self::Hlt,
             sys::KVM_EXIT_SHUTDOWN => Self::Shutdown,
             fail_entry::KVM_EXIT_FAIL_ENTRY => Self::FailEntry,
@@ -89,6 +94,7 @@ impl VcpuExit {
         match self {
             Self::KvmUnknown => kvm_unknown::KVM_EXIT_UNKNOWN,
             Self::Io => sys::KVM_EXIT_IO,
+            Self::Mmio => mmio::KVM_EXIT_MMIO,
             Self::Hlt => sys::KVM_EXIT_HLT,
             Self::Shutdown => sys::KVM_EXIT_SHUTDOWN,
             Self::FailEntry => fail_entry::KVM_EXIT_FAIL_ENTRY,
@@ -364,6 +370,7 @@ fn required_kvm_run_prefix_size() -> usize {
     std::mem::size_of::<sys::KvmRunIoPrefix>()
         .max(kvm_unknown::required_kvm_run_prefix_size())
         .max(fail_entry::required_kvm_run_prefix_size())
+        .max(mmio::required_kvm_run_prefix_size())
         .max(internal_error::required_kvm_run_prefix_size())
         .max(system_event::required_kvm_run_prefix_size())
 }
@@ -491,7 +498,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classifies_kvm_unknown_hlt_io_shutdown_fail_entry_internal_error_system_event_and_preserves_other_unhandled_reason(
+    fn classifies_kvm_unknown_hlt_io_mmio_shutdown_fail_entry_internal_error_system_event_and_preserves_other_unhandled_reason(
     ) {
         assert_eq!(
             VcpuExit::from_raw(kvm_unknown::KVM_EXIT_UNKNOWN),
@@ -499,6 +506,7 @@ mod tests {
         );
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_HLT), VcpuExit::Hlt);
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_IO), VcpuExit::Io);
+        assert_eq!(VcpuExit::from_raw(mmio::KVM_EXIT_MMIO), VcpuExit::Mmio);
         assert_eq!(
             VcpuExit::from_raw(sys::KVM_EXIT_SHUTDOWN),
             VcpuExit::Shutdown
@@ -528,6 +536,7 @@ mod tests {
         assert_eq!(VcpuExit::KvmUnknown.reason(), kvm_unknown::KVM_EXIT_UNKNOWN);
         assert_eq!(VcpuExit::Hlt.reason(), sys::KVM_EXIT_HLT);
         assert_eq!(VcpuExit::Io.reason(), sys::KVM_EXIT_IO);
+        assert_eq!(VcpuExit::Mmio.reason(), mmio::KVM_EXIT_MMIO);
         assert_eq!(VcpuExit::Shutdown.reason(), sys::KVM_EXIT_SHUTDOWN);
         assert_eq!(
             VcpuExit::FailEntry.reason(),
@@ -549,6 +558,7 @@ mod tests {
         assert!(required_kvm_run_prefix_size() >= std::mem::size_of::<sys::KvmRunIoPrefix>());
         assert!(required_kvm_run_prefix_size() >= kvm_unknown::required_kvm_run_prefix_size());
         assert!(required_kvm_run_prefix_size() >= fail_entry::required_kvm_run_prefix_size());
+        assert!(required_kvm_run_prefix_size() >= mmio::required_kvm_run_prefix_size());
         assert!(required_kvm_run_prefix_size() >= internal_error::required_kvm_run_prefix_size());
         assert!(required_kvm_run_prefix_size() >= system_event::required_kvm_run_prefix_size());
     }
