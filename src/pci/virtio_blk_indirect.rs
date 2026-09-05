@@ -129,7 +129,9 @@ impl VirtioBlkDevice {
         index: u16,
     ) -> Result<Descriptor, VirtioBlkProcessError> {
         if u32::from(index) >= entries {
-            return Err(VirtioBlkError::IndirectDescriptorIndexOutOfRange { index, entries }.into());
+            return Err(
+                VirtioBlkError::IndirectDescriptorIndexOutOfRange { index, entries }.into(),
+            );
         }
         let address = checked_add(table, DESCRIPTOR_SIZE as u64 * u64::from(index))?;
         let mut bytes = [0_u8; DESCRIPTOR_SIZE as usize];
@@ -195,10 +197,7 @@ mod tests {
         bytes[12..14].copy_from_slice(&flags.to_le_bytes());
         bytes[14..16].copy_from_slice(&next.to_le_bytes());
         memory
-            .write(
-                GuestPhysAddr::new(table + 16 * u64::from(index)),
-                &bytes,
-            )
+            .write(GuestPhysAddr::new(table + 16 * u64::from(index)), &bytes)
             .unwrap();
     }
 
@@ -298,7 +297,9 @@ mod tests {
             0,
         );
 
-        let error = device.process_notified_queue_atomic(&mut memory).unwrap_err();
+        let error = device
+            .process_notified_queue_atomic(&mut memory)
+            .unwrap_err();
         assert!(matches!(
             error,
             VirtioBlkProcessError::Device(VirtioBlkError::IndirectFeatureNotNegotiated)
@@ -324,7 +325,9 @@ mod tests {
             0,
         );
 
-        let error = device.process_notified_queue_atomic(&mut memory).unwrap_err();
+        let error = device
+            .process_notified_queue_atomic(&mut memory)
+            .unwrap_err();
         assert!(matches!(
             error,
             VirtioBlkProcessError::Device(VirtioBlkError::NestedIndirectDescriptor { index: 1 })
