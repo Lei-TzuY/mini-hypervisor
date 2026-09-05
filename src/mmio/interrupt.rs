@@ -18,9 +18,7 @@ use crate::long_mode::{
 };
 use crate::memory::{GuestMemory, GuestMemoryRegion, GuestPhysAddr};
 use crate::portio::{PortIoBus, PortIoService, DEBUG_PORT};
-use crate::vcpu::{
-    MmioDirection, MmioExit, PortIoDirection, PortIoExit, Vcpu, VcpuExit, VcpuId,
-};
+use crate::vcpu::{MmioDirection, MmioExit, PortIoDirection, PortIoExit, Vcpu, VcpuExit, VcpuId};
 use std::fmt;
 use std::io;
 
@@ -36,28 +34,83 @@ const INTERRUPT_GATE_SIZE: u64 = 16;
 
 const MMIO_INTERRUPT_GUEST_BYTES: [u8; 65] = [
     0xfa, // cli
-    0xb0, 0x11, 0xe6, 0x20, 0xe6, 0xa0, // ICW1: initialize master and slave PICs
-    0xb0, 0x40, 0xe6, 0x21, // ICW2: master IRQ0..7 -> vectors 0x40..0x47
-    0xb0, 0x48, 0xe6, 0xa1, // ICW2: slave IRQ8..15 -> vectors 0x48..0x4f
-    0xb0, 0x04, 0xe6, 0x21, // ICW3: master has slave on IRQ2
-    0xb0, 0x02, 0xe6, 0xa1, // ICW3: slave cascade identity 2
-    0xb0, 0x01, 0xe6, 0x21, 0xe6, 0xa1, // ICW4: 8086 mode on both PICs
-    0xb0, 0xfe, 0xe6, 0x21, // OCW1: unmask only master IRQ0
-    0xb0, 0xff, 0xe6, 0xa1, // OCW1: mask every slave IRQ
+    0xb0,
+    0x11,
+    0xe6,
+    0x20,
+    0xe6,
+    0xa0, // ICW1: initialize master and slave PICs
+    0xb0,
+    0x40,
+    0xe6,
+    0x21, // ICW2: master IRQ0..7 -> vectors 0x40..0x47
+    0xb0,
+    0x48,
+    0xe6,
+    0xa1, // ICW2: slave IRQ8..15 -> vectors 0x48..0x4f
+    0xb0,
+    0x04,
+    0xe6,
+    0x21, // ICW3: master has slave on IRQ2
+    0xb0,
+    0x02,
+    0xe6,
+    0xa1, // ICW3: slave cascade identity 2
+    0xb0,
+    0x01,
+    0xe6,
+    0x21,
+    0xe6,
+    0xa1, // ICW4: 8086 mode on both PICs
+    0xb0,
+    0xfe,
+    0xe6,
+    0x21, // OCW1: unmask only master IRQ0
+    0xb0,
+    0xff,
+    0xe6,
+    0xa1, // OCW1: mask every slave IRQ
     0xfb, // sti
     0x90, // nop -- complete STI's one-instruction interrupt shadow
-    0x48, 0xbb, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs $0x500000, %rbx
-    0xc6, 0x03, MMIO_INTERRUPT_WRITE_VALUE, // movb $'W', (%rbx) -> KVM_EXIT_MMIO
-    0xb0, MMIO_INTERRUPT_ARMED_BYTE, 0xe6, 0xe9, // commits preceding MMIO before IRQ pulse
-    0xb0, MMIO_INTERRUPT_RESUMED_BYTE, 0xe6, 0xe9, // resumed main after IRQ + IRETQ
-    0xb0, MMIO_INTERRUPT_DONE_BYTE, 0xe6, 0xe9, // completion barrier commits M
+    0x48,
+    0xbb,
+    0x00,
+    0x00,
+    0x50,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00, // movabs $0x500000, %rbx
+    0xc6,
+    0x03,
+    MMIO_INTERRUPT_WRITE_VALUE, // movb $'W', (%rbx) -> KVM_EXIT_MMIO
+    0xb0,
+    MMIO_INTERRUPT_ARMED_BYTE,
+    0xe6,
+    0xe9, // commits preceding MMIO before IRQ pulse
+    0xb0,
+    MMIO_INTERRUPT_RESUMED_BYTE,
+    0xe6,
+    0xe9, // resumed main after IRQ + IRETQ
+    0xb0,
+    MMIO_INTERRUPT_DONE_BYTE,
+    0xe6,
+    0xe9, // completion barrier commits M
     0xf4, // safety fallback; host deliberately stops at D
 ];
 
 const MMIO_INTERRUPT_HANDLER_BYTES: [u8; 10] = [
-    0xb0, MMIO_INTERRUPT_HANDLER_BYTE, 0xe6, 0xe9, // interrupt handler proof
-    0xb0, 0x20, 0xe6, 0x20, // non-specific EOI to master PIC
-    0x48, 0xcf, // iretq
+    0xb0,
+    MMIO_INTERRUPT_HANDLER_BYTE,
+    0xe6,
+    0xe9, // interrupt handler proof
+    0xb0,
+    0x20,
+    0xe6,
+    0x20, // non-specific EOI to master PIC
+    0x48,
+    0xcf, // iretq
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,14 +153,8 @@ impl LongModeMmioInterruptLayout {
     ) -> Result<Self, LongModeMmioInterruptConfigurationError> {
         let mmio = LongModeMmioBootLayout::new(memory, entry, stack_pointer)
             .map_err(LongModeMmioInterruptConfigurationError::Mmio)?;
-        let interrupt = LongModeInterruptLayout::new(
-            memory,
-            entry,
-            stack_pointer,
-            vector,
-            handler,
-        )
-        .map_err(LongModeMmioInterruptConfigurationError::Interrupt)?;
+        let interrupt = LongModeInterruptLayout::new(memory, entry, stack_pointer, vector, handler)
+            .map_err(LongModeMmioInterruptConfigurationError::Interrupt)?;
         Ok(Self { mmio, interrupt })
     }
 
@@ -410,9 +457,7 @@ fn require_interrupt_enabled_flags(operation: &'static str, rflags: u64) -> Resu
     {
         return Err(verification_error(
             operation,
-            format!(
-                "expected architectural RFLAGS bit 1 and IF set, got RFLAGS {rflags:#x}"
-            ),
+            format!("expected architectural RFLAGS bit 1 and IF set, got RFLAGS {rflags:#x}"),
         ));
     }
     Ok(())
@@ -487,9 +532,18 @@ mod tests {
             &[0x48, 0xbb, 0, 0, 0x50, 0, 0, 0, 0, 0]
         );
         assert_eq!(&MMIO_INTERRUPT_GUEST_BYTES[49..52], &[0xc6, 0x03, b'W']);
-        assert_eq!(&MMIO_INTERRUPT_GUEST_BYTES[52..56], &[0xb0, b'A', 0xe6, 0xe9]);
-        assert_eq!(&MMIO_INTERRUPT_GUEST_BYTES[56..60], &[0xb0, b'M', 0xe6, 0xe9]);
-        assert_eq!(&MMIO_INTERRUPT_GUEST_BYTES[60..64], &[0xb0, b'D', 0xe6, 0xe9]);
+        assert_eq!(
+            &MMIO_INTERRUPT_GUEST_BYTES[52..56],
+            &[0xb0, b'A', 0xe6, 0xe9]
+        );
+        assert_eq!(
+            &MMIO_INTERRUPT_GUEST_BYTES[56..60],
+            &[0xb0, b'M', 0xe6, 0xe9]
+        );
+        assert_eq!(
+            &MMIO_INTERRUPT_GUEST_BYTES[60..64],
+            &[0xb0, b'D', 0xe6, 0xe9]
+        );
         assert_eq!(MMIO_INTERRUPT_GUEST_BYTES[64], 0xf4);
         assert_eq!(MMIO_INTERRUPT_HANDLER_BYTES.len(), 10);
         assert_eq!(MMIO_INTERRUPT_PROOF, b"AIMD");
