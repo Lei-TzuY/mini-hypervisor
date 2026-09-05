@@ -658,7 +658,7 @@ mod tests {
     fn fixture_builds_three_descriptor_read_and_terminal_hlt() {
         let bytes = build_guest();
         assert_eq!(bytes.last(), Some(&0xf4));
-        for marker in [b'P', b'B', b'N', b'R'] {
+        for marker in *b"PBNR" {
             assert!(bytes
                 .windows(4)
                 .any(|window| window == [0xb0, marker, 0xe6, 0xe9]));
