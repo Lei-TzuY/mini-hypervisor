@@ -466,7 +466,7 @@ jobs:
           printf '%s\n' "$output"
           grep -F 'virtio-blk PCI identity: vendor=0x1af4 device=0x1042' <<<"$output"
           grep -F 'virtio-blk BAR0: 0x10000000' <<<"$output"
-          grep -F 'virtio-blk capacity sectors: 1' <<<"$output"
+          grep -F 'virtio-blk capacity sectors: 4' <<<"$output"
           grep -F 'virtio-blk driver features: 0x100000000' <<<"$output"
           grep -F 'virtio-blk device status: 0x0f' <<<"$output"
           grep -F 'virtio-blk queue enabled: true' <<<"$output"
