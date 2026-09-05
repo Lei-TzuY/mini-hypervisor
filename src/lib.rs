@@ -3,6 +3,7 @@
 pub mod config;
 pub mod error;
 pub mod execution;
+pub mod interrupt;
 pub mod kvm;
 pub mod loader;
 pub mod long_mode;
