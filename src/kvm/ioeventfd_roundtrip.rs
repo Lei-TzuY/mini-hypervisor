@@ -471,10 +471,10 @@ fn wait_eventfd_value(eventfd: &EventFd, timeout_millis: i32) -> io::Result<u64>
             return Err(source);
         }
         if pollfd.revents & libc::POLLIN == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("unexpected poll revents for ioeventfd: {:#x}", pollfd.revents),
-            ));
+            return Err(io::Error::other(format!(
+                "unexpected poll revents for ioeventfd: {:#x}",
+                pollfd.revents
+            )));
         }
         break;
     }
