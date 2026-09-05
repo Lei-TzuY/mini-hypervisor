@@ -366,10 +366,7 @@ mod tests {
             .unwrap(),
             MmioService::Read(vec![0])
         );
-        assert_eq!(
-            bus.writes(),
-            Some(&[b'W', LEVEL_INTERRUPT_ACK_VALUE][..])
-        );
+        assert_eq!(bus.writes(), Some(&[b'W', LEVEL_INTERRUPT_ACK_VALUE][..]));
     }
 
     #[test]
