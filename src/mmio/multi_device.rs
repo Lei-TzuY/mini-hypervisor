@@ -1,3 +1,5 @@
+mod virtio_blk_atomic_bus;
+
 use super::long_mode::{
     LongModeMmioBootLayout, LongModeMmioPageMapping, LONG_MODE_MMIO_DEVICE_GPA,
     LONG_MODE_MMIO_GUEST_ENTRY, LONG_MODE_MMIO_STACK_POINTER, LONG_MODE_MMIO_VIRTUAL_PAGE,

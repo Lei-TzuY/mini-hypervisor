@@ -1,3 +1,14 @@
+use super::pci;
+use super::pci::virtio_blk::VIRTIO_BLK_T_IN;
+
+#[path = "virtio_blk_write_readback_fixture.rs"]
+mod write_readback;
+
+pub use write_readback::{
+    deterministic_write_readback_sector, run_virtio_blk_write_readback_guest,
+    VirtioBlkWriteReadbackGuestResult, VIRTIO_BLK_WRITE_READBACK_PROOF,
+};
+
 use super::pci::virtio::{
     VIRTIO_F_VERSION_1, VIRTIO_ISR_OFFSET, VIRTIO_PCI_VENDOR_ID, VIRTIO_STATUS_ACKNOWLEDGE,
     VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,

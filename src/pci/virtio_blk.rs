@@ -1,3 +1,8 @@
+#[path = "virtio_blk_write_readback.rs"]
+mod write_readback;
+
+pub use write_readback::VIRTIO_BLK_T_OUT;
+
 use super::virtio::{
     VIRTIO_F_VERSION_1, VIRTIO_ISR_LENGTH, VIRTIO_ISR_OFFSET, VIRTIO_ISR_QUEUE_INTERRUPT,
     VIRTIO_NOTIFY_LENGTH, VIRTIO_NOTIFY_OFFSET, VIRTIO_NOTIFY_OFF_MULTIPLIER,
@@ -195,10 +200,9 @@ impl fmt::Display for VirtioBlkError {
             Self::DescriptorChainCycle { index } => {
                 write!(f, "virtio-blk descriptor chain revisits descriptor {index}")
             }
-            Self::InvalidRequestType { request_type } => write!(
-                f,
-                "virtio-blk first slice accepts only VIRTIO_BLK_T_IN (0), got {request_type}"
-            ),
+            Self::InvalidRequestType { request_type } => {
+                write!(f, "unsupported virtio-blk request type {request_type}")
+            }
             Self::InvalidRequestReserved { reserved } => write!(
                 f,
                 "virtio-blk request reserved field must be zero, got {reserved:#x}"
