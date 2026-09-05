@@ -1,0 +1,37 @@
+name: Strict KVM virtio-blk write/readback
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  virtio-blk-write-readback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM virtio-blk write/readback proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin virtio-blk-write-readback)"
+          printf '%s\n' "$output"
+          grep -F 'virtio-blk write completion: 0/1/0' <<<"$output"
+          grep -F 'virtio-blk readback completion: 0/513/0' <<<"$output"
+          grep -F 'virtio-blk write/readback used: 2/0/1/0/513' <<<"$output"
+          grep -F 'virtio-blk write/readback request status: 0' <<<"$output"
+          grep -F 'virtio-blk backing boundary: first=[66, 76, 75, 45, 87, 82, 73, 84, 69, 45, 48, 48, 48, 48, 33, 33] last=[87, 82, 84, 66, 65, 67, 75, 33]' <<<"$output"
+          grep -F 'virtio-blk readback boundary: first=[66, 76, 75, 45, 87, 82, 73, 84, 69, 45, 48, 48, 48, 48, 33, 33] last=[87, 82, 84, 66, 65, 67, 75, 33]' <<<"$output"
+          grep -F 'virtio-blk write/readback proof: [80, 66, 87, 79, 78, 82, 68]' <<<"$output"
+          grep -F 'virtio-blk write/readback port-I/O exits: 21' <<<"$output"
+          grep -F 'virtio-blk write/readback MMIO exits: 22' <<<"$output"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
