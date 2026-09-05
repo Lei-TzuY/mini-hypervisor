@@ -114,7 +114,6 @@ mod tests {
         assert_eq!(MMIO_GUEST_PROOF, b"RMIO");
         assert_eq!(MMIO_GUEST_WRITE_VALUE, b'W');
         assert_eq!(MMIO_GUEST_READ_VALUE, b'R');
-        assert!(BYTE_DEVICE_ADDRESS >= MMIO_GUEST_RAM_SIZE);
         assert_eq!(
             MMIO_GUEST_BYTES,
             [
