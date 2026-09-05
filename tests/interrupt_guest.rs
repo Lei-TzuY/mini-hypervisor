@@ -12,7 +12,10 @@ fn requested_interrupt_window_injects_handler_iretq_resumes_guest_and_halts() {
     match run_long_mode_interrupt_guest(VmConfig::default()) {
         Ok(result) => {
             assert_eq!(result.vector(), LONG_MODE_INTERRUPT_VECTOR);
-            assert_eq!(result.interrupt_window_rip(), LONG_MODE_INTERRUPT_WINDOW_RIP);
+            assert_eq!(
+                result.interrupt_window_rip(),
+                LONG_MODE_INTERRUPT_WINDOW_RIP
+            );
             assert_eq!(result.interrupt_window_rflags() & 0x2, 0x2);
             assert_eq!(
                 result.interrupt_window_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
