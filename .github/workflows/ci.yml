@@ -398,6 +398,38 @@ jobs:
           [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
           rflags=$((rflags_hex))
           (( (rflags & 0x2) == 0x2 ))
+      - name: Strict KVM virtio-rng completion interrupt proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin virtio-rng-completion-interrupt)"
+          printf '%s\n' "$output"
+          grep -F 'virtio-rng interrupt GSI: 0' <<<"$output"
+          grep -F 'virtio-rng interrupt vector: 0x40' <<<"$output"
+          grep -F 'virtio-rng interrupt lifecycle: assert=1 deassert=1' <<<"$output"
+          grep -F 'virtio-rng interrupt used: idx=1 id=0 len=8' <<<"$output"
+          grep -F 'virtio-rng interrupt payload: [82, 78, 71, 68, 65, 84, 65, 33]' <<<"$output"
+          grep -F 'virtio-rng interrupt proof: [80, 86, 78, 73, 65, 82, 68]' <<<"$output"
+          grep -F 'virtio-rng interrupt port-I/O exits: 19' <<<"$output"
+          grep -F 'virtio-rng interrupt MMIO exits: 21' <<<"$output"
+          spiv_line="$(grep -F 'virtio-rng interrupt LAPIC SPIV:' <<<"$output")"
+          spiv_hex="${spiv_line##*: }"
+          [[ "$spiv_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          spiv=$((spiv_hex))
+          (( (spiv & 0x100) == 0x100 ))
+          lint0_line="$(grep -F 'virtio-rng interrupt LAPIC LINT0:' <<<"$output")"
+          lint0_hex="${lint0_line##*: }"
+          [[ "$lint0_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          lint0=$((lint0_hex))
+          (( (lint0 & 0x700) == 0x700 ))
+          (( (lint0 & 0x10000) == 0 ))
+          completion="$(grep -F 'virtio-rng interrupt completion rflags:' <<<"$output")"
+          completion_rflags_hex="${completion##*rflags: }"
+          [[ "$completion_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          completion_rflags=$((completion_rflags_hex))
+          (( (completion_rflags & 0x2) == 0x2 ))
+          (( (completion_rflags & 0x200) == 0x200 ))
 
   msrv:
     runs-on: ubuntu-latest
