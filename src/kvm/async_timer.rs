@@ -382,3 +382,5 @@ mod async_timer_tests {
         assert!(require_interrupt_disabled_flags("test", 0x000).is_err());
     }
 }
+
+include!("irqfd_timer.rs");
