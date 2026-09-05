@@ -4,6 +4,7 @@ pub mod pci_fixture;
 pub mod two_vcpu_fixture;
 pub mod virtio_blk_completion_interrupt_fixture;
 pub mod virtio_blk_fixture;
+pub mod virtio_blk_multi_sector_fixture;
 pub mod virtio_rng_completion_interrupt_fixture;
 pub mod virtio_rng_fixture;
 pub mod virtio_rng_msi_completion_fixture;
