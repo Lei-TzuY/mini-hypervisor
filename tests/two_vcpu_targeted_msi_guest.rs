@@ -1,8 +1,7 @@
 use mini_hypervisor::error::{Error, HostEnvironmentError};
 use mini_hypervisor::interrupt::X86_RFLAGS_INTERRUPT_ENABLE;
 use mini_hypervisor::portio::two_vcpu_targeted_msi_fixture::{
-    run_two_vcpu_targeted_msi_guest, FIRST_PROOF, SECOND_PROOF, TARGET_MSI_ADDRESS,
-    TARGET_MSI_DATA,
+    run_two_vcpu_targeted_msi_guest, FIRST_PROOF, SECOND_PROOF, TARGET_MSI_ADDRESS, TARGET_MSI_DATA,
 };
 use mini_hypervisor::portio::DEBUG_PORT;
 use mini_hypervisor::vcpu::{PortIoDirection, PortIoExit};
@@ -25,7 +24,10 @@ fn targeted_msi_reaches_only_the_second_thread_owned_vcpu() {
                 X86_RFLAGS_INTERRUPT_ENABLE
             );
             assert_eq!(result.second_ready_rflags() & 0x2, 0x2);
-            assert_eq!(result.second_ready_rflags() & X86_RFLAGS_INTERRUPT_ENABLE, 0);
+            assert_eq!(
+                result.second_ready_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
+                0
+            );
             assert_eq!(result.second_completion_rflags() & 0x2, 0x2);
             assert_eq!(
                 result.second_completion_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
