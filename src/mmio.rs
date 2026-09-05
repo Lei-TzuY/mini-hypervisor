@@ -2,6 +2,7 @@ use crate::error::{Error, MmioError};
 use crate::vcpu::{MmioDirection, MmioExit};
 
 pub mod interrupt;
+pub mod level_interrupt;
 pub mod long_mode;
 
 pub const BYTE_DEVICE_ADDRESS: u64 = 0x2000;
@@ -18,8 +19,8 @@ pub enum MmioService {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MmioDeviceEvent {
     InterruptRequested,
-    InterruptLineAsserted,
-    InterruptLineDeasserted,
+    InterruptLineAssertRequested,
+    InterruptLineDeassertRequested,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +81,9 @@ impl MmioBus {
 
     pub fn dispatch(&mut self, exit: &MmioExit) -> Result<MmioService, Error> {
         match self.byte_device.as_mut() {
-            Some(device) if device.handles(exit.address()) => device.handle(exit).map_err(Error::Mmio),
+            Some(device) if device.handles(exit.address()) => {
+                device.handle(exit).map_err(Error::Mmio)
+            }
             _ => Err(Error::Mmio(MmioError::UnhandledAddress {
                 address: exit.address(),
                 direction: exit.direction().raw(),
@@ -130,11 +133,10 @@ impl ByteMmioDevice {
             ByteMmioDeviceMode::Plain | ByteMmioDeviceMode::EdgeInterrupt => {
                 address == self.address
             }
-            ByteMmioDeviceMode::LevelInterrupt => {
-                self.address
-                    .checked_add(LEVEL_INTERRUPT_ACK_OFFSET)
-                    .is_some_and(|end| (self.address..=end).contains(&address))
-            }
+            ByteMmioDeviceMode::LevelInterrupt => self
+                .address
+                .checked_add(LEVEL_INTERRUPT_ACK_OFFSET)
+                .is_some_and(|end| (self.address..=end).contains(&address)),
         }
     }
 
@@ -212,10 +214,10 @@ impl ByteMmioDevice {
             ByteMmioDeviceMode::LevelInterrupt => {
                 if self.level_interrupt_pending && !self.level_line_asserted {
                     self.level_line_asserted = true;
-                    Some(MmioDeviceEvent::InterruptLineAsserted)
+                    Some(MmioDeviceEvent::InterruptLineAssertRequested)
                 } else if !self.level_interrupt_pending && self.level_line_asserted {
                     self.level_line_asserted = false;
-                    Some(MmioDeviceEvent::InterruptLineDeasserted)
+                    Some(MmioDeviceEvent::InterruptLineDeassertRequested)
                 } else {
                     None
                 }
@@ -314,7 +316,7 @@ mod tests {
         );
         assert_eq!(
             bus.take_device_event(),
-            Some(MmioDeviceEvent::InterruptLineAsserted)
+            Some(MmioDeviceEvent::InterruptLineAssertRequested)
         );
         assert_eq!(bus.take_device_event(), None);
         assert_eq!(
@@ -341,7 +343,7 @@ mod tests {
         );
         assert_eq!(
             bus.take_device_event(),
-            Some(MmioDeviceEvent::InterruptLineDeasserted)
+            Some(MmioDeviceEvent::InterruptLineDeassertRequested)
         );
         assert_eq!(bus.take_device_event(), None);
         assert_eq!(
@@ -370,7 +372,7 @@ mod tests {
         }
         assert_eq!(
             bus.take_device_event(),
-            Some(MmioDeviceEvent::InterruptLineAsserted)
+            Some(MmioDeviceEvent::InterruptLineAssertRequested)
         );
         assert_eq!(bus.take_device_event(), None);
     }
