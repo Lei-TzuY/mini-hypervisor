@@ -578,3 +578,6 @@ mod tests {
         );
     }
 }
+
+include!("lapic_uapi.rs");
+include!("irqchip.rs");
