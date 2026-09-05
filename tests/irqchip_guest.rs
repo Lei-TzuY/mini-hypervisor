@@ -5,12 +5,26 @@ use mini_hypervisor::kvm::KvmBackend;
 use mini_hypervisor::portio::DEBUG_PORT;
 use mini_hypervisor::vcpu::{PortIoDirection, VcpuExit, VcpuId};
 
+const APIC_SPIV_SOFTWARE_ENABLE: u32 = 1 << 8;
+const APIC_LVT_MASKED: u32 = 1 << 16;
+const APIC_LVT_DELIVERY_MODE_MASK: u32 = 0x700;
+const APIC_LVT_DELIVERY_MODE_EXTINT: u32 = 0x700;
+
 #[test]
 fn in_kernel_irqchip_routes_gsi0_through_pic_handler_and_resumes_guest() {
     match KvmBackend::run_irqchip_gsi_guest(VmConfig::default()) {
         Ok(result) => {
             assert_eq!(result.gsi(), KvmBackend::IRQCHIP_GSI);
             assert_eq!(result.vector(), KvmBackend::IRQCHIP_VECTOR);
+            assert_eq!(
+                result.lapic_spiv() & APIC_SPIV_SOFTWARE_ENABLE,
+                APIC_SPIV_SOFTWARE_ENABLE
+            );
+            assert_eq!(
+                result.lapic_lint0() & APIC_LVT_DELIVERY_MODE_MASK,
+                APIC_LVT_DELIVERY_MODE_EXTINT
+            );
+            assert_eq!(result.lapic_lint0() & APIC_LVT_MASKED, 0);
             assert_eq!(result.armed_rflags() & 0x2, 0x2);
             assert_eq!(
                 result.armed_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
