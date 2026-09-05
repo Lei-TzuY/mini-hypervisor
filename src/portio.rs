@@ -66,7 +66,10 @@ impl PortIoBus {
 
         if PciConfigMechanism1::handles_port(io.port()) {
             return match self.pci_config.as_mut() {
-                Some(config) => config.dispatch(io).map(convert_pci_service).map_err(Error::PortIo),
+                Some(config) => config
+                    .dispatch(io)
+                    .map(convert_pci_service)
+                    .map_err(Error::PortIo),
                 None => Err(Error::PortIo(unhandled(io))),
             };
         }
@@ -137,8 +140,8 @@ impl DebugPort {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use self::pci::{SyntheticPciFunction, PCI_CONFIG_ADDRESS_PORT, PCI_CONFIG_DATA_PORT};
+    use super::*;
 
     fn output(port: u16, size: u8, count: u32, bytes: &[u8]) -> PortIoExit {
         PortIoExit::new(PortIoDirection::Out, size, port, count, bytes.to_vec())
