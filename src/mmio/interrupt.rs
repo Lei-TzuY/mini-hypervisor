@@ -1,23 +1,25 @@
+#[cfg(test)]
+use super::long_mode::LONG_MODE_MMIO_VIRTUAL_PAGE;
 use super::long_mode::{
     LongModeMmioBootLayout, LongModeMmioConfigurationError, LONG_MODE_MMIO_DEVICE_GPA,
     LONG_MODE_MMIO_STACK_POINTER,
 };
-#[cfg(test)]
-use super::long_mode::LONG_MODE_MMIO_VIRTUAL_PAGE;
 use super::{MmioBus, MmioDeviceEvent, MmioService};
 use crate::config::VmConfig;
 use crate::error::{Error, HostEnvironmentError, VmExitError};
+#[cfg(test)]
+use crate::interrupt::LONG_MODE_INTERRUPT_IDT_ADDR;
 use crate::interrupt::{
     LongModeInterruptConfigurationError, LongModeInterruptLayout, LONG_MODE_INTERRUPT_GUEST_ENTRY,
     LONG_MODE_INTERRUPT_HANDLER, LONG_MODE_INTERRUPT_VECTOR, X86_RFLAGS_INTERRUPT_ENABLE,
 };
-#[cfg(test)]
-use crate::interrupt::LONG_MODE_INTERRUPT_IDT_ADDR;
 use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
 use crate::long_mode::LONG_MODE_IDENTITY_MAP_SIZE;
 #[cfg(test)]
-use crate::long_mode::{LONG_MODE_ALIAS_PT_ADDR, LONG_MODE_ALIAS_VIRTUAL_BASE, LONG_MODE_PAGE_SIZE};
+use crate::long_mode::{
+    LONG_MODE_ALIAS_PT_ADDR, LONG_MODE_ALIAS_VIRTUAL_BASE, LONG_MODE_PAGE_SIZE,
+};
 use crate::memory::{GuestMemory, GuestMemoryRegion, GuestPhysAddr};
 use crate::portio::{PortIoBus, PortIoService, DEBUG_PORT};
 use crate::vcpu::{MmioDirection, MmioExit, PortIoDirection, PortIoExit, Vcpu, VcpuExit, VcpuId};
