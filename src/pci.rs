@@ -400,7 +400,10 @@ mod tests {
     #[test]
     fn legacy_virtio_rng_capability_chain_remains_terminated() {
         let mut config = PciConfigMechanism1::with_virtio_rng(VirtioRngPciFunction::new(BAR0));
-        assert_eq!(read_config(&mut config, 0x64).to_le_bytes(), [0x09, 0, 16, 3]);
+        assert_eq!(
+            read_config(&mut config, 0x64).to_le_bytes(),
+            [0x09, 0, 16, 3]
+        );
         assert_eq!(config.virtio_rng_msi_message(), None);
     }
 
