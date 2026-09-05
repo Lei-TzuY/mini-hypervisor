@@ -25,15 +25,16 @@ use std::fmt;
 use std::io;
 
 pub const MMIO_INTERRUPT_WRITE_VALUE: u8 = b'W';
-pub const MMIO_INTERRUPT_PROOF: &[u8; 3] = b"IMD";
+pub const MMIO_INTERRUPT_PROOF: &[u8; 4] = b"AIMD";
 
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
+const MMIO_INTERRUPT_ARMED_BYTE: u8 = b'A';
 const MMIO_INTERRUPT_HANDLER_BYTE: u8 = b'I';
 const MMIO_INTERRUPT_RESUMED_BYTE: u8 = b'M';
 const MMIO_INTERRUPT_DONE_BYTE: u8 = b'D';
 const INTERRUPT_GATE_SIZE: u64 = 16;
 
-const MMIO_INTERRUPT_GUEST_BYTES: [u8; 61] = [
+const MMIO_INTERRUPT_GUEST_BYTES: [u8; 65] = [
     0xfa, // cli
     0xb0, 0x11, 0xe6, 0x20, 0xe6, 0xa0, // ICW1: initialize master and slave PICs
     0xb0, 0x40, 0xe6, 0x21, // ICW2: master IRQ0..7 -> vectors 0x40..0x47
@@ -47,6 +48,7 @@ const MMIO_INTERRUPT_GUEST_BYTES: [u8; 61] = [
     0x90, // nop -- complete STI's one-instruction interrupt shadow
     0x48, 0xbb, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs $0x500000, %rbx
     0xc6, 0x03, MMIO_INTERRUPT_WRITE_VALUE, // movb $'W', (%rbx) -> KVM_EXIT_MMIO
+    0xb0, MMIO_INTERRUPT_ARMED_BYTE, 0xe6, 0xe9, // commits preceding MMIO before IRQ pulse
     0xb0, MMIO_INTERRUPT_RESUMED_BYTE, 0xe6, 0xe9, // resumed main after IRQ + IRETQ
     0xb0, MMIO_INTERRUPT_DONE_BYTE, 0xe6, 0xe9, // completion barrier commits M
     0xf4, // safety fallback; host deliberately stops at D
@@ -120,10 +122,9 @@ impl LongModeMmioInterruptLayout {
     }
 
     pub(crate) fn install_tables(&self, memory: &mut GuestMemory) -> Result<(), Error> {
-        // Install descriptor tables first, then re-materialize the same bootstrap page tables with
-        // the virtual-MMIO PTE. The second operation touches only 0x1000..0x5000, so the fixed GDT
-        // and IDT at 0x5000/0x6000 remain intact while the final page-table state gains the device
-        // mapping.
+        // Descriptor tables live at 0x5000/0x6000. Re-materializing the bootstrap page tables with
+        // the virtual-MMIO PTE touches only 0x1000..0x5000, so both contracts compose without one
+        // silently overwriting the other.
         self.interrupt.install_tables(memory)?;
         self.mmio.install_page_tables(memory)
     }
@@ -135,7 +136,7 @@ pub struct LongModeMmioInterruptGuestResult {
     vector: u8,
     lapic_spiv: u32,
     lapic_lint0: u32,
-    event_rflags: u64,
+    armed_rflags: u64,
     completion_rflags: u64,
     device_event_count: u32,
     mmio_exit: MmioExit,
@@ -166,8 +167,8 @@ impl LongModeMmioInterruptGuestResult {
     }
 
     #[must_use]
-    pub const fn event_rflags(&self) -> u64 {
-        self.event_rflags
+    pub const fn armed_rflags(&self) -> u64 {
+        self.armed_rflags
     }
 
     #[must_use]
@@ -255,12 +256,23 @@ pub fn run_long_mode_mmio_interrupt_guest(
         ));
     }
 
-    let event_registers = vcpu.registers()?;
-    require_interrupt_enabled_flags("MMIO device interrupt event state", event_registers.rflags)?;
+    // Re-entering KVM to reach A completes the pending MMIO write. The device event remains owned
+    // by userspace during that re-entry and is consumed only after the completion barrier is
+    // observed. This avoids treating KVM_EXIT_MMIO register state as a completed architectural
+    // state while preserving the causal chain from accepted device write to GSI pulse.
+    let armed_io = run_expected_debug_output(
+        &mut vcpu,
+        &mut port_io,
+        MMIO_INTERRUPT_ARMED_BYTE,
+        "MMIO device interrupt armed barrier",
+    )?;
+    let armed = vcpu.registers()?;
+    require_interrupt_enabled_flags("MMIO device interrupt armed state", armed.rflags)?;
+
     if mmio.take_device_event() != Some(MmioDeviceEvent::InterruptRequested) {
         return Err(verification_error(
             "MMIO device interrupt event",
-            "accepted device write did not publish InterruptRequested",
+            "accepted device write did not retain one InterruptRequested event through MMIO completion",
         ));
     }
     if mmio.take_device_event().is_some() {
@@ -293,7 +305,7 @@ pub fn run_long_mode_mmio_interrupt_guest(
     let completion = vcpu.registers()?;
     require_interrupt_enabled_flags("MMIO device interrupt completion state", completion.rflags)?;
 
-    let io_exits = vec![handler_io, resumed_io, completion_io];
+    let io_exits = vec![armed_io, handler_io, resumed_io, completion_io];
     let writes = mmio.writes().unwrap_or(&[]).to_vec();
     let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
     if writes.as_slice() != [MMIO_INTERRUPT_WRITE_VALUE]
@@ -317,7 +329,7 @@ pub fn run_long_mode_mmio_interrupt_guest(
         vector: KvmBackend::IRQCHIP_VECTOR,
         lapic_spiv: lapic.spiv(),
         lapic_lint0: lapic.lint0(),
-        event_rflags: event_registers.rflags,
+        armed_rflags: armed.rflags,
         completion_rflags: completion.rflags,
         device_event_count: 1,
         mmio_exit,
@@ -418,7 +430,6 @@ fn verification_error(operation: &'static str, detail: impl Into<String>) -> Err
 mod tests {
     use super::*;
     use crate::interrupt::LONG_MODE_INTERRUPT_GDT_ADDR;
-    use crate::long_mode::LONG_MODE_ALIAS_PT_ADDR;
 
     fn read_u64(memory: &GuestMemory, address: GuestPhysAddr) -> u64 {
         let mut bytes = [0_u8; 8];
@@ -470,13 +481,17 @@ mod tests {
 
     #[test]
     fn fixture_machine_code_and_proof_are_stable() {
-        assert_eq!(MMIO_INTERRUPT_GUEST_BYTES.len(), 61);
-        assert_eq!(&MMIO_INTERRUPT_GUEST_BYTES[39..49], &[0x48, 0xbb, 0, 0, 0x50, 0, 0, 0, 0, 0]);
+        assert_eq!(MMIO_INTERRUPT_GUEST_BYTES.len(), 65);
+        assert_eq!(
+            &MMIO_INTERRUPT_GUEST_BYTES[39..49],
+            &[0x48, 0xbb, 0, 0, 0x50, 0, 0, 0, 0, 0]
+        );
         assert_eq!(&MMIO_INTERRUPT_GUEST_BYTES[49..52], &[0xc6, 0x03, b'W']);
-        assert_eq!(&MMIO_INTERRUPT_GUEST_BYTES[52..56], &[0xb0, b'M', 0xe6, 0xe9]);
-        assert_eq!(&MMIO_INTERRUPT_GUEST_BYTES[56..60], &[0xb0, b'D', 0xe6, 0xe9]);
-        assert_eq!(MMIO_INTERRUPT_GUEST_BYTES[60], 0xf4);
+        assert_eq!(&MMIO_INTERRUPT_GUEST_BYTES[52..56], &[0xb0, b'A', 0xe6, 0xe9]);
+        assert_eq!(&MMIO_INTERRUPT_GUEST_BYTES[56..60], &[0xb0, b'M', 0xe6, 0xe9]);
+        assert_eq!(&MMIO_INTERRUPT_GUEST_BYTES[60..64], &[0xb0, b'D', 0xe6, 0xe9]);
+        assert_eq!(MMIO_INTERRUPT_GUEST_BYTES[64], 0xf4);
         assert_eq!(MMIO_INTERRUPT_HANDLER_BYTES.len(), 10);
-        assert_eq!(MMIO_INTERRUPT_PROOF, b"IMD");
+        assert_eq!(MMIO_INTERRUPT_PROOF, b"AIMD");
     }
 }
