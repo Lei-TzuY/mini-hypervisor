@@ -1,8 +1,3 @@
-use super::Vcpu;
-use crate::error::{Error, HostEnvironmentError};
-use std::io;
-use std::os::fd::AsRawFd;
-
 const KVM_GET_MP_STATE: libc::c_ulong = 0x8004_AE98;
 const KVM_SET_MP_STATE: libc::c_ulong = 0x4004_AE99;
 
@@ -13,30 +8,36 @@ struct KvmMpState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct VcpuMpState(u32);
+struct VcpuMpState(u32);
 
 impl VcpuMpState {
-    pub(crate) const RUNNABLE: Self = Self(0);
-    pub(crate) const UNINITIALIZED: Self = Self(1);
-    pub(crate) const INIT_RECEIVED: Self = Self(2);
-    pub(crate) const HALTED: Self = Self(3);
-    pub(crate) const SIPI_RECEIVED: Self = Self(4);
+    const RUNNABLE: Self = Self(0);
+    const UNINITIALIZED: Self = Self(1);
+    const INIT_RECEIVED: Self = Self(2);
+    const HALTED: Self = Self(3);
+    const SIPI_RECEIVED: Self = Self(4);
 
-    #[must_use]
-    pub(crate) const fn raw(self) -> u32 {
+    const fn raw(self) -> u32 {
         self.0
     }
 }
 
+// SAFETY: `KvmRunMapping` uniquely owns one process-local MAP_SHARED `kvm_run` mapping. No pointer
+// into the mapping escapes the `Vcpu` boundary, moving the mapping does not relocate the mmap, and
+// every userspace mutation of mapped KVM state is reached through unique `&mut Vcpu` ownership.
+// This intentionally establishes `Send` only; the raw mapping remains non-`Sync`, so one `Vcpu`
+// cannot be used concurrently from multiple userspace threads through shared references.
+unsafe impl Send for super::KvmRunMapping {}
+
 impl Vcpu {
-    pub(crate) fn multiprocessing_state(&self) -> Result<VcpuMpState, Error> {
+    fn multiprocessing_state(&self) -> Result<VcpuMpState, Error> {
         let mut state = KvmMpState { mp_state: 0 };
         // SAFETY: `state` is the exact fixed-size Linux `struct kvm_mp_state` payload and remains
         // writable for the duration of the vCPU ioctl.
         let result = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_GET_MP_STATE, &mut state) };
         if result == -1 {
-            return Err(vcpu_mp_state_error(
-                self,
+            return Err(vcpu_operation(
+                self.id,
                 "KVM_GET_MP_STATE",
                 io::Error::last_os_error(),
             ));
@@ -44,7 +45,7 @@ impl Vcpu {
         Ok(VcpuMpState(state.mp_state))
     }
 
-    pub(crate) fn set_multiprocessing_state(&mut self, state: VcpuMpState) -> Result<(), Error> {
+    fn set_multiprocessing_state(&mut self, state: VcpuMpState) -> Result<(), Error> {
         let request = KvmMpState {
             mp_state: state.raw(),
         };
@@ -53,22 +54,48 @@ impl Vcpu {
         // mutation in userspace.
         let result = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_MP_STATE, &request) };
         if result == -1 {
-            return Err(vcpu_mp_state_error(
-                self,
+            return Err(vcpu_operation(
+                self.id,
                 "KVM_SET_MP_STATE",
                 io::Error::last_os_error(),
             ));
         }
         Ok(())
     }
-}
 
-fn vcpu_mp_state_error(vcpu: &Vcpu, operation: &'static str, source: io::Error) -> Error {
-    Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
-        id: vcpu.id().get(),
-        operation,
-        source,
-    })
+    pub(crate) fn ensure_runnable_mp_state(&mut self) -> Result<u32, Error> {
+        let initial = self.multiprocessing_state()?;
+        if initial != VcpuMpState::RUNNABLE && initial != VcpuMpState::UNINITIALIZED {
+            return Err(vcpu_operation(
+                self.id,
+                "validate initial KVM MP state",
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "expected secondary vCPU MP state RUNNABLE or UNINITIALIZED before host startup, got {}",
+                        initial.raw()
+                    ),
+                ),
+            ));
+        }
+
+        self.set_multiprocessing_state(VcpuMpState::RUNNABLE)?;
+        let observed = self.multiprocessing_state()?;
+        if observed != VcpuMpState::RUNNABLE {
+            return Err(vcpu_operation(
+                self.id,
+                "verify KVM_SET_MP_STATE RUNNABLE readback",
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "expected secondary vCPU MP state RUNNABLE after host startup, got {}",
+                        observed.raw()
+                    ),
+                ),
+            ));
+        }
+        Ok(observed.raw())
+    }
 }
 
 const _: () = {
@@ -76,7 +103,7 @@ const _: () = {
 };
 
 #[cfg(test)]
-mod tests {
+mod mp_state_tests {
     use super::*;
 
     #[test]
