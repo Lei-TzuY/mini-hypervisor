@@ -166,7 +166,7 @@ fn configure_long_mode_sregs(sregs: &mut sys::KvmSregs, layout: &LongModeBootLay
 fn long_mode_regs(layout: &LongModeBootLayout) -> sys::KvmRegs {
     sys::KvmRegs {
         rsp: layout.stack_pointer(),
-        rip: layout.entry().get(),
+        rip: layout.entry(),
         rflags: RFLAGS_RESERVED_BIT,
         ..sys::KvmRegs::default()
     }
@@ -208,13 +208,22 @@ impl Vcpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::long_mode::LONG_MODE_IDENTITY_MAP_SIZE;
+    use crate::long_mode::{
+        LongModePageMapping, LONG_MODE_ALIAS_VIRTUAL_BASE, LONG_MODE_IDENTITY_MAP_SIZE,
+    };
     use crate::memory::{GuestMemoryRegion, GuestPhysAddr};
 
+    fn memory_region() -> GuestMemoryRegion {
+        GuestMemoryRegion::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap()
+    }
+
     fn long_mode_layout() -> LongModeBootLayout {
-        let memory =
-            GuestMemoryRegion::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
-        LongModeBootLayout::new(memory, GuestPhysAddr::new(0x1_0000), 0x1f_f000).unwrap()
+        LongModeBootLayout::new(
+            memory_region(),
+            GuestPhysAddr::new(0x1_0000),
+            0x1f_f000,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -325,14 +334,33 @@ mod tests {
     }
 
     #[test]
-    fn long_mode_entry_registers_set_rip_rsp_and_reserved_rflags_bit() {
+    fn long_mode_entry_registers_set_identity_rip_rsp_and_reserved_rflags_bit() {
         let layout = long_mode_layout();
         let regs = long_mode_regs(&layout);
 
-        assert_eq!(regs.rip, layout.entry().get());
+        assert_eq!(regs.rip, layout.entry());
         assert_eq!(regs.rsp, layout.stack_pointer());
         assert_eq!(regs.rflags, RFLAGS_RESERVED_BIT);
         assert_eq!(regs.rax, 0);
         assert_eq!(regs.r15, 0);
+    }
+
+    #[test]
+    fn long_mode_entry_registers_accept_mapped_virtual_rip() {
+        let layout = LongModeBootLayout::with_page_mappings(
+            memory_region(),
+            LONG_MODE_ALIAS_VIRTUAL_BASE + 0x100,
+            0x1f_f000,
+            vec![LongModePageMapping::new(
+                LONG_MODE_ALIAS_VIRTUAL_BASE,
+                GuestPhysAddr::new(0x1_0000),
+            )],
+        )
+        .unwrap();
+        let regs = long_mode_regs(&layout);
+
+        assert_eq!(regs.rip, LONG_MODE_ALIAS_VIRTUAL_BASE + 0x100);
+        assert_eq!(regs.rsp, 0x1f_f000);
+        assert_eq!(regs.rflags, RFLAGS_RESERVED_BIT);
     }
 }
