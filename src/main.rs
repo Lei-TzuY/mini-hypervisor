@@ -203,13 +203,7 @@ fn elf64_proof_is_valid(proof: &[u8], exit: VcpuExit, rip: u64, rflags: u64) -> 
     )
 }
 
-fn mmio_proof_is_valid(
-    proof: &[u8],
-    writes: &[u8],
-    exit: VcpuExit,
-    rip: u64,
-    rflags: u64,
-) -> bool {
+fn mmio_proof_is_valid(proof: &[u8], writes: &[u8], exit: VcpuExit, rip: u64, rflags: u64) -> bool {
     writes == [MMIO_GUEST_WRITE_VALUE]
         && terminal_proof_is_valid(
             proof,
