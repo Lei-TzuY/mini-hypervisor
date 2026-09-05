@@ -8,7 +8,8 @@ pub const VIRTIO_BLK_WRITE_READBACK_PROOF: &[u8; 7] = b"PBWONRD";
 pub const VIRTIO_BLK_INDIRECT_PROOF: &[u8; 8] = b"PIBWONRD";
 pub const VIRTIO_BLK_INDIRECT_TABLE_GPA: u64 = 0x0001_8700;
 
-const VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET: u32 = 44;
+const VIRTIO_BLK_DIRECT_EXIT_BUDGET: u32 = 44;
+const VIRTIO_BLK_INDIRECT_EXIT_BUDGET: u32 = 49;
 const WRITE_NOTIFY_BARRIER: u8 = b'W';
 const READ_NOTIFY_BARRIER: u8 = b'N';
 
@@ -30,6 +31,13 @@ impl DescriptorTopology {
         match self {
             Self::Direct => VIRTIO_F_VERSION_1,
             Self::Indirect => VIRTIO_F_VERSION_1 | VIRTIO_RING_F_INDIRECT_DESC,
+        }
+    }
+
+    const fn expected_exit_budget(self) -> u32 {
+        match self {
+            Self::Direct => VIRTIO_BLK_DIRECT_EXIT_BUDGET,
+            Self::Indirect => VIRTIO_BLK_INDIRECT_EXIT_BUDGET,
         }
     }
 }
@@ -201,7 +209,7 @@ fn run_write_readback_guest(
         &mut vcpu,
         &mut port_io,
         &mut mmio,
-        VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET,
+        topology.expected_exit_budget(),
         |continuation, mmio| {
             let Some(barrier) = write_readback_barrier(continuation) else {
                 return Ok(());
@@ -820,7 +828,14 @@ mod write_readback_fixture_tests {
     }
 
     #[test]
-    fn exit_budget_matches_config_mmio_proof_and_hlt() {
-        assert_eq!(VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET, 14 + 22 + 7 + 1);
+    fn exit_budget_matches_topology_specific_config_mmio_proof_and_hlt() {
+        assert_eq!(
+            DescriptorTopology::Direct.expected_exit_budget(),
+            14 + 22 + 7 + 1
+        );
+        assert_eq!(
+            DescriptorTopology::Indirect.expected_exit_budget(),
+            14 + 26 + 8 + 1
+        );
     }
 }
