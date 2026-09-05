@@ -5,6 +5,7 @@ use std::fmt;
 pub mod interrupt;
 pub mod level_interrupt;
 pub mod long_mode;
+pub mod multi_device;
 
 pub const BYTE_DEVICE_ADDRESS: u64 = 0x2000;
 pub const LEVEL_INTERRUPT_STATUS_OFFSET: u64 = 1;
