@@ -39,7 +39,10 @@ fn main() -> ExitCode {
                 "virtio-rng interrupt MMIO exits: {}",
                 result.mmio_exits().len()
             );
-            println!("{}", result.report());
+            println!(
+                "virtio-rng interrupt completion rflags: {:#x}",
+                result.completion_rflags()
+            );
 
             if result.driver_features() == VIRTIO_F_VERSION_1
                 && result.queue_enabled()
