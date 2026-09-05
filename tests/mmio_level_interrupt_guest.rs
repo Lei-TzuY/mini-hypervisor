@@ -26,7 +26,10 @@ fn handler_status_ack_controls_level_interrupt_line_lifecycle() {
             assert_eq!(result.deassert_event_count(), 1);
             assert_eq!(
                 result.writes(),
-                &[MMIO_LEVEL_INTERRUPT_COMMAND_VALUE, MMIO_LEVEL_INTERRUPT_ACK_VALUE]
+                &[
+                    MMIO_LEVEL_INTERRUPT_COMMAND_VALUE,
+                    MMIO_LEVEL_INTERRUPT_ACK_VALUE
+                ]
             );
             assert_eq!(result.proof(), MMIO_LEVEL_INTERRUPT_PROOF);
 
@@ -91,6 +94,8 @@ fn handler_status_ack_controls_level_interrupt_line_lifecycle() {
                 "skipping level interrupt lifecycle integration assertion: /dev/kvm is unavailable to this runner"
             );
         }
-        Err(error) => panic!("level interrupt lifecycle guest execution failed unexpectedly: {error}"),
+        Err(error) => {
+            panic!("level interrupt lifecycle guest execution failed unexpectedly: {error}")
+        }
     }
 }
