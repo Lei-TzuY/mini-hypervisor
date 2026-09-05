@@ -1,21 +1,23 @@
 use super::long_mode::{
     LongModeMmioBootLayout, LongModeMmioConfigurationError, LONG_MODE_MMIO_DEVICE_GPA,
-    LONG_MODE_MMIO_STACK_POINTER, LONG_MODE_MMIO_VIRTUAL_PAGE,
+    LONG_MODE_MMIO_STACK_POINTER,
 };
+#[cfg(test)]
+use super::long_mode::LONG_MODE_MMIO_VIRTUAL_PAGE;
 use super::{MmioBus, MmioDeviceEvent, MmioService};
 use crate::config::VmConfig;
 use crate::error::{Error, HostEnvironmentError, VmExitError};
 use crate::interrupt::{
     LongModeInterruptConfigurationError, LongModeInterruptLayout, LONG_MODE_INTERRUPT_GUEST_ENTRY,
-    LONG_MODE_INTERRUPT_HANDLER, LONG_MODE_INTERRUPT_IDT_ADDR, LONG_MODE_INTERRUPT_VECTOR,
-    X86_RFLAGS_INTERRUPT_ENABLE,
+    LONG_MODE_INTERRUPT_HANDLER, LONG_MODE_INTERRUPT_VECTOR, X86_RFLAGS_INTERRUPT_ENABLE,
 };
+#[cfg(test)]
+use crate::interrupt::LONG_MODE_INTERRUPT_IDT_ADDR;
 use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
-use crate::long_mode::{
-    LONG_MODE_ALIAS_PT_ADDR, LONG_MODE_ALIAS_VIRTUAL_BASE, LONG_MODE_IDENTITY_MAP_SIZE,
-    LONG_MODE_PAGE_SIZE,
-};
+use crate::long_mode::LONG_MODE_IDENTITY_MAP_SIZE;
+#[cfg(test)]
+use crate::long_mode::{LONG_MODE_ALIAS_PT_ADDR, LONG_MODE_ALIAS_VIRTUAL_BASE, LONG_MODE_PAGE_SIZE};
 use crate::memory::{GuestMemory, GuestMemoryRegion, GuestPhysAddr};
 use crate::portio::{PortIoBus, PortIoService, DEBUG_PORT};
 use crate::vcpu::{MmioDirection, MmioExit, PortIoDirection, PortIoExit, Vcpu, VcpuExit, VcpuId};
@@ -30,6 +32,7 @@ const MMIO_INTERRUPT_ARMED_BYTE: u8 = b'A';
 const MMIO_INTERRUPT_HANDLER_BYTE: u8 = b'I';
 const MMIO_INTERRUPT_RESUMED_BYTE: u8 = b'M';
 const MMIO_INTERRUPT_DONE_BYTE: u8 = b'D';
+#[cfg(test)]
 const INTERRUPT_GATE_SIZE: u64 = 16;
 
 const MMIO_INTERRUPT_GUEST_BYTES: [u8; 65] = [
@@ -169,9 +172,6 @@ impl LongModeMmioInterruptLayout {
     }
 
     pub(crate) fn install_tables(&self, memory: &mut GuestMemory) -> Result<(), Error> {
-        // Descriptor tables live at 0x5000/0x6000. Re-materializing the bootstrap page tables with
-        // the virtual-MMIO PTE touches only 0x1000..0x5000, so both contracts compose without one
-        // silently overwriting the other.
         self.interrupt.install_tables(memory)?;
         self.mmio.install_page_tables(memory)
     }
@@ -303,10 +303,6 @@ pub fn run_long_mode_mmio_interrupt_guest(
         ));
     }
 
-    // Re-entering KVM to reach A completes the pending MMIO write. The device event remains owned
-    // by userspace during that re-entry and is consumed only after the completion barrier is
-    // observed. This avoids treating KVM_EXIT_MMIO register state as a completed architectural
-    // state while preserving the causal chain from accepted device write to GSI pulse.
     let armed_io = run_expected_debug_output(
         &mut vcpu,
         &mut port_io,
