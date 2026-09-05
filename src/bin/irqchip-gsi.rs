@@ -7,6 +7,8 @@ fn main() -> ExitCode {
         Ok(result) => {
             println!("irqchip GSI: {}", result.gsi());
             println!("irqchip vector: {:#x}", result.vector());
+            println!("irqchip LAPIC SPIV: {:#x}", result.lapic_spiv());
+            println!("irqchip LAPIC LINT0: {:#x}", result.lapic_lint0());
             println!("irqchip armed rflags: {:#x}", result.armed_rflags());
             println!("irqchip proof: {:?}", result.proof());
             println!("{}", result.report());
