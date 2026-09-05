@@ -94,6 +94,16 @@ mod tests {
     const MEMORY_SIZE: u64 = 0x20_000;
     const TWO_SECTORS: u32 = (2 * VIRTIO_BLK_SECTOR_SIZE) as u32;
 
+    #[derive(Clone, Copy)]
+    struct RequestSpec {
+        request_type: u32,
+        sector: u64,
+        data_length: u32,
+        data_flags: u16,
+        avail_idx: u16,
+        ring_slot: u16,
+    }
+
     fn ready_device() -> VirtioBlkDevice {
         let mut device = VirtioBlkDevice::new(BAR);
         device.driver_features = VIRTIO_F_VERSION_1;
@@ -130,30 +140,21 @@ mod tests {
             .unwrap();
     }
 
-    fn prepare_request(
-        memory: &mut GuestMemory,
-        device: &mut VirtioBlkDevice,
-        request_type: u32,
-        sector: u64,
-        data_length: u32,
-        data_flags: u16,
-        avail_idx: u16,
-        ring_slot: u16,
-    ) {
+    fn prepare_request(memory: &mut GuestMemory, device: &mut VirtioBlkDevice, spec: RequestSpec) {
         write_descriptor(memory, 0, HEADER, 16, VIRTQ_DESC_F_NEXT, 1);
-        write_descriptor(memory, 1, DATA, data_length, data_flags, 2);
+        write_descriptor(memory, 1, DATA, spec.data_length, spec.data_flags, 2);
         write_descriptor(memory, 2, STATUS, 1, VIRTQ_DESC_F_WRITE, 0);
 
         let mut header = [0_u8; 16];
-        header[0..4].copy_from_slice(&request_type.to_le_bytes());
-        header[8..16].copy_from_slice(&sector.to_le_bytes());
+        header[0..4].copy_from_slice(&spec.request_type.to_le_bytes());
+        header[8..16].copy_from_slice(&spec.sector.to_le_bytes());
         memory.write(GuestPhysAddr::new(HEADER), &header).unwrap();
         memory
-            .write(GuestPhysAddr::new(AVAIL + 2), &avail_idx.to_le_bytes())
+            .write(GuestPhysAddr::new(AVAIL + 2), &spec.avail_idx.to_le_bytes())
             .unwrap();
         memory
             .write(
-                GuestPhysAddr::new(AVAIL + 4 + 2 * u64::from(ring_slot)),
+                GuestPhysAddr::new(AVAIL + 4 + 2 * u64::from(spec.ring_slot)),
                 &0_u16.to_le_bytes(),
             )
             .unwrap();
@@ -199,12 +200,14 @@ mod tests {
         prepare_request(
             &mut memory,
             &mut device,
-            VIRTIO_BLK_T_OUT,
-            1,
-            TWO_SECTORS,
-            VIRTQ_DESC_F_NEXT,
-            1,
-            0,
+            RequestSpec {
+                request_type: VIRTIO_BLK_T_OUT,
+                sector: 1,
+                data_length: TWO_SECTORS,
+                data_flags: VIRTQ_DESC_F_NEXT,
+                avail_idx: 1,
+                ring_slot: 0,
+            },
         );
 
         let write = device.process_notified_queue_atomic(&mut memory).unwrap();
@@ -225,12 +228,14 @@ mod tests {
         prepare_request(
             &mut memory,
             &mut device,
-            VIRTIO_BLK_T_IN,
-            1,
-            TWO_SECTORS,
-            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
-            2,
-            1,
+            RequestSpec {
+                request_type: VIRTIO_BLK_T_IN,
+                sector: 1,
+                data_length: TWO_SECTORS,
+                data_flags: VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+                avail_idx: 2,
+                ring_slot: 1,
+            },
         );
         let read = device.process_notified_queue_atomic(&mut memory).unwrap();
         assert_eq!(read.sector(), 1);
@@ -254,12 +259,14 @@ mod tests {
         prepare_request(
             &mut memory,
             &mut device,
-            VIRTIO_BLK_T_OUT,
-            3,
-            TWO_SECTORS,
-            VIRTQ_DESC_F_NEXT,
-            1,
-            0,
+            RequestSpec {
+                request_type: VIRTIO_BLK_T_OUT,
+                sector: 3,
+                data_length: TWO_SECTORS,
+                data_flags: VIRTQ_DESC_F_NEXT,
+                avail_idx: 1,
+                ring_slot: 0,
+            },
         );
 
         let error = device
@@ -287,12 +294,14 @@ mod tests {
         prepare_request(
             &mut memory,
             &mut device,
-            VIRTIO_BLK_T_OUT,
-            1,
-            513,
-            VIRTQ_DESC_F_NEXT,
-            1,
-            0,
+            RequestSpec {
+                request_type: VIRTIO_BLK_T_OUT,
+                sector: 1,
+                data_length: 513,
+                data_flags: VIRTQ_DESC_F_NEXT,
+                avail_idx: 1,
+                ring_slot: 0,
+            },
         );
 
         let error = device
@@ -320,12 +329,14 @@ mod tests {
         prepare_request(
             &mut memory,
             &mut device,
-            VIRTIO_BLK_T_IN,
-            2,
-            VIRTIO_BLK_SECTOR_SIZE as u32,
-            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
-            1,
-            0,
+            RequestSpec {
+                request_type: VIRTIO_BLK_T_IN,
+                sector: 2,
+                data_length: VIRTIO_BLK_SECTOR_SIZE as u32,
+                data_flags: VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+                avail_idx: 1,
+                ring_slot: 0,
+            },
         );
 
         let completion = device.process_notified_queue(&mut memory).unwrap();
