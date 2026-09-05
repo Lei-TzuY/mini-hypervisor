@@ -36,7 +36,10 @@ fn guest_xapic_icr_targets_only_the_thread_owned_second_vcpu() {
                 );
             }
             assert_eq!(result.second_ready_rflags() & 0x2, 0x2);
-            assert_eq!(result.second_ready_rflags() & X86_RFLAGS_INTERRUPT_ENABLE, 0);
+            assert_eq!(
+                result.second_ready_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
+                0
+            );
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
