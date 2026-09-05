@@ -45,6 +45,15 @@ impl VmExecutionResult {
 pub fn run_vcpu_until_stopped(
     vcpu: &mut Vcpu,
     port_io: &mut PortIoBus,
+    exit_budget: u32,
+) -> Result<VmExecutionResult, Error> {
+    let mut mmio = MmioBus::empty();
+    run_vcpu_until_stopped_with_mmio(vcpu, port_io, &mut mmio, exit_budget)
+}
+
+pub fn run_vcpu_until_stopped_with_mmio(
+    vcpu: &mut Vcpu,
+    port_io: &mut PortIoBus,
     mmio: &mut MmioBus,
     exit_budget: u32,
 ) -> Result<VmExecutionResult, Error> {
