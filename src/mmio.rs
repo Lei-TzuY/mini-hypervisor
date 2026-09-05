@@ -61,7 +61,9 @@ impl MmioBus {
     }
 
     pub fn take_device_event(&mut self) -> Option<MmioDeviceEvent> {
-        self.byte_device.as_mut().and_then(ByteMmioDevice::take_event)
+        self.byte_device
+            .as_mut()
+            .and_then(ByteMmioDevice::take_event)
     }
 
     #[must_use]
