@@ -13,6 +13,7 @@ fn targeted_msi_reaches_only_the_second_thread_owned_vcpu() {
             assert_eq!(result.msi_address(), TARGET_MSI_ADDRESS);
             assert_eq!(result.msi_data(), TARGET_MSI_DATA);
             assert_eq!(result.msi_delivery_count(), 1);
+            assert_eq!(result.second_mp_state(), 0);
             assert_eq!(result.first_proof(), FIRST_PROOF);
             assert_eq!(result.second_proof(), SECOND_PROOF);
             assert_debug_sequence(result.first_io_exits(), FIRST_PROOF);
