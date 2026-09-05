@@ -1,0 +1,36 @@
+name: Strict KVM virtio-blk indirect
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  virtio-blk-indirect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM virtio-blk indirect proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin virtio-blk-indirect)"
+          printf '%s\n' "$output"
+          grep -F 'virtio-blk indirect driver features: 0x110000000' <<<"$output"
+          grep -F 'virtio-blk indirect write completion: 0/1/0' <<<"$output"
+          grep -F 'virtio-blk indirect readback completion: 0/513/0' <<<"$output"
+          grep -F 'virtio-blk indirect used: 2/0/1/0/513' <<<"$output"
+          grep -F 'virtio-blk indirect request status: 0' <<<"$output"
+          grep -F 'virtio-blk indirect proof: [80, 73, 66, 87, 79, 78, 82, 68]' <<<"$output"
+          grep -F 'virtio-blk indirect port-I/O exits: 22' <<<"$output"
+          grep -F 'virtio-blk indirect MMIO exits: 26' <<<"$output"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
