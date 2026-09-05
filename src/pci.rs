@@ -3,8 +3,11 @@ use crate::vcpu::{PortIoDirection, PortIoExit};
 
 #[path = "pci/virtio.rs"]
 pub mod virtio;
+#[path = "pci/virtio_blk.rs"]
+pub mod virtio_blk;
 
 use virtio::VirtioRngPciFunction;
+use virtio_blk::VirtioBlkPciFunction;
 
 pub const PCI_CONFIG_ADDRESS_PORT: u16 = 0x0cf8;
 pub const PCI_CONFIG_DATA_PORT: u16 = 0x0cfc;
@@ -198,6 +201,7 @@ impl VirtioRngPciEndpoint {
 enum PciFunction {
     Synthetic(SyntheticPciFunction),
     VirtioRng(VirtioRngPciEndpoint),
+    VirtioBlk(VirtioBlkPciFunction),
 }
 
 impl PciFunction {
@@ -205,19 +209,20 @@ impl PciFunction {
         match self {
             Self::Synthetic(function) => function.read_dword(offset),
             Self::VirtioRng(function) => function.read_dword(offset),
+            Self::VirtioBlk(function) => function.read_dword(offset),
         }
     }
 
     fn write_dword(&mut self, offset: u8, value: u32) -> bool {
         match self {
-            Self::Synthetic(_) => false,
+            Self::Synthetic(_) | Self::VirtioBlk(_) => false,
             Self::VirtioRng(function) => function.write_dword(offset, value),
         }
     }
 
     fn msi_message(&self) -> Option<PciMsiMessage> {
         match self {
-            Self::Synthetic(_) => None,
+            Self::Synthetic(_) | Self::VirtioBlk(_) => None,
             Self::VirtioRng(function) => function.msi_message(),
         }
     }
@@ -251,6 +256,14 @@ impl PciConfigMechanism1 {
         Self {
             address: 0,
             function: PciFunction::VirtioRng(VirtioRngPciEndpoint::with_msi(function)),
+        }
+    }
+
+    #[must_use]
+    pub const fn with_virtio_blk(function: VirtioBlkPciFunction) -> Self {
+        Self {
+            address: 0,
+            function: PciFunction::VirtioBlk(function),
         }
     }
 
@@ -342,6 +355,7 @@ fn unhandled(io: &PortIoExit) -> PortIoError {
 #[cfg(test)]
 mod tests {
     use self::virtio::{VIRTIO_PCI_VENDOR_ID, VIRTIO_RNG_PCI_DEVICE_ID};
+    use self::virtio_blk::{VIRTIO_BLK_PCI_CLASS_CODE, VIRTIO_BLK_PCI_DEVICE_ID};
     use super::*;
 
     const BAR0: u32 = 0x1000_0000;
@@ -405,6 +419,29 @@ mod tests {
             [0x09, 0, 16, 3]
         );
         assert_eq!(config.virtio_rng_msi_message(), None);
+    }
+
+    #[test]
+    fn virtio_blk_exposes_mass_storage_identity_bar_and_device_config_capability() {
+        let mut config = PciConfigMechanism1::with_virtio_blk(VirtioBlkPciFunction::new(BAR0));
+        assert_eq!(
+            read_config(&mut config, 0x00),
+            (u32::from(VIRTIO_BLK_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID)
+        );
+        assert_eq!(
+            read_config(&mut config, 0x08) >> 24,
+            u32::from(VIRTIO_BLK_PCI_CLASS_CODE)
+        );
+        assert_eq!(read_config(&mut config, 0x10), BAR0);
+        assert_eq!(read_config(&mut config, 0x34) & 0xff, 0x40);
+        assert_eq!(
+            read_config(&mut config, 0x64).to_le_bytes(),
+            [0x09, 0x74, 16, 3]
+        );
+        assert_eq!(
+            read_config(&mut config, 0x74).to_le_bytes(),
+            [0x09, 0, 16, 4]
+        );
     }
 
     #[test]

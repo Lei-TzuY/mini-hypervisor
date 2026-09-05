@@ -457,6 +457,31 @@ jobs:
           completion_rflags=$((completion_rflags_hex))
           (( (completion_rflags & 0x2) == 0x2 ))
           (( (completion_rflags & 0x200) == 0x200 ))
+      - name: Strict KVM virtio-blk PCI read proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin virtio-blk-pci-read)"
+          printf '%s\n' "$output"
+          grep -F 'virtio-blk PCI identity: vendor=0x1af4 device=0x1042' <<<"$output"
+          grep -F 'virtio-blk BAR0: 0x10000000' <<<"$output"
+          grep -F 'virtio-blk capacity sectors: 1' <<<"$output"
+          grep -F 'virtio-blk driver features: 0x100000000' <<<"$output"
+          grep -F 'virtio-blk device status: 0x0f' <<<"$output"
+          grep -F 'virtio-blk queue enabled: true' <<<"$output"
+          grep -F 'virtio-blk completion: id=0 len=513 sector=0' <<<"$output"
+          grep -F 'virtio-blk used: idx=1 id=0 len=513' <<<"$output"
+          grep -F 'virtio-blk request status: 0' <<<"$output"
+          grep -F 'virtio-blk data boundary: first=[66, 76, 75, 45, 83, 69, 67, 84, 79, 82, 45, 48, 48, 48, 48, 33] last=[66, 76, 75, 69, 78, 68, 33, 33]' <<<"$output"
+          grep -F 'virtio-blk proof: [80, 66, 78, 82]' <<<"$output"
+          grep -F 'virtio-blk port-I/O exits: 18' <<<"$output"
+          grep -F 'virtio-blk MMIO exits: 21' <<<"$output"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
 
   msrv:
     runs-on: ubuntu-latest

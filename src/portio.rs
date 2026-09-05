@@ -1,6 +1,7 @@
 #[path = "pci.rs"]
 pub mod pci;
 pub mod pci_fixture;
+pub mod virtio_blk_fixture;
 pub mod virtio_rng_completion_interrupt_fixture;
 pub mod virtio_rng_fixture;
 pub mod virtio_rng_msi_completion_fixture;

@@ -4,6 +4,10 @@ use crate::portio::pci::virtio::{
     VirtioRngDevice, VirtioRngError, VirtioRngEvent, VirtioRngProcessError,
     VirtioRngQueueCompletion, VIRTIO_RNG_BAR_SIZE,
 };
+use crate::portio::pci::virtio_blk::{
+    VirtioBlkDevice, VirtioBlkError, VirtioBlkEvent, VirtioBlkProcessError,
+    VirtioBlkQueueCompletion, VIRTIO_BLK_BAR_SIZE,
+};
 use crate::vcpu::{MmioDirection, MmioExit};
 use std::collections::VecDeque;
 use std::fmt;
@@ -109,6 +113,7 @@ enum ByteMmioDeviceMode {
 pub struct MmioBus {
     byte_devices: Vec<ByteMmioDevice>,
     virtio_rng_devices: Vec<VirtioRngDevice>,
+    virtio_blk_devices: Vec<VirtioBlkDevice>,
     virtio_events: VecDeque<MmioDeviceEventRecord>,
 }
 
@@ -118,6 +123,7 @@ impl MmioBus {
         Self {
             byte_devices: Vec::new(),
             virtio_rng_devices: Vec::new(),
+            virtio_blk_devices: Vec::new(),
             virtio_events: VecDeque::new(),
         }
     }
@@ -136,6 +142,7 @@ impl MmioBus {
                 ByteMmioDeviceMode::Plain,
             )],
             virtio_rng_devices: Vec::new(),
+            virtio_blk_devices: Vec::new(),
             virtio_events: VecDeque::new(),
         }
     }
@@ -149,6 +156,7 @@ impl MmioBus {
                 ByteMmioDeviceMode::EdgeInterrupt,
             )],
             virtio_rng_devices: Vec::new(),
+            virtio_blk_devices: Vec::new(),
             virtio_events: VecDeque::new(),
         }
     }
@@ -162,6 +170,7 @@ impl MmioBus {
                 ByteMmioDeviceMode::LevelInterrupt,
             )],
             virtio_rng_devices: Vec::new(),
+            virtio_blk_devices: Vec::new(),
             virtio_events: VecDeque::new(),
         }
     }
@@ -199,6 +208,16 @@ impl MmioBus {
         Ok(())
     }
 
+    pub fn register_virtio_blk_device_at(
+        &mut self,
+        address: u64,
+    ) -> Result<(), MmioRegistrationError> {
+        let size = u64::from(VIRTIO_BLK_BAR_SIZE);
+        self.ensure_range_available(address, size)?;
+        self.virtio_blk_devices.push(VirtioBlkDevice::new(address));
+        Ok(())
+    }
+
     pub fn dispatch(&mut self, exit: &MmioExit) -> Result<MmioService, Error> {
         if let Some(device) = self
             .byte_devices
@@ -211,7 +230,7 @@ impl MmioBus {
         if let Some(index) = self
             .virtio_rng_devices
             .iter()
-            .position(|device| virtio_handles(device, exit.address()))
+            .position(|device| virtio_rng_handles(device, exit.address()))
         {
             let (service, event) = {
                 let device = &mut self.virtio_rng_devices[index];
@@ -219,6 +238,23 @@ impl MmioBus {
             };
             if let Some(event) = event {
                 let address = self.virtio_rng_devices[index].bar0();
+                self.virtio_events
+                    .push_back(MmioDeviceEventRecord::new(address, event));
+            }
+            return Ok(service);
+        }
+
+        if let Some(index) = self
+            .virtio_blk_devices
+            .iter()
+            .position(|device| virtio_blk_handles(device, exit.address()))
+        {
+            let (service, event) = {
+                let device = &mut self.virtio_blk_devices[index];
+                dispatch_virtio_blk(device, exit)?
+            };
+            if let Some(event) = event {
+                let address = self.virtio_blk_devices[index].bar0();
                 self.virtio_events
                     .push_back(MmioDeviceEventRecord::new(address, event));
             }
@@ -262,6 +298,21 @@ impl MmioBus {
         }
     }
 
+    pub fn process_virtio_blk_notification(
+        &mut self,
+        address: u64,
+        memory: &mut GuestMemory,
+    ) -> Result<Option<VirtioBlkQueueCompletion>, VirtioBlkProcessError> {
+        match self
+            .virtio_blk_devices
+            .iter_mut()
+            .find(|device| device.bar0() == address)
+        {
+            Some(device) => device.process_notified_queue(memory).map(Some),
+            None => Ok(None),
+        }
+    }
+
     #[must_use]
     pub fn virtio_rng_status_at(&self, address: u64) -> Option<u8> {
         self.virtio_rng_devices
@@ -287,8 +338,35 @@ impl MmioBus {
     }
 
     #[must_use]
+    pub fn virtio_blk_status_at(&self, address: u64) -> Option<u8> {
+        self.virtio_blk_devices
+            .iter()
+            .find(|device| device.bar0() == address)
+            .map(VirtioBlkDevice::status)
+    }
+
+    #[must_use]
+    pub fn virtio_blk_driver_features_at(&self, address: u64) -> Option<u64> {
+        self.virtio_blk_devices
+            .iter()
+            .find(|device| device.bar0() == address)
+            .map(VirtioBlkDevice::driver_features)
+    }
+
+    #[must_use]
+    pub fn virtio_blk_queue_enabled_at(&self, address: u64) -> Option<bool> {
+        self.virtio_blk_devices
+            .iter()
+            .find(|device| device.bar0() == address)
+            .map(VirtioBlkDevice::queue_enabled)
+    }
+
+    #[must_use]
     pub fn writes(&self) -> Option<&[u8]> {
-        if self.byte_devices.len() == 1 && self.virtio_rng_devices.is_empty() {
+        if self.byte_devices.len() == 1
+            && self.virtio_rng_devices.is_empty()
+            && self.virtio_blk_devices.is_empty()
+        {
             self.byte_devices.first().map(ByteMmioDevice::writes)
         } else {
             None
@@ -343,13 +421,25 @@ impl MmioBus {
                     .iter()
                     .map(|device| (device.bar0(), u64::from(VIRTIO_RNG_BAR_SIZE))),
             )
+            .chain(
+                self.virtio_blk_devices
+                    .iter()
+                    .map(|device| (device.bar0(), u64::from(VIRTIO_BLK_BAR_SIZE))),
+            )
     }
 }
 
-fn virtio_handles(device: &VirtioRngDevice, address: u64) -> bool {
+fn virtio_rng_handles(device: &VirtioRngDevice, address: u64) -> bool {
     device
         .bar0()
         .checked_add(u64::from(VIRTIO_RNG_BAR_SIZE))
+        .is_some_and(|end| (device.bar0()..end).contains(&address))
+}
+
+fn virtio_blk_handles(device: &VirtioBlkDevice, address: u64) -> bool {
+    device
+        .bar0()
+        .checked_add(u64::from(VIRTIO_BLK_BAR_SIZE))
         .is_some_and(|end| (device.bar0()..end).contains(&address))
 }
 
@@ -363,7 +453,7 @@ fn dispatch_virtio_rng(
         MmioDirection::Read => device
             .read(offset, length)
             .map(|bytes| (MmioService::Read(bytes), None))
-            .map_err(virtio_mmio_error),
+            .map_err(virtio_rng_mmio_error),
         MmioDirection::Write => device
             .write(offset, exit.write_data())
             .map(|event| {
@@ -374,13 +464,45 @@ fn dispatch_virtio_rng(
                 });
                 (MmioService::Write, event)
             })
-            .map_err(virtio_mmio_error),
+            .map_err(virtio_rng_mmio_error),
     }
 }
 
-fn virtio_mmio_error(error: VirtioRngError) -> Error {
+fn dispatch_virtio_blk(
+    device: &mut VirtioBlkDevice,
+    exit: &MmioExit,
+) -> Result<(MmioService, Option<MmioDeviceEvent>), Error> {
+    let offset = exit.address() - device.bar0();
+    let length = usize::try_from(exit.length()).expect("validated MMIO length fits usize");
+    match exit.direction() {
+        MmioDirection::Read => device
+            .read(offset, length)
+            .map(|bytes| (MmioService::Read(bytes), None))
+            .map_err(virtio_blk_mmio_error),
+        MmioDirection::Write => device
+            .write(offset, exit.write_data())
+            .map(|event| {
+                let event = event.map(|event| match event {
+                    VirtioBlkEvent::QueueNotified { queue } => {
+                        MmioDeviceEvent::VirtioQueueNotified { queue }
+                    }
+                });
+                (MmioService::Write, event)
+            })
+            .map_err(virtio_blk_mmio_error),
+    }
+}
+
+fn virtio_rng_mmio_error(error: VirtioRngError) -> Error {
     Error::HostEnvironment(HostEnvironmentError::Io {
         operation: "service virtio-rng MMIO device model",
+        source: io::Error::new(io::ErrorKind::InvalidData, error),
+    })
+}
+
+fn virtio_blk_mmio_error(error: VirtioBlkError) -> Error {
+    Error::HostEnvironment(HostEnvironmentError::Io {
+        operation: "service virtio-blk MMIO device model",
         source: io::Error::new(io::ErrorKind::InvalidData, error),
     })
 }
