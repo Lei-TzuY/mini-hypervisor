@@ -12,7 +12,6 @@ use crate::memory::{GuestMemory, GuestPhysAddr};
 use crate::portio::{PortIoBus, PortIoService, DEBUG_PORT};
 use crate::vcpu::{PortIoDirection, PortIoExit, VcpuExit, VcpuId};
 use crate::vmexit::VmExitReport;
-use std::io;
 use std::os::fd::AsRawFd;
 
 const KVM_CAP_IRQCHIP: i32 = 0;
@@ -207,7 +206,7 @@ impl KvmBackend {
         let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
         let report = execution.report();
 
-        if proof != Self::IRQCHIP_PROOF
+        if proof.as_slice() != Self::IRQCHIP_PROOF
             || io_exits.len() != Self::IRQCHIP_PROOF.len()
             || report.exit() != VcpuExit::Hlt
             || report.rip() != Self::IRQCHIP_TERMINAL_RIP
