@@ -76,7 +76,6 @@ impl VirtioBlkDevice {
             VIRTQ_DESC_F_NEXT
         };
         self.require_flags(data_index, data.flags, expected_data_flags)?;
-        self.require_length(data_index, data.length, VIRTIO_BLK_SECTOR_SIZE as u32)?;
 
         let used_idx_address = checked_add(self.queue_device, 2)?;
         let used_idx = read_guest_u16(memory, used_idx_address)?;
