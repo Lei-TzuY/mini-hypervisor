@@ -39,10 +39,7 @@ fn host_timer_wakes_sti_hlt_guest_through_pic_vector() {
             );
 
             assert_eq!(result.proof(), KvmBackend::ASYNC_TIMER_PROOF);
-            assert_eq!(
-                result.io_exits().len(),
-                KvmBackend::ASYNC_TIMER_PROOF.len()
-            );
+            assert_eq!(result.io_exits().len(), KvmBackend::ASYNC_TIMER_PROOF.len());
             for (io, expected) in result
                 .io_exits()
                 .iter()
