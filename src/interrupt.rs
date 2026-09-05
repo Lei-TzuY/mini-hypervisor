@@ -20,6 +20,7 @@ pub const LONG_MODE_INTERRUPT_VECTOR: u8 = 0x40;
 pub const LONG_MODE_INTERRUPT_GUEST_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1_0000);
 pub const LONG_MODE_INTERRUPT_HANDLER: GuestPhysAddr = GuestPhysAddr::new(0x1_1000);
 pub const LONG_MODE_INTERRUPT_STACK_POINTER: u64 = 0x1f_f000;
+pub const LONG_MODE_INTERRUPT_WINDOW_RIP: u64 = 0x1_0002;
 pub const LONG_MODE_INTERRUPT_PROOF: &[u8; 2] = b"IM";
 pub const LONG_MODE_INTERRUPT_TERMINAL_RIP: u64 = 0x1_0007;
 pub const X86_RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
@@ -39,7 +40,7 @@ const GDT_BYTES: [u8; 24] = [
 ];
 
 const LONG_MODE_INTERRUPT_GUEST_BYTES: [u8; 7] = [
-    0xfb, // sti -- open the interrupt window for the already queued vector
+    0xfb, // sti -- enable maskable interrupts for the requested KVM interrupt window
     0x90, // nop -- complete STI's one-instruction interrupt shadow
     0xb0, b'M', // mov $'M', %al
     0xe6, 0xe9, // out %al, $0xe9
@@ -271,6 +272,8 @@ impl LongModeInterruptLayout {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LongModeInterruptGuestResult {
     vector: u8,
+    interrupt_window_rip: u64,
+    interrupt_window_rflags: u64,
     io_exits: Vec<PortIoExit>,
     proof: Vec<u8>,
     report: VmExitReport,
@@ -280,6 +283,16 @@ impl LongModeInterruptGuestResult {
     #[must_use]
     pub const fn vector(&self) -> u8 {
         self.vector
+    }
+
+    #[must_use]
+    pub const fn interrupt_window_rip(&self) -> u64 {
+        self.interrupt_window_rip
+    }
+
+    #[must_use]
+    pub const fn interrupt_window_rflags(&self) -> u64 {
+        self.interrupt_window_rflags
     }
 
     #[must_use]
@@ -331,6 +344,7 @@ pub fn run_long_mode_interrupt_guest(
     debug_assert_eq!(config.vcpu_count(), 1);
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
     vcpu.initialize_long_mode_interrupts(&layout)?;
+    let (interrupt_window_rip, interrupt_window_rflags) = vcpu.wait_for_interrupt_window()?;
     vcpu.inject_interrupt(layout.vector())?;
 
     let mut port_io = PortIoBus::with_debug_port();
@@ -347,6 +361,8 @@ pub fn run_long_mode_interrupt_guest(
     let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
     Ok(LongModeInterruptGuestResult {
         vector: layout.vector(),
+        interrupt_window_rip,
+        interrupt_window_rflags,
         io_exits: execution.io_exits().to_vec(),
         proof,
         report: execution.report(),
@@ -498,6 +514,10 @@ mod tests {
             [0xb0, b'I', 0xe6, 0xe9, 0x48, 0xcf]
         );
         assert_eq!(LONG_MODE_INTERRUPT_PROOF, b"IM");
+        assert_eq!(
+            LONG_MODE_INTERRUPT_GUEST_ENTRY.get() + 2,
+            LONG_MODE_INTERRUPT_WINDOW_RIP
+        );
         assert_eq!(
             LONG_MODE_INTERRUPT_GUEST_ENTRY.get() + LONG_MODE_INTERRUPT_GUEST_BYTES.len() as u64,
             LONG_MODE_INTERRUPT_TERMINAL_RIP
