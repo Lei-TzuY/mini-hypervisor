@@ -1,6 +1,8 @@
 use crate::error::{Error, MmioError};
 use crate::vcpu::{MmioDirection, MmioExit};
 
+pub mod long_mode;
+
 pub const BYTE_DEVICE_ADDRESS: u64 = 0x2000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,17 +24,23 @@ impl MmioBus {
 
     #[must_use]
     pub fn with_byte_device(read_value: u8) -> Self {
+        Self::with_byte_device_at(BYTE_DEVICE_ADDRESS, read_value)
+    }
+
+    #[must_use]
+    pub fn with_byte_device_at(address: u64, read_value: u8) -> Self {
         Self {
             byte_device: Some(ByteMmioDevice {
+                address,
                 read_value,
-                ..ByteMmioDevice::default()
+                writes: Vec::new(),
             }),
         }
     }
 
     pub fn dispatch(&mut self, exit: &MmioExit) -> Result<MmioService, Error> {
         match self.byte_device.as_mut() {
-            Some(device) if exit.address() == BYTE_DEVICE_ADDRESS => {
+            Some(device) if exit.address() == device.address => {
                 device.handle(exit).map_err(Error::Mmio)
             }
             _ => Err(Error::Mmio(MmioError::UnhandledAddress {
@@ -51,6 +59,7 @@ impl MmioBus {
 
 #[derive(Debug, Default)]
 struct ByteMmioDevice {
+    address: u64,
     writes: Vec<u8>,
     read_value: u8,
 }
@@ -90,8 +99,12 @@ impl ByteMmioDevice {
 mod tests {
     use super::*;
 
+    fn exit_at(address: u64, direction: MmioDirection, length: u32, write_data: &[u8]) -> MmioExit {
+        MmioExit::new_for_test(address, direction, length, write_data.to_vec())
+    }
+
     fn exit(direction: MmioDirection, length: u32, write_data: &[u8]) -> MmioExit {
-        MmioExit::new_for_test(BYTE_DEVICE_ADDRESS, direction, length, write_data.to_vec())
+        exit_at(BYTE_DEVICE_ADDRESS, direction, length, write_data)
     }
 
     #[test]
@@ -111,6 +124,24 @@ mod tests {
             bus.dispatch(&exit(MmioDirection::Read, 1, &[])).unwrap(),
             MmioService::Read(vec![b'R'])
         );
+    }
+
+    #[test]
+    fn configured_byte_device_address_is_exact() {
+        let address = 0x1000_0000;
+        let mut bus = MmioBus::with_byte_device_at(address, b'R');
+        assert_eq!(
+            bus.dispatch(&exit_at(address, MmioDirection::Read, 1, &[]))
+                .unwrap(),
+            MmioService::Read(vec![b'R'])
+        );
+        assert!(matches!(
+            bus.dispatch(&exit_at(BYTE_DEVICE_ADDRESS, MmioDirection::Read, 1, &[])),
+            Err(Error::Mmio(MmioError::UnhandledAddress {
+                address: BYTE_DEVICE_ADDRESS,
+                ..
+            }))
+        ));
     }
 
     #[test]

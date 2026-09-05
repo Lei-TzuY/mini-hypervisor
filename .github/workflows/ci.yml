@@ -68,6 +68,20 @@ jobs:
           [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
           rflags=$((rflags_hex))
           (( (rflags & 0x2) == 0x2 ))
+      - name: Strict KVM long-mode virtual MMIO proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet -- run-long-mode-mmio)"
+          printf '%s\n' "$output"
+          grep -F 'long-mode mmio writes: [87]' <<<"$output"
+          grep -F 'long-mode mmio proof: [82, 54, 52, 77]' <<<"$output"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x1001e, rflags=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
 
   msrv:
     runs-on: ubuntu-latest
