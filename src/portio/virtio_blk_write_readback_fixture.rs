@@ -1,18 +1,53 @@
 use super::*;
 
-use super::pci::virtio_blk::VIRTIO_BLK_T_OUT;
+use super::pci::virtio_blk::{
+    VIRTIO_BLK_T_OUT, VIRTIO_RING_F_INDIRECT_DESC, VIRTQ_DESC_F_INDIRECT,
+};
 
 pub const VIRTIO_BLK_WRITE_READBACK_PROOF: &[u8; 7] = b"PBWONRD";
+pub const VIRTIO_BLK_INDIRECT_PROOF: &[u8; 8] = b"PIBWONRD";
+pub const VIRTIO_BLK_INDIRECT_TABLE_GPA: u64 = 0x0001_8700;
 
-const VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET: u32 = 44;
+const VIRTIO_BLK_DIRECT_EXIT_BUDGET: u32 = 44;
+const VIRTIO_BLK_INDIRECT_EXIT_BUDGET: u32 = 49;
 const WRITE_NOTIFY_BARRIER: u8 = b'W';
 const READ_NOTIFY_BARRIER: u8 = b'N';
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DescriptorTopology {
+    Direct,
+    Indirect,
+}
+
+impl DescriptorTopology {
+    const fn proof(self) -> &'static [u8] {
+        match self {
+            Self::Direct => VIRTIO_BLK_WRITE_READBACK_PROOF,
+            Self::Indirect => VIRTIO_BLK_INDIRECT_PROOF,
+        }
+    }
+
+    const fn expected_driver_features(self) -> u64 {
+        match self {
+            Self::Direct => VIRTIO_F_VERSION_1,
+            Self::Indirect => VIRTIO_F_VERSION_1 | VIRTIO_RING_F_INDIRECT_DESC,
+        }
+    }
+
+    const fn expected_exit_budget(self) -> u32 {
+        match self {
+            Self::Direct => VIRTIO_BLK_DIRECT_EXIT_BUDGET,
+            Self::Indirect => VIRTIO_BLK_INDIRECT_EXIT_BUDGET,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VirtioBlkWriteReadbackGuestResult {
     io_exits: Vec<PortIoExit>,
     mmio_exits: Vec<MmioExit>,
     proof: Vec<u8>,
+    driver_features: u64,
     write_completion: VirtioBlkQueueCompletion,
     read_completion: VirtioBlkQueueCompletion,
     backing: Vec<u8>,
@@ -40,6 +75,11 @@ impl VirtioBlkWriteReadbackGuestResult {
     #[must_use]
     pub fn proof(&self) -> &[u8] {
         &self.proof
+    }
+
+    #[must_use]
+    pub const fn driver_features(&self) -> u64 {
+        self.driver_features
     }
 
     #[must_use]
@@ -112,7 +152,20 @@ pub fn deterministic_write_readback_sector() -> [u8; VIRTIO_BLK_SECTOR_SIZE] {
 pub fn run_virtio_blk_write_readback_guest(
     config: VmConfig,
 ) -> Result<VirtioBlkWriteReadbackGuestResult, Error> {
-    let guest_bytes = build_write_readback_guest();
+    run_write_readback_guest(config, DescriptorTopology::Direct)
+}
+
+pub fn run_virtio_blk_indirect_guest(
+    config: VmConfig,
+) -> Result<VirtioBlkWriteReadbackGuestResult, Error> {
+    run_write_readback_guest(config, DescriptorTopology::Indirect)
+}
+
+fn run_write_readback_guest(
+    config: VmConfig,
+    topology: DescriptorTopology,
+) -> Result<VirtioBlkWriteReadbackGuestResult, Error> {
+    let guest_bytes = build_write_readback_guest(topology);
     let terminal_rip = LONG_MODE_MMIO_GUEST_ENTRY.get()
         + u64::try_from(guest_bytes.len()).expect("fixed guest length fits u64");
     let image = FlatGuestImage::new(
@@ -156,7 +209,7 @@ pub fn run_virtio_blk_write_readback_guest(
         &mut vcpu,
         &mut port_io,
         &mut mmio,
-        VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET,
+        topology.expected_exit_budget(),
         |continuation, mmio| {
             let Some(barrier) = write_readback_barrier(continuation) else {
                 return Ok(());
@@ -243,9 +296,14 @@ pub fn run_virtio_blk_write_readback_guest(
         ));
     }
 
-    validate_write_readback_io(execution.io_exits())?;
-    validate_write_readback_mmio(execution.mmio_exits())?;
+    validate_write_readback_io(execution.io_exits(), topology.proof())?;
+    validate_write_readback_mmio(execution.mmio_exits(), topology)?;
 
+    let driver_features = mmio
+        .virtio_blk_driver_features_at(VIRTIO_BLK_BAR0_GPA)
+        .ok_or_else(|| {
+            write_readback_verification_error("virtio-blk driver features unavailable")
+        })?;
     let backing = mmio
         .virtio_blk_sector_at(VIRTIO_BLK_BAR0_GPA)
         .ok_or_else(|| write_readback_verification_error("virtio-blk backing unavailable"))?
@@ -283,7 +341,8 @@ pub fn run_virtio_blk_write_readback_guest(
         || second_used_id != 0
         || second_used_len != (VIRTIO_BLK_SECTOR_SIZE + 1) as u32
         || request_status[0] != VIRTIO_BLK_S_OK
-        || proof.as_slice() != VIRTIO_BLK_WRITE_READBACK_PROOF
+        || driver_features != topology.expected_driver_features()
+        || proof.as_slice() != topology.proof()
     {
         return Err(write_readback_verification_error(format!(
             "virtio-blk write/readback verification failed: write={write_completion:?}, read={read_completion:?}, used=({used_idx},{first_used_id},{first_used_len},{second_used_id},{second_used_len}), request_status={:#x}, proof={proof:?}",
@@ -304,6 +363,7 @@ pub fn run_virtio_blk_write_readback_guest(
         io_exits: execution.io_exits().to_vec(),
         mmio_exits: execution.mmio_exits().to_vec(),
         proof,
+        driver_features,
         write_completion,
         read_completion,
         backing,
@@ -336,12 +396,12 @@ fn write_readback_barrier(continuation: &VmExitContinuation) -> Option<u8> {
     }
 }
 
-fn validate_write_readback_io(exits: &[PortIoExit]) -> Result<(), Error> {
+fn validate_write_readback_io(exits: &[PortIoExit], proof: &[u8]) -> Result<(), Error> {
     let selectors = [0x00, 0x34, 0x40, 0x50, 0x64, 0x74, 0x10].map(config_selector);
-    if exits.len() != 14 + VIRTIO_BLK_WRITE_READBACK_PROOF.len() {
+    if exits.len() != 14 + proof.len() {
         return Err(write_readback_verification_error(format!(
             "expected {} port-I/O exits, got {}",
-            14 + VIRTIO_BLK_WRITE_READBACK_PROOF.len(),
+            14 + proof.len(),
             exits.len()
         )));
     }
@@ -364,10 +424,7 @@ fn validate_write_readback_io(exits: &[PortIoExit]) -> Result<(), Error> {
             )));
         }
     }
-    for (exit, expected) in exits[14..]
-        .iter()
-        .zip(VIRTIO_BLK_WRITE_READBACK_PROOF.iter().copied())
-    {
+    for (exit, expected) in exits[14..].iter().zip(proof.iter().copied()) {
         if exit.direction() != PortIoDirection::Out
             || exit.port() != DEBUG_PORT
             || exit.size() != 1
@@ -382,69 +439,95 @@ fn validate_write_readback_io(exits: &[PortIoExit]) -> Result<(), Error> {
     Ok(())
 }
 
-fn validate_write_readback_mmio(exits: &[MmioExit]) -> Result<(), Error> {
-    let expected: [(u64, MmioDirection, u32, &[u8]); 22] = [
-        (0x300, MmioDirection::Read, 8, &[]),
-        (0x14, MmioDirection::Write, 1, &[VIRTIO_STATUS_ACKNOWLEDGE]),
+fn validate_write_readback_mmio(
+    exits: &[MmioExit],
+    topology: DescriptorTopology,
+) -> Result<(), Error> {
+    let mut expected: Vec<(u64, MmioDirection, u32, Vec<u8>)> = vec![
+        (0x300, MmioDirection::Read, 8, Vec::new()),
         (
             0x14,
             MmioDirection::Write,
             1,
-            &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER],
+            vec![VIRTIO_STATUS_ACKNOWLEDGE],
         ),
-        (0x00, MmioDirection::Write, 4, &1_u32.to_le_bytes()),
-        (0x04, MmioDirection::Read, 4, &[]),
-        (0x08, MmioDirection::Write, 4, &1_u32.to_le_bytes()),
-        (0x0c, MmioDirection::Write, 4, &1_u32.to_le_bytes()),
         (
             0x14,
             MmioDirection::Write,
             1,
-            &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK],
+            vec![VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER],
         ),
-        (0x16, MmioDirection::Write, 2, &0_u16.to_le_bytes()),
+    ];
+    if topology == DescriptorTopology::Indirect {
+        expected.extend([
+            (0x00, MmioDirection::Write, 4, 0_u32.to_le_bytes().to_vec()),
+            (0x04, MmioDirection::Read, 4, Vec::new()),
+            (0x08, MmioDirection::Write, 4, 0_u32.to_le_bytes().to_vec()),
+            (
+                0x0c,
+                MmioDirection::Write,
+                4,
+                (VIRTIO_RING_F_INDIRECT_DESC as u32).to_le_bytes().to_vec(),
+            ),
+        ]);
+    }
+    expected.extend([
+        (0x00, MmioDirection::Write, 4, 1_u32.to_le_bytes().to_vec()),
+        (0x04, MmioDirection::Read, 4, Vec::new()),
+        (0x08, MmioDirection::Write, 4, 1_u32.to_le_bytes().to_vec()),
+        (0x0c, MmioDirection::Write, 4, 1_u32.to_le_bytes().to_vec()),
+        (
+            0x14,
+            MmioDirection::Write,
+            1,
+            vec![VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK],
+        ),
+        (0x16, MmioDirection::Write, 2, 0_u16.to_le_bytes().to_vec()),
         (
             0x18,
             MmioDirection::Write,
             2,
-            &VIRTIO_QUEUE_SIZE.to_le_bytes(),
+            VIRTIO_QUEUE_SIZE.to_le_bytes().to_vec(),
         ),
         (
             0x20,
             MmioDirection::Write,
             4,
-            &(VIRTIO_BLK_DESCRIPTOR_GPA as u32).to_le_bytes(),
+            (VIRTIO_BLK_DESCRIPTOR_GPA as u32).to_le_bytes().to_vec(),
         ),
-        (0x24, MmioDirection::Write, 4, &0_u32.to_le_bytes()),
+        (0x24, MmioDirection::Write, 4, 0_u32.to_le_bytes().to_vec()),
         (
             0x28,
             MmioDirection::Write,
             4,
-            &(VIRTIO_BLK_AVAIL_GPA as u32).to_le_bytes(),
+            (VIRTIO_BLK_AVAIL_GPA as u32).to_le_bytes().to_vec(),
         ),
-        (0x2c, MmioDirection::Write, 4, &0_u32.to_le_bytes()),
+        (0x2c, MmioDirection::Write, 4, 0_u32.to_le_bytes().to_vec()),
         (
             0x30,
             MmioDirection::Write,
             4,
-            &(VIRTIO_BLK_USED_GPA as u32).to_le_bytes(),
+            (VIRTIO_BLK_USED_GPA as u32).to_le_bytes().to_vec(),
         ),
-        (0x34, MmioDirection::Write, 4, &0_u32.to_le_bytes()),
-        (0x1c, MmioDirection::Write, 2, &1_u16.to_le_bytes()),
+        (0x34, MmioDirection::Write, 4, 0_u32.to_le_bytes().to_vec()),
+        (0x1c, MmioDirection::Write, 2, 1_u16.to_le_bytes().to_vec()),
         (
             0x14,
             MmioDirection::Write,
             1,
-            &[VIRTIO_STATUS_ACKNOWLEDGE
-                | VIRTIO_STATUS_DRIVER
-                | VIRTIO_STATUS_FEATURES_OK
-                | VIRTIO_STATUS_DRIVER_OK],
+            vec![
+                VIRTIO_STATUS_ACKNOWLEDGE
+                    | VIRTIO_STATUS_DRIVER
+                    | VIRTIO_STATUS_FEATURES_OK
+                    | VIRTIO_STATUS_DRIVER_OK,
+            ],
         ),
-        (0x14, MmioDirection::Read, 1, &[]),
-        (0x100, MmioDirection::Write, 2, &0_u16.to_le_bytes()),
-        (0x100, MmioDirection::Write, 2, &0_u16.to_le_bytes()),
-        (VIRTIO_ISR_OFFSET, MmioDirection::Read, 1, &[]),
-    ];
+        (0x14, MmioDirection::Read, 1, Vec::new()),
+        (0x100, MmioDirection::Write, 2, 0_u16.to_le_bytes().to_vec()),
+        (0x100, MmioDirection::Write, 2, 0_u16.to_le_bytes().to_vec()),
+        (VIRTIO_ISR_OFFSET, MmioDirection::Read, 1, Vec::new()),
+    ]);
+
     if exits.len() != expected.len() {
         return Err(write_readback_verification_error(format!(
             "expected {} virtio-blk write/readback MMIO exits, got {}",
@@ -458,7 +541,7 @@ fn validate_write_readback_mmio(exits: &[MmioExit]) -> Result<(), Error> {
         if exit.address() != VIRTIO_BLK_BAR0_GPA + offset
             || exit.direction() != direction
             || exit.length() != length
-            || exit.write_data() != payload
+            || exit.write_data() != payload.as_slice()
         {
             return Err(write_readback_verification_error(format!(
                 "virtio-blk write/readback MMIO exit {index} mismatch: {exit:?}"
@@ -476,7 +559,7 @@ fn write_readback_verification_error(detail: impl Into<String>) -> Error {
     })
 }
 
-fn build_write_readback_guest() -> Vec<u8> {
+fn build_write_readback_guest(topology: DescriptorTopology) -> Vec<u8> {
     let mut code = Vec::new();
 
     emit_pci_read(&mut code, 0x00);
@@ -509,6 +592,13 @@ fn build_write_readback_guest() -> Vec<u8> {
         0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
+    if topology == DescriptorTopology::Indirect {
+        emit_mmio_dword_write(&mut code, 0x00, 0);
+        code.extend_from_slice(&[0x8b, 0x43, 0x04]);
+        emit_cmp_eax(&mut code, VIRTIO_RING_F_INDIRECT_DESC as u32);
+        emit_mmio_dword_write(&mut code, 0x08, 0);
+        emit_mmio_dword_write(&mut code, 0x0c, VIRTIO_RING_F_INDIRECT_DESC as u32);
+    }
     emit_mmio_dword_write(&mut code, 0x00, 1);
     code.extend_from_slice(&[0x8b, 0x43, 0x04]);
     emit_cmp_eax(&mut code, 1);
@@ -544,15 +634,18 @@ fn build_write_readback_guest() -> Vec<u8> {
             | VIRTIO_STATUS_FEATURES_OK
             | VIRTIO_STATUS_DRIVER_OK,
     );
+    if topology == DescriptorTopology::Indirect {
+        emit_debug(&mut code, b'I');
+    }
     emit_debug(&mut code, b'B');
 
-    emit_write_request_setup(&mut code);
+    emit_write_request_setup(&mut code, topology);
     code.extend_from_slice(&[0x66, 0xc7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
     emit_debug(&mut code, WRITE_NOTIFY_BARRIER);
     emit_first_completion_checks(&mut code);
     emit_debug(&mut code, b'O');
 
-    emit_readback_request_setup(&mut code);
+    emit_readback_request_setup(&mut code, topology);
     code.extend_from_slice(&[0x66, 0xc7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
     emit_debug(&mut code, READ_NOTIFY_BARRIER);
     emit_second_completion_checks(&mut code);
@@ -564,8 +657,8 @@ fn build_write_readback_guest() -> Vec<u8> {
     code
 }
 
-fn emit_write_request_setup(code: &mut Vec<u8>) {
-    emit_request_descriptors(code, VIRTQ_DESC_F_NEXT);
+fn emit_write_request_setup(code: &mut Vec<u8>, topology: DescriptorTopology) {
+    emit_request_descriptors(code, VIRTQ_DESC_F_NEXT, topology);
     emit_request_header(code, VIRTIO_BLK_T_OUT);
     emit_status_sentinel(code);
     emit_movabs(code, 7, VIRTIO_BLK_AVAIL_GPA);
@@ -574,8 +667,8 @@ fn emit_write_request_setup(code: &mut Vec<u8>) {
     emit_zero_used_ring(code);
 }
 
-fn emit_readback_request_setup(code: &mut Vec<u8>) {
-    emit_request_descriptors(code, VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE);
+fn emit_readback_request_setup(code: &mut Vec<u8>, topology: DescriptorTopology) {
+    emit_request_descriptors(code, VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE, topology);
     emit_request_header(code, VIRTIO_BLK_T_IN);
     emit_status_sentinel(code);
 
@@ -590,7 +683,37 @@ fn emit_readback_request_setup(code: &mut Vec<u8>) {
     code.extend_from_slice(&[0x66, 0xc7, 0x47, 0x06, 0x00, 0x00]);
 }
 
-fn emit_request_descriptors(code: &mut Vec<u8>, data_flags: u16) {
+fn emit_request_descriptors(code: &mut Vec<u8>, data_flags: u16, topology: DescriptorTopology) {
+    if topology == DescriptorTopology::Indirect {
+        emit_movabs(code, 7, VIRTIO_BLK_DESCRIPTOR_GPA);
+        code.extend_from_slice(&[0x48, 0xc7, 0x07]);
+        code.extend_from_slice(&(VIRTIO_BLK_INDIRECT_TABLE_GPA as u32).to_le_bytes());
+        code.extend_from_slice(&[0xc7, 0x47, 0x08, 0x30, 0x00, 0x00, 0x00]);
+        code.extend_from_slice(&[0xc7, 0x47, 0x0c]);
+        code.extend_from_slice(&u32::from(VIRTQ_DESC_F_INDIRECT).to_le_bytes());
+
+        emit_movabs(code, 7, VIRTIO_BLK_INDIRECT_TABLE_GPA);
+        code.extend_from_slice(&[0x48, 0xc7, 0x07]);
+        code.extend_from_slice(&(VIRTIO_BLK_HEADER_GPA as u32).to_le_bytes());
+        code.extend_from_slice(&[0xc7, 0x47, 0x08, 0x10, 0x00, 0x00, 0x00]);
+        code.extend_from_slice(&[0xc7, 0x47, 0x0c]);
+        code.extend_from_slice(&(u32::from(VIRTQ_DESC_F_NEXT) | (1_u32 << 16)).to_le_bytes());
+
+        code.extend_from_slice(&[0x48, 0xc7, 0x47, 0x10]);
+        code.extend_from_slice(&(VIRTIO_BLK_DATA_GPA as u32).to_le_bytes());
+        code.extend_from_slice(&[0xc7, 0x47, 0x18]);
+        code.extend_from_slice(&(VIRTIO_BLK_SECTOR_SIZE as u32).to_le_bytes());
+        code.extend_from_slice(&[0xc7, 0x47, 0x1c]);
+        code.extend_from_slice(&(u32::from(data_flags) | (2_u32 << 16)).to_le_bytes());
+
+        code.extend_from_slice(&[0x48, 0xc7, 0x47, 0x20]);
+        code.extend_from_slice(&(VIRTIO_BLK_STATUS_GPA as u32).to_le_bytes());
+        code.extend_from_slice(&[0xc7, 0x47, 0x28, 0x01, 0x00, 0x00, 0x00]);
+        code.extend_from_slice(&[0xc7, 0x47, 0x2c]);
+        code.extend_from_slice(&u32::from(VIRTQ_DESC_F_WRITE).to_le_bytes());
+        return;
+    }
+
     emit_movabs(code, 7, VIRTIO_BLK_DESCRIPTOR_GPA);
     code.extend_from_slice(&[0x48, 0xc7, 0x07]);
     code.extend_from_slice(&(VIRTIO_BLK_HEADER_GPA as u32).to_le_bytes());
@@ -688,7 +811,7 @@ mod write_readback_fixture_tests {
 
     #[test]
     fn write_readback_guest_contains_two_notify_writes_and_terminal_hlt() {
-        let bytes = build_write_readback_guest();
+        let bytes = build_write_readback_guest(DescriptorTopology::Direct);
         assert_eq!(bytes.last(), Some(&0xf4));
         assert_eq!(
             bytes
@@ -705,7 +828,14 @@ mod write_readback_fixture_tests {
     }
 
     #[test]
-    fn exit_budget_matches_config_mmio_proof_and_hlt() {
-        assert_eq!(VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET, 14 + 22 + 7 + 1);
+    fn exit_budget_matches_topology_specific_config_mmio_proof_and_hlt() {
+        assert_eq!(
+            DescriptorTopology::Direct.expected_exit_budget(),
+            14 + 22 + 7 + 1
+        );
+        assert_eq!(
+            DescriptorTopology::Indirect.expected_exit_budget(),
+            14 + 26 + 8 + 1
+        );
     }
 }
