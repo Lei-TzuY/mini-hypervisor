@@ -53,13 +53,6 @@ const HANDLER_BYTES: [u8; 6] = [
     0x48, 0xcf, // iretq
 ];
 
-// SAFETY: `Vcpu` uniquely owns both its vCPU fd and its `kvm_run` mapping. No pointer into the
-// mapping escapes the object, every operation that can mutate `kvm_run` requires exclusive
-// `&mut Vcpu`, and moving the owned fd/mapping to another userspace thread does not create an
-// alias or concurrent KVM_RUN. This milestone intentionally establishes only ownership transfer;
-// `Vcpu` remains non-`Sync` and is never shared between threads.
-unsafe impl Send for Vcpu {}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TwoVcpuTargetedMsiResult {
     first_io_exits: Vec<PortIoExit>,
@@ -69,6 +62,7 @@ pub struct TwoVcpuTargetedMsiResult {
     first_barrier_rflags: u64,
     second_ready_rflags: u64,
     second_completion_rflags: u64,
+    second_mp_state: u32,
     msi_address: u64,
     msi_data: u32,
     msi_delivery_count: u32,
@@ -111,6 +105,11 @@ impl TwoVcpuTargetedMsiResult {
     }
 
     #[must_use]
+    pub const fn second_mp_state(&self) -> u32 {
+        self.second_mp_state
+    }
+
+    #[must_use]
     pub const fn msi_address(&self) -> u64 {
         self.msi_address
     }
@@ -147,6 +146,7 @@ pub fn run_two_vcpu_targeted_msi_guest() -> Result<TwoVcpuTargetedMsiResult, Err
 
     let backend = KvmBackend::open()?;
     backend.require_signal_msi_capability()?;
+    backend.require_mp_state_capability()?;
     let mut vm = backend.create_vm_with_irqchip()?;
     let mut memory = GuestMemory::new(RAM_BASE, LONG_MODE_IDENTITY_MAP_SIZE)?;
     let first_layout = LongModeInterruptLayout::new(
@@ -177,6 +177,12 @@ pub fn run_two_vcpu_targeted_msi_guest() -> Result<TwoVcpuTargetedMsiResult, Err
     second_vcpu.initialize_long_mode_interrupts(&second_layout)?;
     let _ = first_vcpu.configure_legacy_pic_extint()?;
     let _ = second_vcpu.configure_legacy_pic_extint()?;
+
+    // With an in-kernel irqchip, a secondary x86 vCPU may begin in KVM_MP_STATE_UNINITIALIZED and
+    // block in KVM_RUN waiting for INIT/SIPI. This bounded fixture does not claim an INIT/SIPI boot
+    // protocol; userspace explicitly promotes the already-configured vCPU to RUNNABLE and requires
+    // exact readback before ownership is transferred to the worker thread.
+    let second_mp_state = second_vcpu.ensure_runnable_mp_state()?;
 
     let (ready_tx, ready_rx) = mpsc::channel::<u64>();
     let (command_tx, command_rx) = mpsc::channel::<WorkerCommand>();
@@ -354,6 +360,7 @@ pub fn run_two_vcpu_targeted_msi_guest() -> Result<TwoVcpuTargetedMsiResult, Err
         first_barrier_rflags,
         second_ready_rflags: second.ready_rflags,
         second_completion_rflags: second.completion_rflags,
+        second_mp_state,
         msi_address: TARGET_MSI_ADDRESS,
         msi_data: TARGET_MSI_DATA,
         msi_delivery_count: delivery_count,
