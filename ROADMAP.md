@@ -4,49 +4,45 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` contains the Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 `ET_EXEC` loading/execution, bounded non-identity ELF64 virtual mapping, bounded bidirectional userspace MMIO execution, long-mode virtual-MMIO composition, direct long-mode interrupt delivery, one in-kernel x86 irqchip/GSI route, MMIO-device interrupt delivery, stateful device-owned level-interrupt lifecycle, bounded two-device MMIO registration/mapping, two independently routed MMIO level-interrupt sources, one host-driven asynchronous timer wakeup, and one KVM irqfd/eventfd accelerated timer transport.
+`main` contains the Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 `ET_EXEC` loading/execution, bounded non-identity ELF64 virtual mapping, bounded bidirectional userspace MMIO execution, long-mode virtual-MMIO composition, direct long-mode interrupt delivery, one in-kernel x86 irqchip/GSI route, MMIO-device interrupt delivery, stateful device-owned level-interrupt lifecycle, bounded two-device MMIO registration/mapping, two independently routed MMIO level-interrupt sources, one host-driven asynchronous timer wakeup, one KVM irqfd/eventfd accelerated timer transport, and one KVM ioeventfd-to-irqfd accelerated doorbell round trip.
 
-The irqfd timer phase is integrated at commit `a896487a7adf67cfebfad8b0241cb6302aa2090e` through PR #87. Exact merged-main CI #395 completed successfully with format, Clippy, tests, build, rustdoc, Rust 1.74 MSRV, all eleven earlier strict real-KVM gates, and the twelfth strict irqfd timer gate. It preserves the direct timer guest contract `RATWD` while changing only host-to-guest delivery: the worker signals an eventfd assigned to GSI0 through `KVM_IRQFD`; explicit deassignment is required before proof acceptance; the fail-closed direct-GSI watchdog cannot manufacture passing evidence.
+The accelerated doorbell phase is integrated at commit `f0a7e1f9786ae39cfef4c2709b63c09d0c65863d` through PR #88. Exact merged-main CI #401 completed successfully with format, Clippy, tests, build, rustdoc, Rust 1.74 MSRV, all twelve earlier strict real-KVM gates, and the thirteenth strict ioeventfd-to-irqfd round-trip gate. Its executable proof consumes the exact MMIO doorbell GPA `0x10000000` / value `0x5a` inside KVM through `KVM_IOEVENTFD`, bridges exactly one event to an irqfd eventfd, and reaches the existing GSI0/vector `0x40` handler with proof `RATWD` without a userspace MMIO exit.
 
-That first irqfd acceleration phase is sealed. Do not farm more fixed eventfds, delay variants, or GSI clones merely to extend the phase number.
+That fixed accelerated doorbell bridge is sealed. Do not farm more eventfd flags, fixed addresses, queue clones, or delay variants merely to extend the phase number.
 
-## Selected milestone — KVM ioeventfd to irqfd accelerated round trip
+## Selected milestone — bounded legacy PCI configuration discovery and BAR-backed MMIO execution
 
-The next architecture boundary is a bidirectional kernel-assisted event transport. Existing accelerated timer delivery covers host-to-guest notification through `KVM_IRQFD`, while guest-to-host device notification still normally surfaces as a userspace `KVM_EXIT_MMIO`. This milestone combines the existing bounded virtual-MMIO mapping with `KVM_IOEVENTFD`: one guest MMIO doorbell write is consumed by KVM and signals an eventfd without a userspace MMIO exit; a userspace bridge worker consumes exactly one doorbell event and signals an already registered irqfd eventfd; the same GSI0/PIC/LAPIC ExtINT path enters vector `0x40`, executes the handler, and resumes the guest.
+The next architecture boundary is guest-visible device discovery/configuration. The integrated MMIO/event transports expose fixed addresses only to the host fixture; this milestone adds one deliberately synthetic PCI function that the guest can discover through x86 PCI configuration mechanism #1 and whose BAR0 describes the already-established unbacked MMIO GPA.
 
-This is deliberately one bounded doorbell round trip, not a PCI/virtio transport or general event framework.
+This is a bounded synthetic PCI model, not a virtio, PCIe, or PCI conformance claim. The guest-visible identity is intentionally nonstandard (`vendor=0xcafe`, `device=0x0001`, vendor-specific class `0xff`) so the project cannot accidentally imply interoperability with a real device specification.
 
 Acceptance contract:
 
-- preserve all twelve integrated strict real-KVM gates and every existing long-mode, ELF64, MMIO, interrupt, snapshot, CPU-policy, diagnostic, and Rust 1.74 MSRV contract;
-- require both `KVM_CAP_IOEVENTFD` and `KVM_CAP_IRQFD` as hard capabilities for the executable/hosted proof; absence must fail rather than silently skip or fall back;
-- implement the exact Linux 64-byte `struct kvm_ioeventfd` ABI used here: `datamatch`, MMIO address, length, signed fd, flags and 36-byte padding; use `KVM_IOEVENTFD_FLAG_DATAMATCH` for assignment and add `KVM_IOEVENTFD_FLAG_DEASSIGN` for explicit removal;
-- reuse the bounded long-mode MMIO alias VA `0x500000` mapped to unbacked GPA `0x10000000`; the deterministic doorbell is one byte with exact datamatch `0x5a`;
-- create/duplicate all local eventfds and preflight the fail-closed watchdog before either accelerated registration can be stranded; establish GSI0 inactive before assignment;
-- assign irqfd and ioeventfd before the guest doorbell executes; if ioeventfd assignment fails after irqfd succeeded, explicitly deassign irqfd before returning;
-- the bridge worker owns only duplicated eventfd descriptors, never a KVM VM fd or guest RAM; it must consume exactly one ioeventfd counter event and only then signal the irqfd eventfd;
-- re-entering the guest after readiness `R` must execute the registered MMIO write entirely inside KVM. Reaching arm barrier `A` without a `KVM_EXIT_MMIO` proves the guest-to-host side used ioeventfd instead of userspace MMIO emulation;
-- arm barrier `A` remains under CLI with architectural RFLAGS bit 1 set and IF clear; immediately following instructions are adjacent `sti; hlt`, preserving the race-safe interrupt handoff used by the integrated timer phases;
-- irqfd delivery must enter vector `0x40`, emit handler byte `T`, issue master-PIC EOI, `iretq`, resume mainline byte `W`, then reach terminal userspace barrier `D`; exact proof remains `RATWD`;
-- the fail-closed direct-GSI watchdog exists only to prevent a broken bridge/irqfd path from wedging CI; any watchdog intervention is a hard failure and cannot count as round-trip evidence;
-- on every non-hanging path after successful registration, cancel/join workers and issue both `KVM_IOEVENTFD` deassignment and `KVM_IRQFD_FLAG_DEASSIGN` before worker/proof results can be accepted; cleanup failures remain hard failures;
-- preserve semantic LAPIC state: SPIV software-enable set and LINT0 unmasked ExtINT; completion RFLAGS requires architectural bit 1 and IF set;
-- KVM-aware integration must independently validate doorbell GPA/value, exactly one bridge event, GSI/vector, LAPIC state, arm/completion RFLAGS, all five byte-wide debug-port exits and exact `RATWD` proof;
-- stable CI must retain all twelve integrated strict real-KVM gates unchanged and add an independent thirteenth round-trip gate requiring `KVM_CAP_IOEVENTFD`, `KVM_CAP_IRQFD`, doorbell GPA `0x10000000`, value `90`, event count `1`, GSI0/vector0x40, semantic LAPIC ExtINT state, IF-clear arm point, IF-enabled completion and proof bytes `[82, 65, 84, 87, 68]`;
-- capability, eventfd, poll/read/signal, assignment/deassignment, bridge worker, watchdog, unexpected VM exit, MMIO fallback, proof order, PIC/LAPIC, or RFLAGS failures remain hard and must not be swallowed, retried into success, or hidden by changed expectations.
+- preserve all thirteen integrated strict real-KVM gates and every existing long-mode, ELF64, MMIO, interrupt, snapshot, CPU-policy, accelerated-event, diagnostic, and Rust 1.74 MSRV contract;
+- implement only legacy x86 PCI configuration mechanism #1 on ports CF8/CFC, and only 32-bit, count-one configuration cycles in this slice;
+- expose exactly one synthetic function at `00:01.0`; disabled config selection or an absent BDF must read `0xffff_ffff`;
+- expose read-only vendor/device identity, class/revision, and BAR0 configuration; unsupported config-data writes remain hard failures rather than silently mutating state;
+- BAR0 is a 32-bit non-prefetchable memory BAR whose address bits resolve to GPA `0x10000000`, reusing the existing bounded unbacked MMIO physical page;
+- preserve the existing debug port while routing CF8/CFC through the same `PortIoBus`; unknown or malformed accesses retain existing typed `PortIoError` behavior;
+- the deterministic long-mode guest must select/read identity (`0x80000800`), class/revision (`0x80000808`), and BAR0 (`0x80000810`) through real OUT/IN cycles, compare every result inside guest code, and branch to explicit proof byte `F` on any mismatch;
+- only after those three guest checks succeed may it emit `P`, `C`, `B`, write byte `W` through virtual address `0x500000` to the discovered BAR0-backed GPA, emit `M`, and halt;
+- exact success proof is `PCBM`; exact BAR write trace is `[W]`; exact execution has ten port-I/O exits, one MMIO write exit at GPA `0x10000000`, and HLT at RIP `0x10065` with architectural RFLAGS bit 1 set;
+- KVM-aware integration must independently validate all three CF8/CFC selector/data cycles, all four proof bytes, exact MMIO metadata, write trace, and terminal state; KVM unavailable/permission may skip only under the repository's ordinary environment-sensitive integration convention, while every other error remains hard;
+- stable CI must retain all thirteen integrated strict real-KVM gates unchanged and add an independent fourteenth PCI discovery gate requiring function `00:01.0`, vendor/device `0xcafe/0x0001`, class `0xff`, BAR0 `0x10000000`, writes `[87]`, proof bytes `[80, 67, 66, 77]`, ten port-I/O exits, one MMIO exit, and HLT RIP `0x10065` with architectural RFLAGS bit 1 set;
+- selector encoding, PCI identity/class/BAR values, port-I/O metadata, guest compare/failure branches, MMIO translation, proof, write trace, terminal state, or MSRV failures remain hard and must not be swallowed, retried into success, or hidden by changing expected values.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- ioeventfd PIO mode, zero-length any-write matching, `KVM_IOEVENTFD_FLAG_FAST_MMIO`, multiple queue doorbells, shared eventfds, batching, or notification coalescing;
-- irqfd resample/level semantics, `KVM_CAP_IRQFD_RESAMPLE`, shared GSIs, arbitrary `KVM_SET_GSI_ROUTING`, IOAPIC/MSI/MSI-X, or x2APIC;
-- PCI/PCIe configuration space, BAR enumeration, virtio queue/configuration transport, DMA, IOMMU, or device hotplug;
-- periodic/programmatic timers, PIT/HPET/APIC timer, scheduler framework, realtime latency guarantees, or performance benchmark claims;
-- guest-memory sharing with workers, multi-vCPU delivery, SMP, migration, resumable execution, or whole-VM snapshots.
+- PCI command/status writes, BAR sizing probes, BAR relocation, multiple BARs, multifunction devices, bus enumeration, bridges, subordinate buses, or hotplug;
+- PCIe ECAM, ACPI/MCFG, PCI Express capabilities, power management, or configuration-space capability lists;
+- real virtio vendor/device IDs, virtio PCI common/device/notify/ISR configuration, feature negotiation, queue setup, descriptors, DMA, IOMMU, or any virtio conformance/interoperability claim;
+- MSI/MSI-X, arbitrary KVM GSI routing, IOAPIC programming, x2APIC, irqfd resample, or shared interrupt lines;
+- periodic timers, scheduler framework, SMP/multi-vCPU delivery, migration, resumable execution, or performance/latency claims.
 
 ## Promotion rule
 
-After the ioeventfd-to-irqfd round trip is integrated and exact merged-`main` CI is green, seal this fixed doorbell bridge rather than multiplying eventfd flags, addresses, or queues.
+After the PCI discovery/BAR execution proof is integrated and exact merged-`main` CI is green, seal this one-function mechanism-#1 phase rather than farming more fixed config registers, BDFs, or BAR values.
 
-The next architecture audit should prefer a materially higher device-model frontier. A strong candidate is a minimal PCI/virtio discovery/configuration transport that gives the accelerated doorbell a real enumerated device/queue context and executable guest-visible semantics. IOAPIC/MSI, SMP, DMA/IOMMU, migration, irqfd resample, and performance work remain separate higher-order phases unless an executable prerequisite makes one of them necessary first.
+The next architecture audit should prefer a materially higher device-model frontier. A strong candidate is a minimal, truthful virtio PCI transport only if it can implement real standard identity/capability/feature/queue semantics with executable evidence rather than relabeling the synthetic device. Another valid frontier is a PCI interrupt transport (for example MSI/MSI-X) only when its controller/routing prerequisites and guest-visible programming model can be proven end to end. BAR relocation/sizing, PCIe ECAM, SMP, DMA/IOMMU, migration, and performance work remain separate phases unless one becomes a necessary executable prerequisite.

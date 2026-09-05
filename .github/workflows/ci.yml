@@ -356,6 +356,26 @@ jobs:
           (( (completion_rflags & 0x2) == 0x2 ))
           (( (completion_rflags & 0x200) == 0x200 ))
           grep -F 'round-trip proof: [82, 65, 84, 87, 68]' <<<"$output"
+      - name: Strict KVM PCI configuration BAR discovery proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin pci-config-bar-discovery)"
+          printf '%s\n' "$output"
+          grep -F 'pci function: 00:01.0' <<<"$output"
+          grep -F 'pci identity: vendor=0xcafe device=0x0001' <<<"$output"
+          grep -F 'pci class: 0xff' <<<"$output"
+          grep -F 'pci BAR0: 0x10000000' <<<"$output"
+          grep -F 'pci BAR writes: [87]' <<<"$output"
+          grep -F 'pci config/MMIO proof: [80, 67, 66, 77]' <<<"$output"
+          grep -F 'pci port-I/O exits: 10' <<<"$output"
+          grep -F 'pci MMIO exits: 1' <<<"$output"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10065, rflags=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
 
   msrv:
     runs-on: ubuntu-latest
