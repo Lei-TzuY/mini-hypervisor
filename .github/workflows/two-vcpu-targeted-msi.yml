@@ -10,8 +10,12 @@ on:
       - 'src/bin/two-vcpu-targeted-msi.rs'
       - 'tests/two_vcpu_targeted_msi_guest.rs'
       - 'src/kvm/msi.rs'
+      - 'src/kvm/irqchip.rs'
+      - 'src/kvm/async_timer.rs'
+      - 'src/kvm/mp_state.rs'
       - 'src/vcpu.rs'
       - 'src/vcpu/interrupt.rs'
+      - 'src/vcpu/mp_state.rs'
       - 'src/interrupt.rs'
       - '.github/workflows/two-vcpu-targeted-msi.yml'
 
@@ -34,6 +38,7 @@ jobs:
           grep -F 'targeted MSI address: 0xfee01000' <<<"$output"
           grep -F 'targeted MSI data: 0x51' <<<"$output"
           grep -F 'targeted MSI deliveries: 1' <<<"$output"
+          grep -F 'targeted MSI second runnable mp-state: 0' <<<"$output"
           grep -F 'targeted MSI first proof: [48, 77, 68]' <<<"$output"
           grep -F 'targeted MSI second proof: [82, 73, 49, 68]' <<<"$output"
 
