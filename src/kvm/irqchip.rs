@@ -254,19 +254,20 @@ impl KvmBackend {
 }
 
 impl Vm {
-    pub fn pulse_gsi_edge(&self, gsi: u32) -> Result<(), Error> {
-        set_irq_line(self.fd.as_raw_fd(), KvmIrqLevel::new(gsi, true)).map_err(|source| {
-            Error::HostEnvironment(HostEnvironmentError::VmOperation {
-                operation: "KVM_IRQ_LINE assert",
-                source,
-            })
-        })?;
-        set_irq_line(self.fd.as_raw_fd(), KvmIrqLevel::new(gsi, false)).map_err(|source| {
-            Error::HostEnvironment(HostEnvironmentError::VmOperation {
-                operation: "KVM_IRQ_LINE deassert",
-                source,
-            })
+    pub fn set_gsi_level(&self, gsi: u32, asserted: bool) -> Result<(), Error> {
+        let operation = if asserted {
+            "KVM_IRQ_LINE assert"
+        } else {
+            "KVM_IRQ_LINE deassert"
+        };
+        set_irq_line(self.fd.as_raw_fd(), KvmIrqLevel::new(gsi, asserted)).map_err(|source| {
+            Error::HostEnvironment(HostEnvironmentError::VmOperation { operation, source })
         })
+    }
+
+    pub fn pulse_gsi_edge(&self, gsi: u32) -> Result<(), Error> {
+        self.set_gsi_level(gsi, true)?;
+        self.set_gsi_level(gsi, false)
     }
 }
 
