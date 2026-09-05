@@ -227,16 +227,16 @@ fn validate_device_mappings(
             return Err(LongModeMmioConfigurationError::VirtualPageMisaligned { virtual_page });
         }
         if !(LONG_MODE_ALIAS_VIRTUAL_BASE..LONG_MODE_ALIAS_VIRTUAL_END).contains(&virtual_page) {
-            return Err(LongModeMmioConfigurationError::VirtualPageOutsideAliasWindow {
-                virtual_page,
-            });
+            return Err(
+                LongModeMmioConfigurationError::VirtualPageOutsideAliasWindow { virtual_page },
+            );
         }
         if device_page % LONG_MODE_PAGE_SIZE != 0 {
             return Err(LongModeMmioConfigurationError::DevicePageMisaligned { device_page });
         }
-        device_page.checked_add(LONG_MODE_PAGE_SIZE).ok_or(
-            LongModeMmioConfigurationError::DevicePageAddressOverflow { device_page },
-        )?;
+        device_page
+            .checked_add(LONG_MODE_PAGE_SIZE)
+            .ok_or(LongModeMmioConfigurationError::DevicePageAddressOverflow { device_page })?;
         if device_page < memory.end().get() {
             return Err(LongModeMmioConfigurationError::DevicePageBackedByRam {
                 device_page,
@@ -417,15 +417,10 @@ mod tests {
 
     #[test]
     fn rejects_invalid_or_duplicate_device_mappings() {
-        let memory = GuestMemoryRegion::new(
-            GuestPhysAddr::new(0),
-            LONG_MODE_IDENTITY_MAP_SIZE,
-        )
-        .unwrap();
-        let valid = LongModeMmioPageMapping::new(
-            LONG_MODE_MMIO_VIRTUAL_PAGE,
-            LONG_MODE_MMIO_DEVICE_GPA,
-        );
+        let memory =
+            GuestMemoryRegion::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let valid =
+            LongModeMmioPageMapping::new(LONG_MODE_MMIO_VIRTUAL_PAGE, LONG_MODE_MMIO_DEVICE_GPA);
 
         assert!(matches!(
             LongModeMmioBootLayout::with_device_mappings(
