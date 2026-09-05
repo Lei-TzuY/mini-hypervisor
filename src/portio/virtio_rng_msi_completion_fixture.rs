@@ -8,9 +8,8 @@ use super::pci::{
     config_selector, PciConfigMechanism1, PCI_CONFIG_ADDRESS_PORT, PCI_CONFIG_DATA_PORT,
 };
 use super::virtio_rng_completion_interrupt_fixture::{
-    VIRTIO_RNG_INTERRUPT_AVAIL_GPA, VIRTIO_RNG_INTERRUPT_BAR0_GPA,
-    VIRTIO_RNG_INTERRUPT_BUFFER_GPA, VIRTIO_RNG_INTERRUPT_DESCRIPTOR_GPA,
-    VIRTIO_RNG_INTERRUPT_USED_GPA,
+    VIRTIO_RNG_INTERRUPT_AVAIL_GPA, VIRTIO_RNG_INTERRUPT_BAR0_GPA, VIRTIO_RNG_INTERRUPT_BUFFER_GPA,
+    VIRTIO_RNG_INTERRUPT_DESCRIPTOR_GPA, VIRTIO_RNG_INTERRUPT_USED_GPA,
 };
 use super::{PortIoBus, DEBUG_PORT};
 use crate::config::VmConfig;
@@ -255,7 +254,9 @@ pub fn run_virtio_rng_msi_completion_guest(
                             ))
                         })?
                         .ok_or_else(|| {
-                            verification_error("virtio-rng BAR disappeared before MSI queue processing")
+                            verification_error(
+                                "virtio-rng BAR disappeared before MSI queue processing",
+                            )
                         })?;
                     let message = port_io.virtio_rng_msi_message().ok_or_else(|| {
                         verification_error(
@@ -339,9 +340,9 @@ pub fn run_virtio_rng_msi_completion_guest(
         .virtio_rng_queue_enabled_at(VIRTIO_RNG_INTERRUPT_BAR0_GPA)
         .ok_or_else(|| verification_error("virtio-rng MSI queue state unavailable"))?;
 
-    let memory = vm
-        .guest_memory()
-        .ok_or_else(|| verification_error("virtio-rng MSI VM lost guest memory before verification"))?;
+    let memory = vm.guest_memory().ok_or_else(|| {
+        verification_error("virtio-rng MSI VM lost guest memory before verification")
+    })?;
     let used_idx = read_u16(memory, VIRTIO_RNG_INTERRUPT_USED_GPA + 2)?;
     let used_id = read_u32(memory, VIRTIO_RNG_INTERRUPT_USED_GPA + 4)?;
     let used_len = read_u32(memory, VIRTIO_RNG_INTERRUPT_USED_GPA + 8)?;
@@ -420,7 +421,10 @@ fn validate_io_sequence(exits: &[PortIoExit]) -> Result<(), Error> {
     const WRITE_CYCLES: [(u8, u32); 3] = [
         (VIRTIO_MSI_ADDRESS_OFFSET, VIRTIO_RNG_MSI_ADDRESS),
         (VIRTIO_MSI_DATA_OFFSET, VIRTIO_RNG_MSI_DATA as u32),
-        (VIRTIO_MSI_CAPABILITY_OFFSET, PCI_MSI_ENABLE | PCI_CAP_ID_MSI),
+        (
+            VIRTIO_MSI_CAPABILITY_OFFSET,
+            PCI_MSI_ENABLE | PCI_CAP_ID_MSI,
+        ),
     ];
     if exits.len() != 27 {
         return Err(verification_error(format!(
@@ -508,7 +512,12 @@ fn validate_mmio_sequence(exits: &[MmioExit]) -> Result<(), Error> {
             &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK],
         ),
         (0x16, MmioDirection::Write, 2, &0_u16.to_le_bytes()),
-        (0x18, MmioDirection::Write, 2, &VIRTIO_QUEUE_SIZE.to_le_bytes()),
+        (
+            0x18,
+            MmioDirection::Write,
+            2,
+            &VIRTIO_QUEUE_SIZE.to_le_bytes(),
+        ),
         (
             0x20,
             MmioDirection::Write,
@@ -615,7 +624,11 @@ fn build_guest() -> Vec<u8> {
     emit_cmp_eax(&mut code, VIRTIO_RNG_INTERRUPT_BAR0_GPA as u32);
 
     emit_pci_write(&mut code, VIRTIO_MSI_ADDRESS_OFFSET, VIRTIO_RNG_MSI_ADDRESS);
-    emit_pci_write(&mut code, VIRTIO_MSI_DATA_OFFSET, u32::from(VIRTIO_RNG_MSI_DATA));
+    emit_pci_write(
+        &mut code,
+        VIRTIO_MSI_DATA_OFFSET,
+        u32::from(VIRTIO_RNG_MSI_DATA),
+    );
     emit_pci_write(
         &mut code,
         VIRTIO_MSI_CAPABILITY_OFFSET,
@@ -795,7 +808,9 @@ mod tests {
         assert!(guest.windows(4).any(|window| window == b"\xb0N\xe6\xe9"));
         assert!(handler.windows(4).any(|window| window == b"\xb0M\xe6\xe9"));
         assert!(handler.windows(4).any(|window| window == b"\xb0A\xe6\xe9"));
-        assert!(!handler.windows(4).any(|window| window == [0xb0, 0x20, 0xe6, 0x20]));
+        assert!(!handler
+            .windows(4)
+            .any(|window| window == [0xb0, 0x20, 0xe6, 0x20]));
         assert!(handler.ends_with(&[0x48, 0xcf]));
         assert!(guest.ends_with(&[0xb0, b'D', 0xe6, 0xe9, 0xf4]));
     }
