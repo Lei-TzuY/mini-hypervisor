@@ -25,14 +25,20 @@ fn virtio_rng_completion_asserts_intx_reads_isr_and_deasserts_before_resume() {
             assert_eq!(result.driver_features(), VIRTIO_F_VERSION_1);
             assert!(result.queue_enabled());
             assert_eq!(result.completion().descriptor_id(), 0);
-            assert_eq!(result.completion().length(), VIRTIO_RNG_TEST_PAYLOAD.len() as u32);
+            assert_eq!(
+                result.completion().length(),
+                VIRTIO_RNG_TEST_PAYLOAD.len() as u32
+            );
             assert_eq!(result.used_idx(), 1);
             assert_eq!(result.used_id(), 0);
             assert_eq!(result.used_len(), VIRTIO_RNG_TEST_PAYLOAD.len() as u32);
             assert_eq!(result.payload(), VIRTIO_RNG_TEST_PAYLOAD);
             assert_eq!(result.proof(), VIRTIO_RNG_INTERRUPT_PROOF);
 
-            assert_eq!(result.io_exits().len(), VIRTIO_RNG_INTERRUPT_PROOF.len() + 12);
+            assert_eq!(
+                result.io_exits().len(),
+                VIRTIO_RNG_INTERRUPT_PROOF.len() + 12
+            );
             for (exit, expected) in result.io_exits()[12..]
                 .iter()
                 .zip(VIRTIO_RNG_INTERRUPT_PROOF.iter().copied())
@@ -79,6 +85,8 @@ fn virtio_rng_completion_asserts_intx_reads_isr_and_deasserts_before_resume() {
                 "skipping virtio-rng completion interrupt integration assertion: /dev/kvm is unavailable to this runner"
             );
         }
-        Err(error) => panic!("virtio-rng completion interrupt execution failed unexpectedly: {error}"),
+        Err(error) => {
+            panic!("virtio-rng completion interrupt execution failed unexpectedly: {error}")
+        }
     }
 }
