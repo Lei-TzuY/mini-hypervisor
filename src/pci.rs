@@ -42,9 +42,7 @@ impl SyntheticPciFunction {
         match offset {
             0x00 => (u32::from(SYNTHETIC_PCI_DEVICE_ID) << 16) | u32::from(SYNTHETIC_PCI_VENDOR_ID),
             0x04 => 0,
-            0x08 => {
-                (u32::from(SYNTHETIC_PCI_CLASS_CODE) << 24) | u32::from(SYNTHETIC_PCI_REVISION)
-            }
+            0x08 => (u32::from(SYNTHETIC_PCI_CLASS_CODE) << 24) | u32::from(SYNTHETIC_PCI_REVISION),
             0x0c => 0,
             0x10 => self.bar0,
             _ => 0,
