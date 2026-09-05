@@ -73,43 +73,99 @@ pub struct VirtioBlkCompletionInterruptGuestResult {
 
 impl VirtioBlkCompletionInterruptGuestResult {
     #[must_use]
-    pub fn io_exits(&self) -> &[PortIoExit] { &self.io_exits }
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
+
     #[must_use]
-    pub fn mmio_exits(&self) -> &[MmioExit] { &self.mmio_exits }
+    pub fn mmio_exits(&self) -> &[MmioExit] {
+        &self.mmio_exits
+    }
+
     #[must_use]
-    pub fn proof(&self) -> &[u8] { &self.proof }
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
+
     #[must_use]
-    pub const fn completion(&self) -> VirtioBlkQueueCompletion { self.completion }
+    pub const fn completion(&self) -> VirtioBlkQueueCompletion {
+        self.completion
+    }
+
     #[must_use]
-    pub const fn status(&self) -> u8 { self.status }
+    pub const fn status(&self) -> u8 {
+        self.status
+    }
+
     #[must_use]
-    pub const fn driver_features(&self) -> u64 { self.driver_features }
+    pub const fn driver_features(&self) -> u64 {
+        self.driver_features
+    }
+
     #[must_use]
-    pub const fn queue_enabled(&self) -> bool { self.queue_enabled }
+    pub const fn queue_enabled(&self) -> bool {
+        self.queue_enabled
+    }
+
     #[must_use]
-    pub fn data(&self) -> &[u8] { &self.data }
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
     #[must_use]
-    pub const fn request_status(&self) -> u8 { self.request_status }
+    pub const fn request_status(&self) -> u8 {
+        self.request_status
+    }
+
     #[must_use]
-    pub const fn used_idx(&self) -> u16 { self.used_idx }
+    pub const fn used_idx(&self) -> u16 {
+        self.used_idx
+    }
+
     #[must_use]
-    pub const fn used_id(&self) -> u32 { self.used_id }
+    pub const fn used_id(&self) -> u32 {
+        self.used_id
+    }
+
     #[must_use]
-    pub const fn used_len(&self) -> u32 { self.used_len }
+    pub const fn used_len(&self) -> u32 {
+        self.used_len
+    }
+
     #[must_use]
-    pub const fn gsi(&self) -> u32 { self.gsi }
+    pub const fn gsi(&self) -> u32 {
+        self.gsi
+    }
+
     #[must_use]
-    pub const fn vector(&self) -> u8 { self.vector }
+    pub const fn vector(&self) -> u8 {
+        self.vector
+    }
+
     #[must_use]
-    pub const fn lapic_spiv(&self) -> u32 { self.lapic_spiv }
+    pub const fn lapic_spiv(&self) -> u32 {
+        self.lapic_spiv
+    }
+
     #[must_use]
-    pub const fn lapic_lint0(&self) -> u32 { self.lapic_lint0 }
+    pub const fn lapic_lint0(&self) -> u32 {
+        self.lapic_lint0
+    }
+
     #[must_use]
-    pub const fn assert_count(&self) -> u32 { self.assert_count }
+    pub const fn assert_count(&self) -> u32 {
+        self.assert_count
+    }
+
     #[must_use]
-    pub const fn deassert_count(&self) -> u32 { self.deassert_count }
+    pub const fn deassert_count(&self) -> u32 {
+        self.deassert_count
+    }
+
     #[must_use]
-    pub const fn completion_rflags(&self) -> u64 { self.completion_rflags }
+    pub const fn completion_rflags(&self) -> u64 {
+        self.completion_rflags
+    }
 }
 
 pub fn run_virtio_blk_completion_interrupt_guest(
@@ -179,14 +235,20 @@ pub fn run_virtio_blk_completion_interrupt_guest(
             VmExitDisposition::Continue(continuation) => {
                 if is_debug_output(&continuation, NOTIFY_BARRIER) {
                     if queue_completion.is_some() || line_asserted {
-                        return Err(verification_error("duplicate virtio-blk INTx notify barrier"));
+                        return Err(verification_error(
+                            "duplicate virtio-blk INTx notify barrier",
+                        ));
                     }
                     let event = mmio.take_device_event_record().ok_or_else(|| {
-                        verification_error("notify barrier arrived without a pending virtio-blk event")
+                        verification_error(
+                            "notify barrier arrived without a pending virtio-blk event",
+                        )
                     })?;
                     let expected = MmioDeviceEventRecord::new(
                         VIRTIO_BLK_INTERRUPT_BAR0_GPA,
-                        MmioDeviceEvent::VirtioQueueNotified { queue: VIRTIO_QUEUE_INDEX },
+                        MmioDeviceEvent::VirtioQueueNotified {
+                            queue: VIRTIO_QUEUE_INDEX,
+                        },
                     );
                     if event != expected {
                         return Err(verification_error(format!(
@@ -198,12 +260,16 @@ pub fn run_virtio_blk_completion_interrupt_guest(
                     })?;
                     let completion = mmio
                         .process_virtio_blk_notification(VIRTIO_BLK_INTERRUPT_BAR0_GPA, memory)
-                        .map_err(|error| verification_error(format!(
-                            "virtio-blk queue processing failed before INTx delivery: {error}"
-                        )))?
-                        .ok_or_else(|| verification_error(
-                            "virtio-blk BAR disappeared before INTx queue processing"
-                        ))?;
+                        .map_err(|error| {
+                            verification_error(format!(
+                                "virtio-blk queue processing failed before INTx delivery: {error}"
+                            ))
+                        })?
+                        .ok_or_else(|| {
+                            verification_error(
+                                "virtio-blk BAR disappeared before INTx queue processing",
+                            )
+                        })?;
                     vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, true)?;
                     queue_completion = Some(completion);
                     line_asserted = true;
@@ -211,7 +277,7 @@ pub fn run_virtio_blk_completion_interrupt_guest(
                 } else if is_debug_output(&continuation, ISR_ACK_BARRIER) {
                     if queue_completion.is_none() || !line_asserted {
                         return Err(verification_error(
-                            "virtio-blk ISR ACK barrier arrived without asserted completion line"
+                            "virtio-blk ISR ACK barrier arrived without asserted completion line",
                         ));
                     }
                     vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, false)?;
@@ -224,7 +290,9 @@ pub fn run_virtio_blk_completion_interrupt_guest(
                     VmExitContinuation::PortIo(io) => io_exits.push(io),
                     VmExitContinuation::Mmio(access) => mmio_exits.push(access),
                 }
-                if completion_barrier { break; }
+                if completion_barrier {
+                    break;
+                }
             }
             VmExitDisposition::Stopped(report) => {
                 return Err(verification_error(format!(
@@ -236,7 +304,7 @@ pub fn run_virtio_blk_completion_interrupt_guest(
 
     if line_asserted {
         return Err(verification_error(
-            "virtio-blk INTx completion left GSI asserted after ISR acknowledgement"
+            "virtio-blk INTx completion left GSI asserted after ISR acknowledgement",
         ));
     }
     if assert_count != 1 || deassert_count != 1 {
@@ -245,7 +313,9 @@ pub fn run_virtio_blk_completion_interrupt_guest(
         )));
     }
     if mmio.take_device_event_record().is_some() {
-        return Err(verification_error("virtio-blk INTx execution left extra device event"));
+        return Err(verification_error(
+            "virtio-blk INTx execution left extra device event",
+        ));
     }
     if completed_exits != VIRTIO_BLK_INTERRUPT_EXIT_BUDGET {
         return Err(verification_error(format!(
@@ -276,7 +346,10 @@ pub fn run_virtio_blk_completion_interrupt_guest(
     let used_id = read_u32(memory, VIRTIO_BLK_INTERRUPT_USED_GPA + 4)?;
     let used_len = read_u32(memory, VIRTIO_BLK_INTERRUPT_USED_GPA + 8)?;
     let mut data = vec![0_u8; VIRTIO_BLK_SECTOR_SIZE];
-    memory.read(GuestPhysAddr::new(VIRTIO_BLK_INTERRUPT_DATA_GPA), &mut data)?;
+    memory.read(
+        GuestPhysAddr::new(VIRTIO_BLK_INTERRUPT_DATA_GPA),
+        &mut data,
+    )?;
     let mut request_status = [0xff_u8];
     memory.read(
         GuestPhysAddr::new(VIRTIO_BLK_INTERRUPT_STATUS_GPA),
@@ -400,23 +473,66 @@ fn validate_io_sequence(exits: &[PortIoExit]) -> Result<(), Error> {
 fn validate_mmio_sequence(exits: &[MmioExit]) -> Result<(), Error> {
     let expected: [(u64, MmioDirection, u32, &[u8]); 22] = [
         (0x300, MmioDirection::Read, 8, &[]),
-        (0x14, MmioDirection::Write, 1, &[VIRTIO_STATUS_ACKNOWLEDGE]),
-        (0x14, MmioDirection::Write, 1, &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER]),
+        (
+            0x14,
+            MmioDirection::Write,
+            1,
+            &[VIRTIO_STATUS_ACKNOWLEDGE],
+        ),
+        (
+            0x14,
+            MmioDirection::Write,
+            1,
+            &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER],
+        ),
         (0x00, MmioDirection::Write, 4, &1_u32.to_le_bytes()),
         (0x04, MmioDirection::Read, 4, &[]),
         (0x08, MmioDirection::Write, 4, &1_u32.to_le_bytes()),
         (0x0c, MmioDirection::Write, 4, &1_u32.to_le_bytes()),
-        (0x14, MmioDirection::Write, 1, &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK]),
+        (
+            0x14,
+            MmioDirection::Write,
+            1,
+            &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK],
+        ),
         (0x16, MmioDirection::Write, 2, &0_u16.to_le_bytes()),
-        (0x18, MmioDirection::Write, 2, &VIRTIO_QUEUE_SIZE.to_le_bytes()),
-        (0x20, MmioDirection::Write, 4, &(VIRTIO_BLK_INTERRUPT_DESCRIPTOR_GPA as u32).to_le_bytes()),
+        (
+            0x18,
+            MmioDirection::Write,
+            2,
+            &VIRTIO_QUEUE_SIZE.to_le_bytes(),
+        ),
+        (
+            0x20,
+            MmioDirection::Write,
+            4,
+            &(VIRTIO_BLK_INTERRUPT_DESCRIPTOR_GPA as u32).to_le_bytes(),
+        ),
         (0x24, MmioDirection::Write, 4, &0_u32.to_le_bytes()),
-        (0x28, MmioDirection::Write, 4, &(VIRTIO_BLK_INTERRUPT_AVAIL_GPA as u32).to_le_bytes()),
+        (
+            0x28,
+            MmioDirection::Write,
+            4,
+            &(VIRTIO_BLK_INTERRUPT_AVAIL_GPA as u32).to_le_bytes(),
+        ),
         (0x2c, MmioDirection::Write, 4, &0_u32.to_le_bytes()),
-        (0x30, MmioDirection::Write, 4, &(VIRTIO_BLK_INTERRUPT_USED_GPA as u32).to_le_bytes()),
+        (
+            0x30,
+            MmioDirection::Write,
+            4,
+            &(VIRTIO_BLK_INTERRUPT_USED_GPA as u32).to_le_bytes(),
+        ),
         (0x34, MmioDirection::Write, 4, &0_u32.to_le_bytes()),
         (0x1c, MmioDirection::Write, 2, &1_u16.to_le_bytes()),
-        (0x14, MmioDirection::Write, 1, &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK]),
+        (
+            0x14,
+            MmioDirection::Write,
+            1,
+            &[VIRTIO_STATUS_ACKNOWLEDGE
+                | VIRTIO_STATUS_DRIVER
+                | VIRTIO_STATUS_FEATURES_OK
+                | VIRTIO_STATUS_DRIVER_OK],
+        ),
         (0x14, MmioDirection::Read, 1, &[]),
         (0x100, MmioDirection::Write, 2, &0_u16.to_le_bytes()),
         (VIRTIO_ISR_OFFSET, MmioDirection::Read, 1, &[]),
@@ -429,7 +545,9 @@ fn validate_mmio_sequence(exits: &[MmioExit]) -> Result<(), Error> {
             exits.len()
         )));
     }
-    for (index, (exit, (offset, direction, length, payload))) in exits.iter().zip(expected).enumerate() {
+    for (index, (exit, (offset, direction, length, payload))) in
+        exits.iter().zip(expected).enumerate()
+    {
         if exit.address() != VIRTIO_BLK_INTERRUPT_BAR0_GPA + offset
             || exit.direction() != direction
             || exit.length() != length
@@ -469,7 +587,10 @@ fn build_guest() -> Vec<u8> {
     code.extend_from_slice(&[0xfb, 0x90]);
 
     emit_pci_read(&mut code, 0x00);
-    emit_cmp_eax(&mut code, (u32::from(VIRTIO_BLK_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID));
+    emit_cmp_eax(
+        &mut code,
+        (u32::from(VIRTIO_BLK_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID),
+    );
     emit_pci_read(&mut code, 0x34);
     emit_cmp_eax(&mut code, 0x40);
     emit_pci_read(&mut code, 0x40);
@@ -490,25 +611,58 @@ fn build_guest() -> Vec<u8> {
     code.extend_from_slice(&[0x48, 0x83, 0xf8, VIRTIO_BLK_CAPACITY_SECTORS as u8]);
     emit_equal_or_ud2(&mut code);
     emit_mmio_byte_write(&mut code, 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
-    emit_mmio_byte_write(&mut code, 0x14, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+    emit_mmio_byte_write(
+        &mut code,
+        0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
     emit_mmio_dword_write(&mut code, 0x00, 1);
     code.extend_from_slice(&[0x8b, 0x43, 0x04]);
     emit_cmp_eax(&mut code, 1);
     emit_mmio_dword_write(&mut code, 0x08, 1);
     emit_mmio_dword_write(&mut code, 0x0c, 1);
-    emit_mmio_byte_write(&mut code, 0x14, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
+    emit_mmio_byte_write(
+        &mut code,
+        0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
     emit_mmio_word_write(&mut code, 0x16, 0);
     emit_mmio_word_write(&mut code, 0x18, VIRTIO_QUEUE_SIZE);
-    emit_mmio_dword_write(&mut code, 0x20, VIRTIO_BLK_INTERRUPT_DESCRIPTOR_GPA as u32);
+    emit_mmio_dword_write(
+        &mut code,
+        0x20,
+        VIRTIO_BLK_INTERRUPT_DESCRIPTOR_GPA as u32,
+    );
     emit_mmio_dword_write(&mut code, 0x24, 0);
-    emit_mmio_dword_write(&mut code, 0x28, VIRTIO_BLK_INTERRUPT_AVAIL_GPA as u32);
+    emit_mmio_dword_write(
+        &mut code,
+        0x28,
+        VIRTIO_BLK_INTERRUPT_AVAIL_GPA as u32,
+    );
     emit_mmio_dword_write(&mut code, 0x2c, 0);
-    emit_mmio_dword_write(&mut code, 0x30, VIRTIO_BLK_INTERRUPT_USED_GPA as u32);
+    emit_mmio_dword_write(
+        &mut code,
+        0x30,
+        VIRTIO_BLK_INTERRUPT_USED_GPA as u32,
+    );
     emit_mmio_dword_write(&mut code, 0x34, 0);
     emit_mmio_word_write(&mut code, 0x1c, 1);
-    emit_mmio_byte_write(&mut code, 0x14, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
+    emit_mmio_byte_write(
+        &mut code,
+        0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
     code.extend_from_slice(&[0x8a, 0x43, 0x14]);
-    emit_cmp_al(&mut code, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
+    emit_cmp_al(
+        &mut code,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
     emit_debug(&mut code, b'B');
 
     emit_ring_setup(&mut code);
@@ -573,7 +727,9 @@ fn emit_equal_or_ud2(code: &mut Vec<u8>) {
     code.extend_from_slice(&[0x74, 0x02, 0x0f, 0x0b]);
 }
 
-fn emit_debug(code: &mut Vec<u8>, byte: u8) { code.extend_from_slice(&[0xb0, byte, 0xe6, 0xe9]); }
+fn emit_debug(code: &mut Vec<u8>, byte: u8) {
+    code.extend_from_slice(&[0xb0, byte, 0xe6, 0xe9]);
+}
 
 fn emit_movabs(code: &mut Vec<u8>, register: u8, value: u64) {
     debug_assert!(register < 8);
@@ -661,10 +817,14 @@ mod tests {
         let handler = build_interrupt_handler();
         assert!(guest.ends_with(&[0xb0, b'D', 0xe6, 0xe9, 0xf4]));
         for marker in *b"PBNRD" {
-            assert!(guest.windows(4).any(|window| window == [0xb0, marker, 0xe6, 0xe9]));
+            assert!(guest
+                .windows(4)
+                .any(|window| window == [0xb0, marker, 0xe6, 0xe9]));
         }
         for marker in *b"IA" {
-            assert!(handler.windows(4).any(|window| window == [0xb0, marker, 0xe6, 0xe9]));
+            assert!(handler
+                .windows(4)
+                .any(|window| window == [0xb0, marker, 0xe6, 0xe9]));
         }
         assert!(handler.ends_with(&[0x48, 0xcf]));
     }
