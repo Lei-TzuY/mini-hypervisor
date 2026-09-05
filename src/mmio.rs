@@ -6,6 +6,7 @@ pub mod interrupt;
 pub mod level_interrupt;
 pub mod long_mode;
 pub mod multi_device;
+pub mod routing;
 
 pub const BYTE_DEVICE_ADDRESS: u64 = 0x2000;
 pub const LEVEL_INTERRUPT_STATUS_OFFSET: u64 = 1;
@@ -24,6 +25,32 @@ pub enum MmioDeviceEvent {
     InterruptRequested,
     InterruptLineAssertRequested,
     InterruptLineDeassertRequested,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MmioDeviceEventRecord {
+    device_address: u64,
+    event: MmioDeviceEvent,
+}
+
+impl MmioDeviceEventRecord {
+    #[must_use]
+    pub const fn new(device_address: u64, event: MmioDeviceEvent) -> Self {
+        Self {
+            device_address,
+            event,
+        }
+    }
+
+    #[must_use]
+    pub const fn device_address(self) -> u64 {
+        self.device_address
+    }
+
+    #[must_use]
+    pub const fn event(self) -> MmioDeviceEvent {
+        self.event
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +159,17 @@ impl MmioBus {
         ))
     }
 
+    pub fn register_level_interrupt_byte_device_at(
+        &mut self,
+        address: u64,
+    ) -> Result<(), MmioRegistrationError> {
+        self.register_device(ByteMmioDevice::new(
+            address,
+            0,
+            ByteMmioDeviceMode::LevelInterrupt,
+        ))
+    }
+
     pub fn dispatch(&mut self, exit: &MmioExit) -> Result<MmioService, Error> {
         match self
             .byte_devices
@@ -147,10 +185,19 @@ impl MmioBus {
         }
     }
 
+    pub fn take_device_event_record(&mut self) -> Option<MmioDeviceEventRecord> {
+        for device in &mut self.byte_devices {
+            let device_address = device.address;
+            if let Some(event) = device.take_event() {
+                return Some(MmioDeviceEventRecord::new(device_address, event));
+            }
+        }
+        None
+    }
+
     pub fn take_device_event(&mut self) -> Option<MmioDeviceEvent> {
-        self.byte_devices
-            .iter_mut()
-            .find_map(ByteMmioDevice::take_event)
+        self.take_device_event_record()
+            .map(MmioDeviceEventRecord::event)
     }
 
     #[must_use]
@@ -608,6 +655,78 @@ mod tests {
         assert_eq!(bus.writes(), None);
         assert_eq!(bus.writes_at(first), Some(&b"X"[..]));
         assert_eq!(bus.writes_at(second), Some(&b"Y"[..]));
+    }
+
+    #[test]
+    fn multiple_level_interrupt_devices_preserve_event_source_and_line_state() {
+        let first = 0x1000_0000;
+        let second = 0x1000_1000;
+        let mut bus = MmioBus::empty();
+        bus.register_level_interrupt_byte_device_at(first).unwrap();
+        bus.register_level_interrupt_byte_device_at(second).unwrap();
+
+        for base in [first, second] {
+            assert_eq!(
+                bus.dispatch(&exit_at(base, MmioDirection::Write, 1, b"W"))
+                    .unwrap(),
+                MmioService::Write
+            );
+        }
+        assert_eq!(
+            bus.take_device_event_record(),
+            Some(MmioDeviceEventRecord::new(
+                first,
+                MmioDeviceEvent::InterruptLineAssertRequested
+            ))
+        );
+        assert_eq!(
+            bus.take_device_event_record(),
+            Some(MmioDeviceEventRecord::new(
+                second,
+                MmioDeviceEvent::InterruptLineAssertRequested
+            ))
+        );
+        assert_eq!(bus.take_device_event_record(), None);
+
+        assert_eq!(
+            bus.dispatch(&exit_at(
+                first + LEVEL_INTERRUPT_ACK_OFFSET,
+                MmioDirection::Write,
+                1,
+                &[LEVEL_INTERRUPT_ACK_VALUE]
+            ))
+            .unwrap(),
+            MmioService::Write
+        );
+        assert_eq!(
+            bus.take_device_event_record(),
+            Some(MmioDeviceEventRecord::new(
+                first,
+                MmioDeviceEvent::InterruptLineDeassertRequested
+            ))
+        );
+        assert_eq!(bus.take_device_event_record(), None);
+
+        assert_eq!(
+            bus.dispatch(&exit_at(
+                second + LEVEL_INTERRUPT_ACK_OFFSET,
+                MmioDirection::Write,
+                1,
+                &[LEVEL_INTERRUPT_ACK_VALUE]
+            ))
+            .unwrap(),
+            MmioService::Write
+        );
+        assert_eq!(
+            bus.take_device_event_record(),
+            Some(MmioDeviceEventRecord::new(
+                second,
+                MmioDeviceEvent::InterruptLineDeassertRequested
+            ))
+        );
+        assert_eq!(bus.take_device_event_record(), None);
+        assert_eq!(bus.writes_at(first), Some(&[b'W', LEVEL_INTERRUPT_ACK_VALUE][..]));
+        assert_eq!(bus.writes_at(second), Some(&[b'W', LEVEL_INTERRUPT_ACK_VALUE][..]));
     }
 
     #[test]
