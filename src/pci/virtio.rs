@@ -51,8 +51,11 @@ const COMMON_QUEUE_MSIX_VECTOR: u64 = 0x1a;
 const COMMON_QUEUE_ENABLE: u64 = 0x1c;
 const COMMON_QUEUE_NOTIFY_OFF: u64 = 0x1e;
 const COMMON_QUEUE_DESC: u64 = 0x20;
+const COMMON_QUEUE_DESC_HIGH: u64 = COMMON_QUEUE_DESC + 4;
 const COMMON_QUEUE_DRIVER: u64 = 0x28;
+const COMMON_QUEUE_DRIVER_HIGH: u64 = COMMON_QUEUE_DRIVER + 4;
 const COMMON_QUEUE_DEVICE: u64 = 0x30;
+const COMMON_QUEUE_DEVICE_HIGH: u64 = COMMON_QUEUE_DEVICE + 4;
 
 const PCI_STATUS_CAPABILITIES_LIST: u16 = 1 << 4;
 const VIRTIO_CAP_COMMON: u8 = 0x40;
@@ -363,11 +366,11 @@ impl VirtioRngDevice {
             (COMMON_QUEUE_ENABLE, 2) => u16::from(self.queue_enabled).to_le_bytes().to_vec(),
             (COMMON_QUEUE_NOTIFY_OFF, 2) => 0_u16.to_le_bytes().to_vec(),
             (COMMON_QUEUE_DESC, 4) => (self.queue_desc as u32).to_le_bytes().to_vec(),
-            (COMMON_QUEUE_DESC + 4, 4) => ((self.queue_desc >> 32) as u32).to_le_bytes().to_vec(),
+            (COMMON_QUEUE_DESC_HIGH, 4) => ((self.queue_desc >> 32) as u32).to_le_bytes().to_vec(),
             (COMMON_QUEUE_DRIVER, 4) => (self.queue_driver as u32).to_le_bytes().to_vec(),
-            (COMMON_QUEUE_DRIVER + 4, 4) => ((self.queue_driver >> 32) as u32).to_le_bytes().to_vec(),
+            (COMMON_QUEUE_DRIVER_HIGH, 4) => ((self.queue_driver >> 32) as u32).to_le_bytes().to_vec(),
             (COMMON_QUEUE_DEVICE, 4) => (self.queue_device as u32).to_le_bytes().to_vec(),
-            (COMMON_QUEUE_DEVICE + 4, 4) => ((self.queue_device >> 32) as u32).to_le_bytes().to_vec(),
+            (COMMON_QUEUE_DEVICE_HIGH, 4) => ((self.queue_device >> 32) as u32).to_le_bytes().to_vec(),
             (VIRTIO_ISR_OFFSET, 1) => vec![0],
             _ => {
                 return Err(VirtioRngError::UnsupportedRegisterAccess {
@@ -404,7 +407,7 @@ impl VirtioRngDevice {
                 self.ensure_queue_unlocked()?;
                 self.queue_desc = replace_low_u32(self.queue_desc, read_u32(offset, payload)?);
             }
-            (COMMON_QUEUE_DESC + 4, 4) => {
+            (COMMON_QUEUE_DESC_HIGH, 4) => {
                 self.ensure_queue_unlocked()?;
                 self.queue_desc = replace_high_u32(self.queue_desc, read_u32(offset, payload)?);
             }
@@ -412,7 +415,7 @@ impl VirtioRngDevice {
                 self.ensure_queue_unlocked()?;
                 self.queue_driver = replace_low_u32(self.queue_driver, read_u32(offset, payload)?);
             }
-            (COMMON_QUEUE_DRIVER + 4, 4) => {
+            (COMMON_QUEUE_DRIVER_HIGH, 4) => {
                 self.ensure_queue_unlocked()?;
                 self.queue_driver = replace_high_u32(self.queue_driver, read_u32(offset, payload)?);
             }
@@ -420,7 +423,7 @@ impl VirtioRngDevice {
                 self.ensure_queue_unlocked()?;
                 self.queue_device = replace_low_u32(self.queue_device, read_u32(offset, payload)?);
             }
-            (COMMON_QUEUE_DEVICE + 4, 4) => {
+            (COMMON_QUEUE_DEVICE_HIGH, 4) => {
                 self.ensure_queue_unlocked()?;
                 self.queue_device = replace_high_u32(self.queue_device, read_u32(offset, payload)?);
             }
