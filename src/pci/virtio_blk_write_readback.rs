@@ -35,27 +35,10 @@ impl VirtioBlkDevice {
         )?;
         self.ensure_descriptor_index(head)?;
 
-        let header = self.read_descriptor(memory, head)?;
-        self.require_flags(head, header.flags, VIRTQ_DESC_F_NEXT)?;
-        self.require_length(head, header.length, 16)?;
-        let data_index = header.next;
-        self.ensure_descriptor_index(data_index)?;
-        if data_index == head {
-            return Err(VirtioBlkError::DescriptorChainCycle { index: data_index }.into());
-        }
-
-        let data = self.read_descriptor(memory, data_index)?;
-        let status_index = data.next;
-        self.ensure_descriptor_index(status_index)?;
-        if status_index == head || status_index == data_index {
-            return Err(VirtioBlkError::DescriptorChainCycle {
-                index: status_index,
-            }
-            .into());
-        }
-        let status = self.read_descriptor(memory, status_index)?;
-        self.require_flags(status_index, status.flags, VIRTQ_DESC_F_WRITE)?;
-        self.require_length(status_index, status.length, 1)?;
+        let chain = self.resolve_request_chain(memory, head)?;
+        let header = chain.header;
+        let data = chain.data;
+        let status = chain.status;
 
         let mut request = [0_u8; 16];
         memory.read(GuestPhysAddr::new(header.address), &mut request)?;
@@ -75,7 +58,7 @@ impl VirtioBlkDevice {
         } else {
             VIRTQ_DESC_F_NEXT
         };
-        self.require_flags(data_index, data.flags, expected_data_flags)?;
+        self.require_flags(chain.data_index, data.flags, expected_data_flags)?;
 
         let used_idx_address = checked_add(self.queue_device, 2)?;
         let used_idx = read_guest_u16(memory, used_idx_address)?;
