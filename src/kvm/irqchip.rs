@@ -66,6 +66,8 @@ impl KvmIrqLevel {
 pub struct IrqchipGuestResult {
     gsi: u32,
     vector: u8,
+    lapic_spiv: u32,
+    lapic_lint0: u32,
     armed_rflags: u64,
     io_exits: Vec<PortIoExit>,
     proof: Vec<u8>,
@@ -81,6 +83,16 @@ impl IrqchipGuestResult {
     #[must_use]
     pub const fn vector(&self) -> u8 {
         self.vector
+    }
+
+    #[must_use]
+    pub const fn lapic_spiv(&self) -> u32 {
+        self.lapic_spiv
+    }
+
+    #[must_use]
+    pub const fn lapic_lint0(&self) -> u32 {
+        self.lapic_lint0
     }
 
     #[must_use]
@@ -154,6 +166,7 @@ impl KvmBackend {
         debug_assert_eq!(config.vcpu_count(), 1);
         let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
         vcpu.initialize_long_mode_interrupts(&layout)?;
+        let lapic = vcpu.configure_legacy_pic_extint()?;
         let mut port_io = PortIoBus::with_debug_port();
 
         let readiness_io = run_expected_debug_output(
@@ -225,6 +238,8 @@ impl KvmBackend {
         Ok(IrqchipGuestResult {
             gsi: Self::IRQCHIP_GSI,
             vector: Self::IRQCHIP_VECTOR,
+            lapic_spiv: lapic.spiv(),
+            lapic_lint0: lapic.lint0(),
             armed_rflags: armed.rflags,
             io_exits,
             proof,
