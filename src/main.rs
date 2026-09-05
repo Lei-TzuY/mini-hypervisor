@@ -4,6 +4,10 @@ use mini_hypervisor::loader::elf64::{
     expected_proof as expected_elf64_proof, proof_terminal_rip as elf64_terminal_rip,
     run_elf64_guest,
 };
+use mini_hypervisor::mmio::long_mode::{
+    run_long_mode_mmio_guest, LONG_MODE_MMIO_PROOF, LONG_MODE_MMIO_TERMINAL_RIP,
+    LONG_MODE_MMIO_WRITE_VALUE,
+};
 use mini_hypervisor::mmio_fixture::{
     run_mmio_guest, MMIO_GUEST_PROOF, MMIO_GUEST_TERMINAL_RIP, MMIO_GUEST_WRITE_VALUE,
 };
@@ -157,9 +161,29 @@ fn run() -> Result<ExitCode, mini_hypervisor::error::Error> {
                 Ok(ExitCode::FAILURE)
             }
         }
+        Some("run-long-mode-mmio") => {
+            let result = run_long_mode_mmio_guest(VmConfig::default())?;
+            let report = result.report();
+            println!("long-mode mmio writes: {:?}", result.writes());
+            println!("long-mode mmio proof: {:?}", result.proof());
+            println!("{report}");
+
+            if long_mode_mmio_proof_is_valid(
+                result.proof(),
+                result.writes(),
+                report.exit(),
+                report.rip(),
+                report.rflags(),
+            ) {
+                Ok(ExitCode::SUCCESS)
+            } else {
+                eprintln!("long-mode virtual MMIO execution proof contract failed");
+                Ok(ExitCode::FAILURE)
+            }
+        }
         Some(other) => {
             eprintln!(
-                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port|run-long-mode|run-elf64|run-mmio]"
+                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port|run-long-mode|run-elf64|run-mmio|run-long-mode-mmio]"
             );
             eprintln!("unknown command: {other}");
             Ok(ExitCode::from(2))
@@ -211,6 +235,24 @@ fn mmio_proof_is_valid(proof: &[u8], writes: &[u8], exit: VcpuExit, rip: u64, rf
             exit,
             rip,
             MMIO_GUEST_TERMINAL_RIP,
+            rflags,
+        )
+}
+
+fn long_mode_mmio_proof_is_valid(
+    proof: &[u8],
+    writes: &[u8],
+    exit: VcpuExit,
+    rip: u64,
+    rflags: u64,
+) -> bool {
+    writes == [LONG_MODE_MMIO_WRITE_VALUE]
+        && terminal_proof_is_valid(
+            proof,
+            LONG_MODE_MMIO_PROOF,
+            exit,
+            rip,
+            LONG_MODE_MMIO_TERMINAL_RIP,
             rflags,
         )
 }
@@ -354,6 +396,52 @@ mod tests {
             &[MMIO_GUEST_WRITE_VALUE],
             VcpuExit::Hlt,
             MMIO_GUEST_TERMINAL_RIP,
+            0,
+        ));
+    }
+
+    #[test]
+    fn long_mode_mmio_cli_proof_requires_write_readback_output_hlt_rip_and_rflags() {
+        assert!(long_mode_mmio_proof_is_valid(
+            LONG_MODE_MMIO_PROOF,
+            &[LONG_MODE_MMIO_WRITE_VALUE],
+            VcpuExit::Hlt,
+            LONG_MODE_MMIO_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!long_mode_mmio_proof_is_valid(
+            b"?64M",
+            &[LONG_MODE_MMIO_WRITE_VALUE],
+            VcpuExit::Hlt,
+            LONG_MODE_MMIO_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!long_mode_mmio_proof_is_valid(
+            LONG_MODE_MMIO_PROOF,
+            b"?",
+            VcpuExit::Hlt,
+            LONG_MODE_MMIO_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!long_mode_mmio_proof_is_valid(
+            LONG_MODE_MMIO_PROOF,
+            &[LONG_MODE_MMIO_WRITE_VALUE],
+            VcpuExit::Shutdown,
+            LONG_MODE_MMIO_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!long_mode_mmio_proof_is_valid(
+            LONG_MODE_MMIO_PROOF,
+            &[LONG_MODE_MMIO_WRITE_VALUE],
+            VcpuExit::Hlt,
+            LONG_MODE_MMIO_TERMINAL_RIP - 1,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!long_mode_mmio_proof_is_valid(
+            LONG_MODE_MMIO_PROOF,
+            &[LONG_MODE_MMIO_WRITE_VALUE],
+            VcpuExit::Hlt,
+            LONG_MODE_MMIO_TERMINAL_RIP,
             0,
         ));
     }
