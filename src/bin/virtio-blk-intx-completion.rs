@@ -11,7 +11,10 @@ fn main() -> ExitCode {
             println!("virtio-blk INTx GSI: {}", result.gsi());
             println!("virtio-blk INTx vector: {:#x}", result.vector());
             println!("virtio-blk INTx assert events: {}", result.assert_count());
-            println!("virtio-blk INTx deassert events: {}", result.deassert_count());
+            println!(
+                "virtio-blk INTx deassert events: {}",
+                result.deassert_count()
+            );
             println!("virtio-blk INTx LAPIC SPIV: {:#x}", result.lapic_spiv());
             println!("virtio-blk INTx LAPIC LINT0: {:#x}", result.lapic_lint0());
             println!(
@@ -26,11 +29,20 @@ fn main() -> ExitCode {
                 result.used_id(),
                 result.used_len()
             );
-            println!("virtio-blk INTx request status: {}", result.request_status());
+            println!(
+                "virtio-blk INTx request status: {}",
+                result.request_status()
+            );
             println!("virtio-blk INTx data bytes: {}", result.data().len());
-            println!("virtio-blk INTx port-I/O exits: {}", result.io_exits().len());
+            println!(
+                "virtio-blk INTx port-I/O exits: {}",
+                result.io_exits().len()
+            );
             println!("virtio-blk INTx MMIO exits: {}", result.mmio_exits().len());
-            println!("virtio-blk INTx completion rflags: {:#x}", result.completion_rflags());
+            println!(
+                "virtio-blk INTx completion rflags: {:#x}",
+                result.completion_rflags()
+            );
             println!("virtio-blk INTx proof: {:?}", result.proof());
             if result.proof() != VIRTIO_BLK_INTERRUPT_PROOF
                 || result.data().len() != VIRTIO_BLK_SECTOR_SIZE
