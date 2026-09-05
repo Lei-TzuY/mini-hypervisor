@@ -151,23 +151,30 @@ impl SyntheticPciFunction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VirtioRngPciEndpoint {
     function: VirtioRngPciFunction,
-    msi: PciMsiCapability,
+    msi: Option<PciMsiCapability>,
 }
 
 impl VirtioRngPciEndpoint {
     const fn new(function: VirtioRngPciFunction) -> Self {
         Self {
             function,
-            msi: PciMsiCapability::new(),
+            msi: None,
+        }
+    }
+
+    const fn with_msi(function: VirtioRngPciFunction) -> Self {
+        Self {
+            function,
+            msi: Some(PciMsiCapability::new()),
         }
     }
 
     fn read_dword(&self, offset: u8) -> u32 {
-        if let Some(value) = self.msi.read_dword(offset) {
+        if let Some(value) = self.msi.as_ref().and_then(|msi| msi.read_dword(offset)) {
             return value;
         }
         let value = self.function.read_dword(offset);
-        if offset == 0x64 {
+        if offset == 0x64 && self.msi.is_some() {
             let mut bytes = value.to_le_bytes();
             bytes[1] = VIRTIO_MSI_CAPABILITY_OFFSET;
             u32::from_le_bytes(bytes)
@@ -177,11 +184,13 @@ impl VirtioRngPciEndpoint {
     }
 
     fn write_dword(&mut self, offset: u8, value: u32) -> bool {
-        self.msi.write_dword(offset, value)
+        self.msi
+            .as_mut()
+            .is_some_and(|msi| msi.write_dword(offset, value))
     }
 
-    const fn msi_message(&self) -> Option<PciMsiMessage> {
-        self.msi.message()
+    fn msi_message(&self) -> Option<PciMsiMessage> {
+        self.msi.as_ref().and_then(PciMsiCapability::message)
     }
 }
 
@@ -206,7 +215,7 @@ impl PciFunction {
         }
     }
 
-    const fn msi_message(&self) -> Option<PciMsiMessage> {
+    fn msi_message(&self) -> Option<PciMsiMessage> {
         match self {
             Self::Synthetic(_) => None,
             Self::VirtioRng(function) => function.msi_message(),
@@ -238,12 +247,20 @@ impl PciConfigMechanism1 {
     }
 
     #[must_use]
+    pub const fn with_virtio_rng_msi(function: VirtioRngPciFunction) -> Self {
+        Self {
+            address: 0,
+            function: PciFunction::VirtioRng(VirtioRngPciEndpoint::with_msi(function)),
+        }
+    }
+
+    #[must_use]
     pub const fn handles_port(port: u16) -> bool {
         port == PCI_CONFIG_ADDRESS_PORT || port == PCI_CONFIG_DATA_PORT
     }
 
     #[must_use]
-    pub const fn virtio_rng_msi_message(&self) -> Option<PciMsiMessage> {
+    pub fn virtio_rng_msi_message(&self) -> Option<PciMsiMessage> {
         self.function.msi_message()
     }
 
@@ -381,8 +398,15 @@ mod tests {
     }
 
     #[test]
-    fn virtio_rng_capability_chain_ends_in_single_vector_32_bit_msi() {
+    fn legacy_virtio_rng_capability_chain_remains_terminated() {
         let mut config = PciConfigMechanism1::with_virtio_rng(VirtioRngPciFunction::new(BAR0));
+        assert_eq!(read_config(&mut config, 0x64).to_le_bytes(), [0x09, 0, 16, 3]);
+        assert_eq!(config.virtio_rng_msi_message(), None);
+    }
+
+    #[test]
+    fn virtio_rng_msi_capability_chain_ends_in_single_vector_32_bit_msi() {
+        let mut config = PciConfigMechanism1::with_virtio_rng_msi(VirtioRngPciFunction::new(BAR0));
         assert_eq!(
             read_config(&mut config, 0x00),
             (u32::from(VIRTIO_RNG_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID)
@@ -409,7 +433,7 @@ mod tests {
 
     #[test]
     fn virtio_rng_msi_message_is_guest_programmed_and_enable_gated() {
-        let mut config = PciConfigMechanism1::with_virtio_rng(VirtioRngPciFunction::new(BAR0));
+        let mut config = PciConfigMechanism1::with_virtio_rng_msi(VirtioRngPciFunction::new(BAR0));
         assert_eq!(config.virtio_rng_msi_message(), None);
 
         write_config(&mut config, VIRTIO_MSI_ADDRESS_OFFSET, 0xfee0_0000);
@@ -465,7 +489,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_msi_control_bits_without_mutating_enable_state() {
-        let mut config = PciConfigMechanism1::with_virtio_rng(VirtioRngPciFunction::new(BAR0));
+        let mut config = PciConfigMechanism1::with_virtio_rng_msi(VirtioRngPciFunction::new(BAR0));
         write_config(&mut config, VIRTIO_MSI_ADDRESS_OFFSET, 0xfee0_0000);
         write_config(&mut config, VIRTIO_MSI_DATA_OFFSET, 0x50);
         config
