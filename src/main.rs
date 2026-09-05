@@ -1,4 +1,8 @@
 use mini_hypervisor::config::VmConfig;
+use mini_hypervisor::interrupt::{
+    run_long_mode_interrupt_guest, LONG_MODE_INTERRUPT_PROOF, LONG_MODE_INTERRUPT_TERMINAL_RIP,
+    X86_RFLAGS_INTERRUPT_ENABLE,
+};
 use mini_hypervisor::kvm::KvmBackend;
 use mini_hypervisor::loader::elf64::{
     expected_proof as expected_elf64_proof, proof_terminal_rip as elf64_terminal_rip,
@@ -181,9 +185,28 @@ fn run() -> Result<ExitCode, mini_hypervisor::error::Error> {
                 Ok(ExitCode::FAILURE)
             }
         }
+        Some("run-interrupt") => {
+            let result = run_long_mode_interrupt_guest(VmConfig::default())?;
+            let report = result.report();
+            println!("interrupt vector: {:#x}", result.vector());
+            println!("interrupt proof: {:?}", result.proof());
+            println!("{report}");
+
+            if interrupt_proof_is_valid(
+                result.proof(),
+                report.exit(),
+                report.rip(),
+                report.rflags(),
+            ) {
+                Ok(ExitCode::SUCCESS)
+            } else {
+                eprintln!("direct interrupt execution proof contract failed");
+                Ok(ExitCode::FAILURE)
+            }
+        }
         Some(other) => {
             eprintln!(
-                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port|run-long-mode|run-elf64|run-mmio|run-long-mode-mmio]"
+                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port|run-long-mode|run-elf64|run-mmio|run-long-mode-mmio|run-interrupt]"
             );
             eprintln!("unknown command: {other}");
             Ok(ExitCode::from(2))
@@ -255,6 +278,17 @@ fn long_mode_mmio_proof_is_valid(
             LONG_MODE_MMIO_TERMINAL_RIP,
             rflags,
         )
+}
+
+fn interrupt_proof_is_valid(proof: &[u8], exit: VcpuExit, rip: u64, rflags: u64) -> bool {
+    terminal_proof_is_valid(
+        proof,
+        LONG_MODE_INTERRUPT_PROOF,
+        exit,
+        rip,
+        LONG_MODE_INTERRUPT_TERMINAL_RIP,
+        rflags,
+    ) && rflags & X86_RFLAGS_INTERRUPT_ENABLE == X86_RFLAGS_INTERRUPT_ENABLE
 }
 
 #[cfg(test)]
@@ -443,6 +477,41 @@ mod tests {
             VcpuExit::Hlt,
             LONG_MODE_MMIO_TERMINAL_RIP,
             0,
+        ));
+    }
+
+    #[test]
+    fn interrupt_cli_proof_requires_handler_resume_hlt_rip_and_enabled_interrupts() {
+        let valid_rflags = X86_RFLAGS_RESERVED_BIT | X86_RFLAGS_INTERRUPT_ENABLE;
+        assert!(interrupt_proof_is_valid(
+            LONG_MODE_INTERRUPT_PROOF,
+            VcpuExit::Hlt,
+            LONG_MODE_INTERRUPT_TERMINAL_RIP,
+            valid_rflags,
+        ));
+        assert!(!interrupt_proof_is_valid(
+            b"?M",
+            VcpuExit::Hlt,
+            LONG_MODE_INTERRUPT_TERMINAL_RIP,
+            valid_rflags,
+        ));
+        assert!(!interrupt_proof_is_valid(
+            LONG_MODE_INTERRUPT_PROOF,
+            VcpuExit::Shutdown,
+            LONG_MODE_INTERRUPT_TERMINAL_RIP,
+            valid_rflags,
+        ));
+        assert!(!interrupt_proof_is_valid(
+            LONG_MODE_INTERRUPT_PROOF,
+            VcpuExit::Hlt,
+            LONG_MODE_INTERRUPT_TERMINAL_RIP - 1,
+            valid_rflags,
+        ));
+        assert!(!interrupt_proof_is_valid(
+            LONG_MODE_INTERRUPT_PROOF,
+            VcpuExit::Hlt,
+            LONG_MODE_INTERRUPT_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
         ));
     }
 }
