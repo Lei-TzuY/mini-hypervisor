@@ -37,9 +37,11 @@ KvmBackend
        │   FlatGuestImage
        │       └─ checked flat-binary load
        │   Elf64GuestImage
-       │       └─ checked ELF64 ET_EXEC/PT_LOAD materialization + BSS zeroing
+       │       ├─ checked ELF64 ET_EXEC/PT_LOAD materialization + BSS zeroing
+       │       └─ validated bounded virtual→physical alias mapping plan
        │   LongModeBootLayout
-       │       └─ checked fixed 2 MiB identity-map page tables
+       │       ├─ preserved fixed 2 MiB identity map
+       │       └─ optional checked 4 KiB mappings in fixed ELF alias window
        └─ vCPU creation
               ├─ KVM_CREATE_VCPU
               ├─ GuestCpuPolicy → KVM_SET_CPUID2
@@ -146,44 +148,49 @@ See [docs/memory-map.md](docs/memory-map.md).
 
 `FlatGuestImage` remains the minimal raw-image path. Construction requires a non-empty byte slice, rejects load-address overflow, and requires the entry point to lie inside the loaded image. Loading goes through `GuestMemory::write`, so a valid flat image description cannot escape the configured RAM region.
 
-The existing HLT, debug-port output, debug-port input, and CPUID fixtures remain reviewed real-mode flat binaries at entry `0x1000`. The original long-mode proof also remains a flat binary at GPA/VA `0x10000` and independently proves the fixed bootstrap without involving ELF parsing.
+The existing HLT, debug-port output, debug-port input, and CPUID fixtures remain reviewed real-mode flat binaries at entry `0x1000`. The original long-mode proof also remains a flat binary at GPA/VA `0x10000` and independently proves the preserved low identity mapping without involving ELF parsing.
 
 ### Bounded ELF64 executable loading
 
 `loader::elf64::Elf64GuestImage` is a separate, deliberately bounded executable-format boundary. It accepts only ELF64, little-endian, x86-64 `ET_EXEC`. The fixed ELF header and complete program-header table are validated before program headers are traversed or file-backed slices are formed.
 
-Every `PT_LOAD` must have non-zero `p_memsz`, `p_filesz <= p_memsz`, a checked file range, a checked guest-address range, and alignment 0/1 or a power of two with the required file-offset/virtual-address congruence. The current identity-map contract requires `p_vaddr == p_paddr`, requires the complete segment to remain inside `0..0x20_0000`, rejects overlap with bootstrap page tables `0x1000..0x4000`, and rejects overlap between loadable segments. At least one loadable segment is required.
+Every `PT_LOAD` must have non-zero `p_memsz`, `p_filesz <= p_memsz`, a checked file range, independently checked virtual and physical ranges, and alignment 0/1 or a power of two with the required file-offset/virtual-address congruence. Physical backing must remain inside the low `0..0x20_0000` guest RAM and outside bootstrap page tables `0x1000..0x5000`. Loadable segments may not overlap in either virtual address space or physical backing space. At least one loadable segment is required.
 
-The ELF entry point must lie in the file-backed portion of an executable `PT_LOAD`; an address that exists only in BSS is not executable entry evidence. Loading copies each validated file-backed range with `GuestMemory::write` and explicitly zeroes `p_memsz - p_filesz` bytes before VM registration.
+A load segment whose virtual range is inside the low identity map requires `p_vaddr == p_paddr`. A non-identity load segment is accepted only when the complete virtual range is inside the fixed `0x40_0000..0x60_0000` alias window and its virtual/physical addresses have equal 4 KiB page offsets. Parsing derives and owns the required `LongModePageMapping` plan; conflicting alias virtual-page mappings are rejected before page-table installation.
 
-The deterministic ELF64 fixture has one executable `PT_LOAD` at GPA/VA `0x10000`, entry `0x10100`, and a BSS tail within `0x10000..0x10180`. It then reuses the existing `LongModeBootLayout`, `Vcpu::initialize_long_mode`, execution loop, and debug-port model. The guest emits `LM64` and reaches HLT at RIP `0x10124`. This boundary does not implement relocations, `ET_DYN`/PIE, dynamic linking, section semantics, arbitrary virtual mappings, or Linux boot conventions.
+The ELF entry point must lie in the file-backed portion of an executable `PT_LOAD`; an address that exists only in BSS is not executable entry evidence. Loading copies each validated file-backed range to its physical backing with `GuestMemory::write` and explicitly zeroes `p_memsz - p_filesz` physical bytes before VM registration. Virtual addresses are never used as guest-memory write offsets.
+
+The deterministic ELF64 fixture has one executable `PT_LOAD` with virtual base `0x400000`, physical backing base `0x10000`, virtual entry `0x400100`, and a BSS tail within the physical `0x10000..0x10180` backing range. It then reuses `LongModeBootLayout::with_page_mappings`, `Vcpu::initialize_long_mode`, the execution loop, and the debug-port model. The guest emits `LM64` and reaches HLT at virtual RIP `0x400124`. This boundary does not implement relocations, `ET_DYN`/PIE, dynamic linking, section semantics, arbitrary virtual windows, dynamic page-table allocation, or Linux boot conventions.
 
 ## x86-64 long-mode bootstrap
 
-`LongModeBootLayout` is the single correctness contract for the current 64-bit bootstrap. It is intentionally fixed rather than a general virtual-memory manager.
+`LongModeBootLayout` is the correctness contract for the current 64-bit bootstrap. It is intentionally bounded rather than a general virtual-memory manager.
 
-The layout requires guest RAM to start at GPA `0` and contain at least `0x20_0000` bytes. Three 4 KiB pages are reserved for bootstrap translation state:
+The layout requires guest RAM to start at GPA `0` and contain at least `0x20_0000` bytes. Four 4 KiB pages are reserved for bootstrap translation state:
 
 - PML4 at GPA `0x1000`;
 - PDPT at GPA `0x2000`;
 - PD at GPA `0x3000`;
-- reserved page-table extent `0x1000..0x4000`.
+- bounded alias PT at GPA `0x4000`;
+- reserved page-table extent `0x1000..0x5000`.
 
-`install_page_tables` zeroes all three pages through checked `GuestMemory::write`, then installs exactly one chain: PML4[0] = `0x2003`, PDPT[0] = `0x3003`, and PD[0] = `0x83`. The PD entry is a present, writable 2 MiB large page, so virtual addresses `0..0x20_0000` identity-map to the same guest physical addresses. No other mapping is created.
+`install_page_tables` zeroes all four pages through checked `GuestMemory::write`, then installs the preserved base chain: PML4[0] = `0x2003`, PDPT[0] = `0x3003`, and PD[0] = `0x83`. The PD[0] entry is a present, writable 2 MiB large page, so virtual addresses `0..0x20_0000` identity-map to the same guest physical addresses. Identity-only layouts leave the alias PDE unlinked.
 
-`LongModeBootLayout::new` rejects RAM with a non-zero base, RAM below 2 MiB, an entry at or beyond the identity-map extent, an entry inside the reserved page-table pages, a zero or out-of-map stack pointer, and a stack pointer that overlaps the bootstrap page-table region. The flat long-mode proof uses entry GPA/VA `0x10000`; the ELF64 proof supplies validated entry GPA/VA `0x10100`; both use RSP `0x1ff000`.
+`LongModeBootLayout::with_page_mappings` accepts additional `LongModePageMapping` values only when every virtual page is 4 KiB aligned and inside `0x40_0000..0x60_0000`, every physical page is 4 KiB aligned and wholly inside the low 2 MiB RAM outside `0x1000..0x5000`, and no virtual page is duplicated. When mappings are present, PD[2] points to GPA `0x4000`; each requested alias page selects one PTE index within that fixed 512-entry table and stores the validated physical page plus present/writable flags. Unused PTEs remain zero. An alias-window entry is accepted only if its containing virtual page is mapped.
 
-`Vcpu::initialize_long_mode` begins from KVM's current special-register state. It preserves unrelated inherited control/EFER bits while requiring `CR0.PE|CR0.PG`, `CR4.PAE`, and `EFER.LME|EFER.LMA`; it writes `CR3 = 0x1000`. CS is a present ring-0 flat 64-bit code segment with selector `0x8`, long bit set, default operand-size bit clear, base zero, and limit `0xffff_ffff`. DS/ES/FS/GS/SS use the fixed present ring-0 data-segment contract with selector `0x10`, base zero, and limit `0xffff_ffff`. The general-register write sets RIP from the validated entry, RSP from the validated stack pointer, and RFLAGS bit 1 while zero-initializing the remaining general-register fields.
+`LongModeBootLayout::new` retains the identity-only entry contract. Both constructors require the stack pointer to remain non-zero and inside the low identity map outside bootstrap page-table pages. The flat long-mode proof uses identity entry GPA/VA `0x10000`; the ELF64 proof uses virtual entry `0x400100` backed at GPA `0x10100`; both use RSP `0x1ff000`.
+
+`Vcpu::initialize_long_mode` begins from KVM's current special-register state. It preserves unrelated inherited control/EFER bits while requiring `CR0.PE|CR0.PG`, `CR4.PAE`, and `EFER.LME|EFER.LMA`; it writes `CR3 = 0x1000`. CS is a present ring-0 flat 64-bit code segment with selector `0x8`, long bit set, default operand-size bit clear, base zero, and limit `0xffff_ffff`. DS/ES/FS/GS/SS use the fixed present ring-0 data-segment contract with selector `0x10`, base zero, and limit `0xffff_ffff`. The general-register write sets RIP to the validated architectural entry address, RSP to the validated stack pointer, and RFLAGS bit 1 while zero-initializing the remaining general-register fields.
 
 The deterministic 36-byte flat guest intentionally contains 64-bit-only/64-bit-width instruction encodings (`REX.W` `movabs` and 64-bit shifts). It emits `L`, `M`, `6`, `4` through four byte-wide OUT operations to the existing debug port `0xe9`, then executes HLT. The bounded run therefore completes exactly five exits: four I/O exits followed by HLT. A successful terminal report has RIP `0x10024` and the collected debug output is exactly `LM64`.
 
-This bootstrap proves and supplies deterministic x86-64 long-mode execution. The bounded ELF64 loader may feed a validated identity-mapped entry into it, but the bootstrap itself still does not create Linux boot, dynamic page-table construction, arbitrary virtual mappings, MMIO, APIC/interrupt infrastructure, virtio, SMP, migration, snapshots, or resumable execution.
+The same bootstrap also executes the bounded ELF alias path: the deterministic ELF fixture enters at virtual RIP `0x400100` through a validated alias PTE and terminates at virtual RIP `0x400124`. This proves the architecture can execute a reviewed non-identity ELF virtual address without introducing a general page-table manager. It still does not create Linux boot, dynamic page-table allocation, arbitrary virtual windows, per-page permission policy, MMIO, APIC/interrupt infrastructure, virtio, SMP, migration, snapshots, or resumable execution.
 
 ## vCPU execution
 
 The legacy real-mode fixtures start from KVM's new-vCPU reset state, normalize CS/DS/ES/FS/GS/SS base/selectors to zero, clear CR0 protected-mode/paging enable bits, then set a zeroed `kvm_regs` with RIP and architectural RFLAGS bit 1. Their CS=0 entry remains deliberately limited to `0xffff`.
 
-The long-mode and ELF64 fixtures follow the same `LongModeBootLayout` and `Vcpu::initialize_long_mode` contract above. They do not transit through a guest-side real-to-protected-to-long-mode boot stub; userspace establishes the architectural long-mode state through KVM sregs/regs before the first `KVM_RUN`.
+The long-mode and ELF64 fixtures follow the same validated `LongModeBootLayout` and `Vcpu::initialize_long_mode` contract above. They do not transit through a guest-side real-to-protected-to-long-mode boot stub; userspace establishes the architectural long-mode state through KVM sregs/regs before the first `KVM_RUN`.
 
 `Vcpu::capture_register_snapshot` performs one existing `KVM_GET_REGS` and copies all 18 x86 general-register fields into an owned `VcpuRegisterSnapshot`. Pure comparison, read-only verification, snapshot-bound restore, and restore-and-verify remain unchanged by the long-mode bootstrap.
 
@@ -211,7 +218,7 @@ The HLT and CPUID fixtures use budget 1. The real-mode debug-port fixtures use b
 
 The dispatcher deliberately does not snapshot registers for an in-flight KVM I/O exit because KVM defines the operation as pending until userspace re-enters `KVM_RUN`. Register state used as a completed-operation diagnostic is therefore taken on the later terminal exit.
 
-The deterministic real-mode output fixture reaches HLT at RIP `0x1005`; the input fixture reaches `0x1006`; the CPUID fixture reaches `0x101c`. The flat x86-64 proof emits `LM64` across four I/O exits and reaches HLT at RIP `0x10024`; the ELF64 proof emits the same bytes after production ELF materialization and reaches HLT at RIP `0x10124`.
+The deterministic real-mode output fixture reaches HLT at RIP `0x1005`; the input fixture reaches `0x1006`; the CPUID fixture reaches `0x101c`. The flat x86-64 proof emits `LM64` across four I/O exits and reaches HLT at RIP `0x10024`; the non-identity ELF64 proof emits the same bytes after production ELF materialization and reaches HLT at virtual RIP `0x400124`.
 
 ## Port-I/O bus and debug device
 
@@ -223,7 +230,7 @@ The long-mode and ELF64 fixtures reuse this exact existing path; no new device m
 
 `KvmBackend` owns `/dev/kvm`, validated capability and CPUID/MSR discovery snapshots, and the configured guest CPU policy. `Vm` owns the VM descriptor, guest policy, optional internal-error capability observation, and registered guest RAM. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`. CPU/MSR snapshots, diagnostics, `PortIoExit`, `VmExecutionResult`, and fixture result types own copied Rust data rather than pointers into KVM shared memory or guest RAM.
 
-`LongModeBootLayout` owns only validated guest-physical layout scalars; it contains no host pointer, mapping borrow, vCPU descriptor, or raw KVM state. Page-table installation mutates guest RAM only through checked `GuestMemory` writes. `LongModeGuestResult` owns its copied I/O exits, proof bytes, and terminal report. `Elf64GuestImage` borrows immutable input bytes while owning validated load-segment metadata; `Elf64GuestResult` owns copied I/O exits, proof bytes, and its terminal report.
+`LongModeBootLayout` owns a validated architectural entry address, low-RAM/stack layout, and owned bounded alias page mappings; it contains no host pointer, mapping borrow, vCPU descriptor, or raw KVM state. Page-table installation mutates guest RAM only through checked `GuestMemory` writes. `LongModeGuestResult` owns its copied I/O exits, proof bytes, and terminal report. `Elf64GuestImage` borrows immutable input bytes while owning validated virtual/physical load-segment metadata and its derived alias mapping plan; `Elf64GuestResult` owns copied I/O exits, proof bytes, and its terminal report.
 
 Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
@@ -231,9 +238,9 @@ Rust ownership is used for normal cleanup; explicit KVM slot removal protects th
 
 Errors remain categorized as host environment, KVM capability, configuration, guest memory, guest image, VM exit, and port I/O errors. Pure guest-MSR policy/value/snapshot validation keeps its dedicated typed errors.
 
-Long-mode layout validation is a pure configuration boundary represented by `LongModeConfigurationError`; invalid RAM base/size, entry mapping, page-table overlap, stack mapping, or stack/page-table overlap is rejected before page-table installation or KVM long-mode state configuration. Page-table writes still use the existing `GuestMemory` error boundary. `Vcpu::initialize_long_mode` uses the existing named `KVM_GET_SREGS`, `KVM_SET_SREGS`, and `KVM_SET_REGS` vCPU-operation errors. Runtime proof failure remains an execution/VM-exit failure rather than being converted into successful milestone completion.
+Long-mode layout validation is a pure configuration boundary represented by `LongModeConfigurationError`; invalid RAM base/size, identity/alias entry mapping, page-table overlap, stack mapping, malformed alias pages, out-of-window virtual pages, out-of-RAM or bootstrap-overlapping physical pages, or duplicate virtual mappings are rejected before page-table installation or KVM long-mode state configuration. Page-table writes still use the existing `GuestMemory` error boundary. `Vcpu::initialize_long_mode` uses the existing named `KVM_GET_SREGS`, `KVM_SET_SREGS`, and `KVM_SET_REGS` vCPU-operation errors. Runtime proof failure remains an execution/VM-exit failure rather than being converted into successful milestone completion.
 
-ELF64 format and layout validation uses `Elf64Error` before guest memory is mutated: malformed headers/program-header tables, unsupported class/endianness/type/machine/version, invalid or overlapping load ranges, invalid alignment, identity-map violations, bootstrap overlap, and an invalid entry are rejected as typed loader errors. Once validated, materialization reuses the existing checked `GuestMemory` error boundary.
+ELF64 format and layout validation uses `Elf64Error` before guest memory is mutated: malformed headers/program-header tables, unsupported class/endianness/type/machine/version, invalid file/virtual/physical ranges, invalid alignment, invalid identity/alias placement, bootstrap overlap, segment overlap, conflicting mapping plans, and an invalid entry are rejected as typed loader errors. Once validated, materialization reuses the existing checked `GuestMemory` error boundary.
 
 Future MMIO, interrupt, whole-VM/device-snapshot, and stronger invariant categories will be added only when those responsibilities exist.
 
@@ -245,9 +252,9 @@ There is no configurable or migration-stable CPU model yet. Current CPUID and im
 
 The implemented state lifecycle is deliberately vCPU-CPU-state scoped and non-transactional across multi-component restore. There is no automatic mismatch repair, rollback, multi-vCPU restore orchestration, guest-memory/device snapshot, checkpoint decoder, or migration protocol.
 
-The long-mode mapping is deliberately **not** a generic virtual-memory subsystem. The milestone owns one fixed 2 MiB identity map and three fixed page-table pages solely to establish deterministic long-mode execution. There is no allocator for page-table pages, no arbitrary VA→GPA mapping API, no page-permission policy surface, and no guest-controlled page-table construction path.
+The long-mode mapping is deliberately **not** a generic virtual-memory subsystem. It preserves one fixed 2 MiB identity map and adds one fixed 2 MiB alias virtual window implemented by a single fixed 4 KiB page-table page. There is no allocator for page-table pages, no arbitrary VA→GPA mapping API, no caller-defined window, no page-permission/NX policy surface, and no guest-controlled page-table construction path.
 
-The ELF64 loader is deliberately **not** a general ELF runtime. It supports only bounded identity-mapped x86-64 little-endian `ET_EXEC` `PT_LOAD` materialization. It has no relocations, load bias, `ET_DYN`/PIE, dynamic linker/interpreter, symbol model, section-driven loading, or arbitrary VA layout policy.
+The ELF64 loader is deliberately **not** a general ELF runtime. It supports only bounded x86-64 little-endian `ET_EXEC` `PT_LOAD` materialization into low RAM plus identity placement or the fixed alias window. It has no relocations, load bias, `ET_DYN`/PIE, dynamic linker/interpreter, symbol model, section-driven loading, or general VA layout policy.
 
 Typed KVM-unknown, exception, fail-entry, internal-error, and system-event diagnostics remain diagnostics. They do not imply retry, recovery, exception injection, instruction emulation, placement, or lifecycle policy.
 
@@ -259,7 +266,7 @@ The execution loop is not a scheduler. It owns no vCPU, thread, timer, or interr
 
 ## Next architectural milestone
 
-`ROADMAP.md` is the authoritative live source for milestone selection. The bounded ELF64 `ET_EXEC` loading/execution milestone is the selected promotion on top of the integrated long-mode foundation. After it is integrated and exact post-merge `main` CI is green, the next frontier must be selected by an architecture/integration audit rather than automatically expanding several subsystems in parallel.
+`ROADMAP.md` is the authoritative live source for milestone selection. The current selected promotion is bounded non-identity ELF64 virtual mapping on top of the integrated long-mode and ELF64 execution foundation. Once this slice is integrated and exact post-merge `main` CI is green, an architecture/integration audit should select the next frontier; a deliberate MMIO/device-model foundation is the leading candidate because the project will then have an explicit virtual-to-guest-physical mapping layer to build on.
 
 ## Internal-error emulation-failure metadata
 

@@ -6,7 +6,7 @@ The Linux KVM kernel interface and explicitly supplied host process configuratio
 
 The repository-owned HLT, debug-port, CPUID, x86-64 long-mode, and ELF64 proof fixtures are reviewed deterministic test inputs. `FlatGuestImage` still validates non-empty bytes, load-range arithmetic, and entry containment. `Elf64GuestImage` treats the supplied byte slice and all ELF header/program-header metadata as untrusted even when the deterministic fixture is the caller.
 
-The long-mode milestone does not accept arbitrary page tables or arbitrary special-register state from the guest or a caller. `LongModeBootLayout` is a validated fixed bootstrap description, and `Vcpu::initialize_long_mode` materializes only the project-defined state described below.
+The long-mode path does not accept arbitrary page tables or arbitrary special-register state from the guest or a caller. `LongModeBootLayout` owns a validated bootstrap description. Identity-only layouts use the fixed low 2 MiB mapping; mapped layouts may additionally contain validated `LongModePageMapping` entries restricted to the fixed alias window and low-RAM backing described below. `Vcpu::initialize_long_mode` materializes only this project-defined state.
 
 ## Unsafe boundary
 
@@ -20,37 +20,38 @@ Pointers into `kvm_run`, temporary KVM request buffers, and host pointers for gu
 
 Guest physical addresses use `GuestPhysAddr`; they are never cast directly to host pointers. `GuestMemory` owns a private anonymous host mapping and validates guest address plus length before any host pointer arithmetic or copy. KVM slot 0 registration occurs only after region validation and overlap rejection against the high x86 KVM-reserved identity-map/TSS range `0xfeff_c000..0xff00_0000`.
 
-The x86-64 bootstrap requires one RAM region beginning at GPA 0 with at least 2 MiB. `LongModeBootLayout::new` rejects:
+The x86-64 bootstrap requires one RAM region beginning at GPA 0 with at least 2 MiB. The identity-only constructor rejects a non-zero RAM base, RAM smaller than `0x20_0000`, an entry outside the low identity map or inside bootstrap page-table pages, a zero/out-of-map stack pointer, or a stack top overlapping those pages. `LongModeBootLayout::with_page_mappings` retains the same RAM/stack rules and additionally validates each 4 KiB alias mapping before any page-table write:
 
-- a non-zero RAM base;
-- RAM smaller than `0x20_0000`;
-- an entry at or beyond the 2 MiB identity-map extent;
-- an entry inside the reserved page-table pages `0x1000..0x4000`;
-- a zero stack pointer;
-- a stack pointer above the mapped 2 MiB extent;
-- a stack top that would overlap the reserved page-table area under the fixed bootstrap contract.
+- the virtual page must be 4 KiB aligned and inside `0x40_0000..0x60_0000`;
+- the physical backing page must be 4 KiB aligned and entirely inside the low 2 MiB RAM;
+- physical backing may not overlap bootstrap page tables `0x1000..0x5000`;
+- the same alias virtual page may not appear twice;
+- an entry in the alias window is accepted only if its containing page exists in the validated mapping set;
+- an entry outside both the low identity map and the fixed alias window is rejected.
 
-The flat deterministic long-mode proof uses entry `0x10000`; the ELF64 proof supplies validated ELF entry `0x10100`; both use stack pointer `0x1ff000`, well outside the page-table pages.
+The flat deterministic long-mode proof uses identity entry `0x10000`; the ELF64 proof uses virtual entry `0x400100` backed by low-RAM GPA `0x10100`; both use stack pointer `0x1ff000` inside the preserved identity map.
 
-Page-table construction performs no raw pointer arithmetic. Three full 4 KiB pages at GPA `0x1000`, `0x2000`, and `0x3000` are zeroed through `GuestMemory::write`; only the first PML4, PDPT, and PD entries are then written. Their exact little-endian values are `0x2003`, `0x3003`, and `0x83`. This creates exactly one present/writable 2 MiB identity mapping for VA/GPA `0..0x20_0000`. No guest-controlled index, count, address, or page permission is used to size or select a host-memory slice.
+Page-table construction performs no raw pointer arithmetic. Four full 4 KiB pages at GPA `0x1000`, `0x2000`, `0x3000`, and `0x4000` are zeroed through `GuestMemory::write`. PML4[0] is `0x2003`, PDPT[0] is `0x3003`, and PD[0] is `0x83`, preserving exactly one present/writable 2 MiB identity mapping for VA/GPA `0..0x20_0000`. Identity-only layouts leave the alias PDE absent. When bounded alias mappings are present, PD[2] points to GPA `0x4000` with present/writable flags, and only validated PTE slots are populated with validated low-RAM physical pages plus the same flags; all unused alias PTEs stay zero.
 
-This fixed mapping is not a general guest virtual-address translation facility. No arbitrary VA→GPA mapping API, dynamic page-table allocation, MMIO mapping, guest-supplied page-table parser, or page-fault recovery policy exists in this milestone.
+This mapping layer is intentionally bounded rather than a general guest virtual-address translation facility. There is no arbitrary virtual window, dynamic page-table allocation, caller-defined hierarchy, per-page executable/write policy, NX policy, MMIO mapping, guest-supplied page-table parser, or page-fault recovery policy.
 
 ## ELF64 loader safety
 
 `Elf64GuestImage::parse` accepts only ELF64 little-endian x86-64 `ET_EXEC`. It validates the fixed header size and program-header entry size, converts and bounds the complete program-header table before traversing it, and never trusts a file offset or count as a Rust slice boundary without checked conversion and arithmetic.
 
-For each `PT_LOAD`, validation requires non-zero memory size, `p_filesz <= p_memsz`, a file-backed range entirely inside the supplied bytes, and a guest range whose end cannot overflow. Segment alignment must be 0, 1, or a power of two; aligned segments must satisfy ELF offset/virtual-address congruence. The current fixed-map contract additionally requires `p_vaddr == p_paddr`, the entire segment inside `0..0x20_0000`, no overlap with bootstrap page tables `0x1000..0x4000`, and no overlap with another load segment.
+For each `PT_LOAD`, validation requires non-zero memory size, `p_filesz <= p_memsz`, a file-backed range entirely inside the supplied bytes, independently checked virtual and physical extents, and host-size conversions that cannot overflow. Segment alignment must be 0, 1, or a power of two; aligned segments must satisfy ELF offset/virtual-address congruence. Physical backing must stay wholly inside the low 2 MiB RAM and outside bootstrap page tables `0x1000..0x5000`.
 
-An ELF entry is accepted only inside the file-backed portion of an executable `PT_LOAD`; an entry that exists only in a zero-filled BSS tail is rejected. Materialization occurs only after the whole image has been validated. File-backed bytes are copied through checked `GuestMemory::write`, and each BSS tail is explicitly zeroed before KVM memory registration. The deterministic fixture intentionally contains a non-empty BSS tail so this behavior is regression-tested rather than merely documented.
+A segment whose virtual range lies inside the low identity window must keep `p_vaddr == p_paddr`. A non-identity segment is accepted only when its complete virtual range lies inside `0x40_0000..0x60_0000` and its virtual/physical addresses have the same 4 KiB page offset. Virtual load ranges may not overlap one another, physical backing ranges may not overlap one another, and the generated alias mapping plan rejects conflicting virtual-page mappings before it reaches `LongModeBootLayout`.
 
-This loader does not perform relocation, load-bias selection, `ET_DYN`/PIE loading, dynamic linking/interpreter handoff, symbol resolution, section-driven loading, or arbitrary virtual-address mapping. Absence of those features is part of the safety boundary, not an implicit best-effort behavior.
+An ELF entry is accepted only inside the file-backed portion of an executable `PT_LOAD`; an entry that exists only in a zero-filled BSS tail is rejected. Materialization occurs only after the whole image has been validated. File-backed bytes are copied through checked `GuestMemory::write` to the validated physical backing, and each physical BSS tail is explicitly zeroed before KVM memory registration. Virtual addresses are never used as host offsets. The deterministic fixture intentionally contains a non-empty BSS tail so this behavior is regression-tested rather than merely documented.
+
+This loader does not perform relocation, load-bias selection, `ET_DYN`/PIE loading, dynamic linking/interpreter handoff, symbol resolution, section-driven loading, arbitrary virtual-window selection, or dynamic page-table construction. Absence of those features is part of the safety boundary, not an implicit best-effort behavior.
 
 ## Long-mode vCPU state safety
 
-`Vcpu::initialize_long_mode` first reads the vCPU's current KVM special-register state and then mutates only the fields required by the fixed bootstrap contract. It ORs the required `CR0.PE|CR0.PG`, `CR4.PAE`, and `EFER.LME|EFER.LMA` bits so unrelated inherited bits are not silently cleared, and sets `CR3` exactly to the validated PML4 GPA `0x1000`.
+`Vcpu::initialize_long_mode` first reads the vCPU's current KVM special-register state and then mutates only the fields required by the validated bootstrap contract. It ORs the required `CR0.PE|CR0.PG`, `CR4.PAE`, and `EFER.LME|EFER.LMA` bits so unrelated inherited bits are not silently cleared, and sets `CR3` exactly to the validated PML4 GPA `0x1000`.
 
-The segment state is not supplied by guest bytes. CS is a fixed present ring-0 64-bit code segment with selector `0x8`, base 0, limit `0xffff_ffff`, `L=1`, and `DB=0`. DS/ES/FS/GS/SS use the fixed present ring-0 data-segment contract with selector `0x10`, base 0, and the same limit. RIP and RSP come only from the validated `LongModeBootLayout`; RFLAGS is initialized with architectural bit 1 set and all remaining general-register fields begin from zero.
+The segment state is not supplied by guest bytes. CS is a fixed present ring-0 64-bit code segment with selector `0x8`, base 0, limit `0xffff_ffff`, `L=1`, and `DB=0`. DS/ES/FS/GS/SS use the fixed present ring-0 data-segment contract with selector `0x10`, base 0, and the same limit. RIP is the validated architectural entry address and may therefore be the identity entry or a mapped alias virtual address; RSP remains the validated low identity-mapped stack pointer. RFLAGS is initialized with architectural bit 1 set and all remaining general-register fields begin from zero.
 
 Failure of `KVM_GET_SREGS`, `KVM_SET_SREGS`, or `KVM_SET_REGS` is a named vCPU-operation error. The implementation does not retry a partially applied state sequence or claim transactional rollback. In deterministic proof paths, failure prevents a successful proof result.
 
@@ -58,9 +59,9 @@ Failure of `KVM_GET_SREGS`, `KVM_SET_SREGS`, or `KVM_SET_REGS` is a named vCPU-o
 
 The reviewed 36-byte flat x86-64 fixture is loaded at GPA/VA `0x10000`. It uses 64-bit-width instruction encodings, emits bytes `L`, `M`, `6`, and `4` through four byte-wide single-count OUT operations on the existing debug port `0xe9`, then executes `HLT`.
 
-The ELF64 proof wraps the same architectural proof code inside the production `ET_EXEC` loader path. Its validated executable segment begins at GPA/VA `0x10000`, entry is `0x10100`, and the segment has a larger memory size than file size so the loader must zero BSS before execution.
+The ELF64 proof wraps the same architectural proof code inside the production `ET_EXEC` loader path but deliberately executes through a non-identity mapping. Its executable segment has virtual base `0x400000`, physical backing base `0x10000`, virtual entry `0x400100`, and a larger memory size than file size so the loader must zero physical BSS before execution. The validated page-table plan maps virtual page `0x400000` to physical page `0x10000`.
 
-Each proof uses an execution budget of exactly five completed exits. Success requires four serviced I/O exits in order followed by the typed terminal HLT report. The host-owned proof buffer must equal `LM64`; terminal RIP is `0x10024` for the flat fixture and `0x10124` for the ELF64 fixture. Budget exhaustion, another exit, malformed port-I/O metadata, an unsupported port operation, invalid executable metadata, or KVM entry/execution failure is not converted into milestone success.
+Each proof uses an execution budget of exactly five completed exits. Success requires four serviced I/O exits in order followed by the typed terminal HLT report. The host-owned proof buffer must equal `LM64`; terminal RIP is `0x10024` for the flat identity fixture and `0x400124` for the non-identity ELF64 fixture. Budget exhaustion, another exit, malformed port-I/O metadata, an unsupported port operation, invalid executable metadata, or KVM entry/execution failure is not converted into milestone success.
 
 KVM-aware Rust regressions follow the repository's general environment-sensitive convention. In addition, CI contains strict gates that directly run both `run-long-mode` and `run-elf64` with usable `/dev/kvm`, check the exact `LM64` output, check each exact terminal HLT RIP, and require architectural RFLAGS bit 1. Those gates fail if KVM is unavailable and provide evidence that the candidate actually executed the 64-bit guest paths rather than only validating pure construction.
 
@@ -104,6 +105,6 @@ Successful `KVM_CREATE_VM` and `KVM_CREATE_VCPU` results are immediately wrapped
 
 ## Not yet present
 
-The repository now has one fixed 2 MiB x86-64 identity-mapped bootstrap and one bounded identity-mapped ELF64 `ET_EXEC` loader/execution path, but still has **no general virtual-memory subsystem** and no arbitrary guest address-space construction. It also has no ELF relocations, `ET_DYN`/PIE or dynamic-linker path, Linux boot protocol, MMIO model, APIC/interrupt controller, interrupt injection framework, virtio, SMP, dynamic device registration, disk backend, whole-VM/guest-memory/device snapshot orchestration, migration protocol, resumable execution, scheduler, exception recovery/injection policy, KVM-unknown recovery policy, fail-entry retry/placement policy, internal-error recovery policy, or system-event lifecycle policy.
+The repository now has one fixed low 2 MiB x86-64 identity mapping, one bounded 2 MiB ELF alias virtual window backed by validated low-RAM pages, and one bounded ELF64 `ET_EXEC` loader/execution path. It still has **no general virtual-memory subsystem** or arbitrary guest address-space construction. It also has no ELF relocations, `ET_DYN`/PIE or dynamic-linker path, dynamic page-table allocator, page-permission/NX policy, Linux boot protocol, MMIO model, APIC/interrupt controller, interrupt injection framework, virtio, SMP, dynamic device registration, disk backend, whole-VM/guest-memory/device snapshot orchestration, migration protocol, resumable execution, scheduler, exception recovery/injection policy, KVM-unknown recovery policy, fail-entry retry/placement policy, internal-error recovery policy, or system-event lifecycle policy.
 
-Those responsibilities require separately selected milestones. The bounded ELF64 milestone does not authorize them implicitly.
+Those responsibilities require separately selected milestones. The bounded non-identity ELF64 milestone does not authorize them implicitly.
