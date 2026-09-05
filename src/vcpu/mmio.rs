@@ -39,6 +39,16 @@ impl MmioExit {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        address: u64,
+        direction: MmioDirection,
+        length: u32,
+        write_data: Vec<u8>,
+    ) -> Self {
+        Self::new(address, direction, length, write_data)
+    }
+
     #[must_use]
     pub const fn address(&self) -> u64 {
         self.address
