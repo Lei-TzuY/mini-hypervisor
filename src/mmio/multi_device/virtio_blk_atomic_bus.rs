@@ -20,10 +20,7 @@ impl super::MmioBus {
     }
 
     #[must_use]
-    pub fn virtio_blk_sector_at(
-        &self,
-        address: u64,
-    ) -> Option<&[u8; VIRTIO_BLK_SECTOR_SIZE]> {
+    pub fn virtio_blk_sector_at(&self, address: u64) -> Option<&[u8; VIRTIO_BLK_SECTOR_SIZE]> {
         self.virtio_blk_devices
             .iter()
             .find(|device| device.bar0() == address)
