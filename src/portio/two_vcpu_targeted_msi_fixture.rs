@@ -23,7 +23,8 @@ const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 pub const FIRST_VCPU_ID: VcpuId = VcpuId::BOOT;
 pub const SECOND_VCPU_ID: VcpuId = VcpuId::new(1);
 pub const TARGET_VECTOR: u8 = 0x51;
-pub const TARGET_MSI_ADDRESS: u64 = MSI_ADDRESS_BASE | ((SECOND_VCPU_ID.get() as u64) << MSI_DESTINATION_SHIFT);
+pub const TARGET_MSI_ADDRESS: u64 =
+    MSI_ADDRESS_BASE | ((SECOND_VCPU_ID.get() as u64) << MSI_DESTINATION_SHIFT);
 pub const TARGET_MSI_DATA: u32 = TARGET_VECTOR as u32;
 pub const FIRST_PROOF: &[u8; 3] = b"0MD";
 pub const SECOND_PROOF: &[u8; 4] = b"RI1D";
