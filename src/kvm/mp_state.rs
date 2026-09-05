@@ -1,6 +1,3 @@
-use super::KvmBackend;
-use crate::error::{Error, KvmCapabilityError};
-
 const KVM_CAP_MP_STATE: i32 = 14;
 
 impl KvmBackend {
@@ -17,7 +14,7 @@ impl KvmBackend {
 }
 
 #[cfg(test)]
-mod tests {
+mod mp_state_capability_tests {
     use super::*;
 
     #[test]
