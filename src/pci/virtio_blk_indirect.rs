@@ -8,7 +8,9 @@ const MAX_INDIRECT_DESCRIPTORS: u32 = u16::MAX as u32 + 1;
 pub(super) struct ResolvedRequestChain {
     pub(super) header: Descriptor,
     pub(super) data: Descriptor,
+    pub(super) data_index: u16,
     pub(super) status: Descriptor,
+    pub(super) status_index: u16,
 }
 
 impl VirtioBlkDevice {
@@ -55,7 +57,9 @@ impl VirtioBlkDevice {
         Ok(ResolvedRequestChain {
             header,
             data,
+            data_index,
             status,
+            status_index,
         })
     }
 
@@ -114,7 +118,9 @@ impl VirtioBlkDevice {
         Ok(ResolvedRequestChain {
             header,
             data,
+            data_index,
             status,
+            status_index,
         })
     }
 
