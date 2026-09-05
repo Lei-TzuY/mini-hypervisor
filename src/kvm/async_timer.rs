@@ -160,17 +160,20 @@ fn run_timer_interrupt_guest(
     let armed = vcpu.registers()?;
     require_interrupt_disabled_flags("async timer armed barrier state", armed.rflags)?;
 
-    let prepared = match delivery {
-        AsyncTimerDelivery::DirectIrqLine => prepare_direct_async_timer_delivery(&vm)?,
-        AsyncTimerDelivery::Irqfd => prepare_irqfd_async_timer_delivery(&backend, &vm)?,
-    };
-
+    // Preflight the watchdog before selecting a delivery transport. In irqfd mode this guarantees
+    // that a watchdog fd failure occurs before KVM_IRQFD can establish kernel registration state;
+    // once the registration exists, every subsequent non-hanging path reaches explicit deassign.
     let watchdog_irq = vm
         .duplicate_irq_line_handle()
         .map_err(|source| async_timer_vm_error("duplicate async timer watchdog IRQ-line handle", source))?;
     watchdog_irq
         .set_gsi_level(KvmBackend::ASYNC_TIMER_GSI, false)
         .map_err(|source| async_timer_vm_error("preflight async timer watchdog IRQ-line handle", source))?;
+
+    let prepared = match delivery {
+        AsyncTimerDelivery::DirectIrqLine => prepare_direct_async_timer_delivery(&vm)?,
+        AsyncTimerDelivery::Irqfd => prepare_irqfd_async_timer_delivery(&backend, &vm)?,
+    };
 
     let (watchdog_cancel_tx, watchdog_cancel_rx) = std::sync::mpsc::channel::<()>();
     let watchdog_worker = std::thread::spawn(move || -> io::Result<bool> {
