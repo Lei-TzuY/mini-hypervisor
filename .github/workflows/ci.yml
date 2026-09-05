@@ -82,6 +82,21 @@ jobs:
           [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
           rflags=$((rflags_hex))
           (( (rflags & 0x2) == 0x2 ))
+      - name: Strict KVM direct interrupt execution proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet -- run-interrupt)"
+          printf '%s\n' "$output"
+          grep -F 'interrupt vector: 0x40' <<<"$output"
+          grep -F 'interrupt proof: [73, 77]' <<<"$output"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10007, rflags=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
+          (( (rflags & 0x200) == 0x200 ))
 
   msrv:
     runs-on: ubuntu-latest
