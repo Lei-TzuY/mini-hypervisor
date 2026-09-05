@@ -30,9 +30,9 @@ Acceptance contract:
 - guest execution must interleave the two devices rather than access them in isolated phases: first-device write `X`, first-device read, second-device write `Y`, second-device read, first-device read again, then completion byte `M` and HLT;
 - exact MMIO metadata is therefore five one-byte exits in order: first GPA write `X`, first GPA read, second GPA write `Y`, second GPA read, first GPA read;
 - exact host-visible device state is first writes `[X]` and second writes `[Y]`; exact debug proof is `ABAM`, where the repeated final `A` proves dispatch returned to the first device after servicing the second;
-- terminal evidence is `KVM_EXIT_HLT` at RIP `0x10029` with architectural RFLAGS bit 1 set;
+- terminal evidence is `KVM_EXIT_HLT` at RIP `0x1002b` with architectural RFLAGS bit 1 set;
 - KVM-aware integration must independently validate both virtual/GPA constants, all five MMIO metadata records, both write traces, all four byte-wide debug-port proof exits, HLT RIP, and RFLAGS;
-- stable CI must retain all eight integrated strict real-KVM gates and add an independent ninth strict multi-device MMIO gate that requires first writes `[88]`, second writes `[89]`, five MMIO exits, proof `[65, 66, 65, 77]`, and HLT RIP `0x10029`;
+- stable CI must retain all eight integrated strict real-KVM gates and add an independent ninth strict multi-device MMIO gate that requires first writes `[88]`, second writes `[89]`, five MMIO exits, proof `[65, 66, 65, 77]`, and HLT RIP `0x1002b`;
 - registration, mapping, dispatch, MMIO response, proof, terminal-state, or architectural-state failures remain hard failures and must not be retried, swallowed, skipped, or converted to best-effort success.
 
 ## Scope boundary
