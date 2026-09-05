@@ -809,7 +809,7 @@ mod tests {
         assert_eq!(DUAL_SOURCE_FIRST_VECTOR, 0x40);
         assert_eq!(DUAL_SOURCE_SECOND_VECTOR, 0x41);
         assert_eq!(DUAL_SOURCE_SECOND_HANDLER.get(), 0x1_2000);
-        assert_eq!(&DUAL_SOURCE_GUEST_BYTES[30..34], &[0xb0, 0xfc, 0xe6, 0x21]);
+        assert_eq!(&DUAL_SOURCE_GUEST_BYTES[29..33], &[0xb0, 0xfc, 0xe6, 0x21]);
         assert_eq!(&FIRST_HANDLER_BYTES[4..7], &[0x8a, 0x43, 0x01]);
         assert_eq!(&SECOND_HANDLER_BYTES[4..7], &[0x8a, 0x41, 0x01]);
     }
