@@ -217,6 +217,40 @@ jobs:
           [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
           rflags=$((rflags_hex))
           (( (rflags & 0x2) == 0x2 ))
+      - name: Strict KVM dual-source MMIO interrupt routing proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin mmio-dual-source-interrupt)"
+          printf '%s\n' "$output"
+          grep -F 'dual-source first route: device=0x10000000 gsi=0 vector=0x40' <<<"$output"
+          grep -F 'dual-source second route: device=0x10001000 gsi=1 vector=0x41' <<<"$output"
+          grep -F 'dual-source assert events: 2' <<<"$output"
+          grep -F 'dual-source deassert events: 2' <<<"$output"
+          grep -F 'dual-source MMIO exits: 6' <<<"$output"
+          grep -F 'dual-source first writes: [87, 1]' <<<"$output"
+          grep -F 'dual-source second writes: [87, 1]' <<<"$output"
+          spiv_line="$(grep -F 'dual-source LAPIC SPIV:' <<<"$output")"
+          spiv_hex="${spiv_line##*: }"
+          [[ "$spiv_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          spiv=$((spiv_hex))
+          (( (spiv & 0x100) == 0x100 ))
+          lint0_line="$(grep -F 'dual-source LAPIC LINT0:' <<<"$output")"
+          lint0_hex="${lint0_line##*: }"
+          [[ "$lint0_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          lint0=$((lint0_hex))
+          (( (lint0 & 0x700) == 0x700 ))
+          (( (lint0 & 0x10000) == 0 ))
+          for label in 'dual-source first armed rflags:' 'dual-source second armed rflags:' 'dual-source completion rflags:'; do
+            line="$(grep -F "$label" <<<"$output")"
+            rflags_hex="${line##*: }"
+            [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            rflags=$((rflags_hex))
+            (( (rflags & 0x2) == 0x2 ))
+            (( (rflags & 0x200) == 0x200 ))
+          done
+          grep -F 'dual-source proof: [65, 48, 83, 67, 77, 66, 49, 84, 69, 78, 68]' <<<"$output"
 
   msrv:
     runs-on: ubuntu-latest
