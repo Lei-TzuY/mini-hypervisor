@@ -310,11 +310,7 @@ impl MmioBus {
         Ok(())
     }
 
-    fn ensure_range_available(
-        &self,
-        address: u64,
-        size: u64,
-    ) -> Result<(), MmioRegistrationError> {
+    fn ensure_range_available(&self, address: u64, size: u64) -> Result<(), MmioRegistrationError> {
         let end = address
             .checked_add(size)
             .ok_or(MmioRegistrationError::AddressRangeOverflow { address, size })?;
@@ -888,26 +884,49 @@ mod tests {
         bus.register_virtio_rng_device_at(base).unwrap();
 
         assert_eq!(
-            bus.dispatch(&exit_at(base + 0x14, MmioDirection::Write, 1, &[VIRTIO_STATUS_ACKNOWLEDGE]))
-                .unwrap(),
+            bus.dispatch(&exit_at(
+                base + 0x14,
+                MmioDirection::Write,
+                1,
+                &[VIRTIO_STATUS_ACKNOWLEDGE]
+            ))
+            .unwrap(),
             MmioService::Write
         );
         assert_eq!(
-            bus.dispatch(&exit_at(base + 0x14, MmioDirection::Write, 1, &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER]))
-                .unwrap(),
+            bus.dispatch(&exit_at(
+                base + 0x14,
+                MmioDirection::Write,
+                1,
+                &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER]
+            ))
+            .unwrap(),
             MmioService::Write
         );
         assert_eq!(
-            bus.dispatch(&exit_at(base + 0x08, MmioDirection::Write, 4, &1_u32.to_le_bytes()))
-                .unwrap(),
+            bus.dispatch(&exit_at(
+                base + 0x08,
+                MmioDirection::Write,
+                4,
+                &1_u32.to_le_bytes()
+            ))
+            .unwrap(),
             MmioService::Write
         );
         assert_eq!(
-            bus.dispatch(&exit_at(base + 0x0c, MmioDirection::Write, 4, &1_u32.to_le_bytes()))
-                .unwrap(),
+            bus.dispatch(&exit_at(
+                base + 0x0c,
+                MmioDirection::Write,
+                4,
+                &1_u32.to_le_bytes()
+            ))
+            .unwrap(),
             MmioService::Write
         );
-        assert_eq!(bus.virtio_rng_driver_features_at(base), Some(VIRTIO_F_VERSION_1));
+        assert_eq!(
+            bus.virtio_rng_driver_features_at(base),
+            Some(VIRTIO_F_VERSION_1)
+        );
         assert_eq!(bus.take_device_event(), None);
     }
 
