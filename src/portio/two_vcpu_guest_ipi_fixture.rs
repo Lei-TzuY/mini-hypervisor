@@ -35,13 +35,52 @@ pub const SECOND_PROOF: &[u8; 4] = b"RI1D";
 const FIRST_GUEST_BYTES: [u8; 49] = [
     0xfb, // sti
     0x90, // nop -- complete STI shadow before the isolation barrier
-    0x48, 0xbb, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs $0x500000, %rbx
-    0xb0, b'0', 0xe6, 0xe9, // synchronization/isolation barrier before guest ICR writes
-    0xc7, 0x83, 0x10, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // ICR high: destination APIC ID 1
-    0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, TARGET_VECTOR, 0x00, 0x00, 0x00, // ICR low: fixed vector 0x52
-    0xb0, b'S', 0xe6, 0xe9, // proves both LAPIC MMIO writes completed in-kernel
-    0xb0, b'M', 0xe6, 0xe9, // wrong-target IPI must not emit I before this
-    0xb0, b'D', 0xe6, 0xe9, // first-vCPU completion
+    0x48,
+    0xbb,
+    0x00,
+    0x00,
+    0x50,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00, // movabs $0x500000, %rbx
+    0xb0,
+    b'0',
+    0xe6,
+    0xe9, // synchronization/isolation barrier before guest ICR writes
+    0xc7,
+    0x83,
+    0x10,
+    0x03,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x01, // ICR high: destination APIC ID 1
+    0xc7,
+    0x83,
+    0x00,
+    0x03,
+    0x00,
+    0x00,
+    TARGET_VECTOR,
+    0x00,
+    0x00,
+    0x00, // ICR low: fixed vector 0x52
+    0xb0,
+    b'S',
+    0xe6,
+    0xe9, // proves both LAPIC MMIO writes completed in-kernel
+    0xb0,
+    b'M',
+    0xe6,
+    0xe9, // wrong-target IPI must not emit I before this
+    0xb0,
+    b'D',
+    0xe6,
+    0xe9, // first-vCPU completion
     0xf4,
 ];
 
@@ -51,14 +90,13 @@ const SECOND_GUEST_BYTES: [u8; 26] = [
     0xb0, b'R', 0xe6, 0xe9, // worker readiness barrier
     0xfb, // sti
     0x90, // complete STI shadow before mainline byte 1
-    0xb0, b'1', 0xe6, 0xe9,
-    0xb0, b'D', 0xe6, 0xe9,
-    0xf4,
+    0xb0, b'1', 0xe6, 0xe9, 0xb0, b'D', 0xe6, 0xe9, 0xf4,
 ];
 
 const HANDLER_BYTES: [u8; 16] = [
     0xb0, b'I', 0xe6, 0xe9, // handler identity
-    0xc7, 0x83, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // movl $0, 0xb0(%rbx): LAPIC EOI
+    0xc7, 0x83, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, // movl $0, 0xb0(%rbx): LAPIC EOI
     0x48, 0xcf, // iretq
 ];
 
@@ -78,29 +116,52 @@ pub struct TwoVcpuGuestIpiResult {
 
 impl TwoVcpuGuestIpiResult {
     #[must_use]
-    pub fn first_io_exits(&self) -> &[PortIoExit] { &self.first_io_exits }
+    pub fn first_io_exits(&self) -> &[PortIoExit] {
+        &self.first_io_exits
+    }
     #[must_use]
-    pub fn second_io_exits(&self) -> &[PortIoExit] { &self.second_io_exits }
+    pub fn second_io_exits(&self) -> &[PortIoExit] {
+        &self.second_io_exits
+    }
     #[must_use]
-    pub fn first_proof(&self) -> &[u8] { &self.first_proof }
+    pub fn first_proof(&self) -> &[u8] {
+        &self.first_proof
+    }
     #[must_use]
-    pub fn second_proof(&self) -> &[u8] { &self.second_proof }
+    pub fn second_proof(&self) -> &[u8] {
+        &self.second_proof
+    }
     #[must_use]
-    pub const fn first_barrier_rflags(&self) -> u64 { self.first_barrier_rflags }
+    pub const fn first_barrier_rflags(&self) -> u64 {
+        self.first_barrier_rflags
+    }
     #[must_use]
-    pub const fn first_send_rflags(&self) -> u64 { self.first_send_rflags }
+    pub const fn first_send_rflags(&self) -> u64 {
+        self.first_send_rflags
+    }
     #[must_use]
-    pub const fn first_completion_rflags(&self) -> u64 { self.first_completion_rflags }
+    pub const fn first_completion_rflags(&self) -> u64 {
+        self.first_completion_rflags
+    }
     #[must_use]
-    pub const fn second_ready_rflags(&self) -> u64 { self.second_ready_rflags }
+    pub const fn second_ready_rflags(&self) -> u64 {
+        self.second_ready_rflags
+    }
     #[must_use]
-    pub const fn second_completion_rflags(&self) -> u64 { self.second_completion_rflags }
+    pub const fn second_completion_rflags(&self) -> u64 {
+        self.second_completion_rflags
+    }
     #[must_use]
-    pub const fn second_mp_state(&self) -> u32 { self.second_mp_state }
+    pub const fn second_mp_state(&self) -> u32 {
+        self.second_mp_state
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WorkerCommand { Continue, Abort }
+enum WorkerCommand {
+    Continue,
+    Abort,
+}
 
 #[derive(Debug)]
 struct SecondVcpuResult {
@@ -120,17 +181,28 @@ pub fn run_two_vcpu_guest_ipi() -> Result<TwoVcpuGuestIpiResult, Error> {
     let mut vm = backend.create_vm_with_irqchip()?;
     let mut memory = GuestMemory::new(RAM_BASE, LONG_MODE_IDENTITY_MAP_SIZE)?;
     let first_layout = LongModeInterruptLayout::new(
-        memory.region(), first_image.entry(), FIRST_STACK, TARGET_VECTOR, handler_image.entry(),
-    ).expect("fixed first guest-IPI layout remains valid");
+        memory.region(),
+        first_image.entry(),
+        FIRST_STACK,
+        TARGET_VECTOR,
+        handler_image.entry(),
+    )
+    .expect("fixed first guest-IPI layout remains valid");
     let second_layout = LongModeInterruptLayout::new(
-        memory.region(), second_image.entry(), SECOND_STACK, TARGET_VECTOR, handler_image.entry(),
-    ).expect("fixed second guest-IPI layout remains valid");
+        memory.region(),
+        second_image.entry(),
+        SECOND_STACK,
+        TARGET_VECTOR,
+        handler_image.entry(),
+    )
+    .expect("fixed second guest-IPI layout remains valid");
     let lapic_mapping = LongModeMmioBootLayout::with_device_mappings(
         memory.region(),
         first_image.entry(),
         FIRST_STACK,
         vec![LongModeMmioPageMapping::new(LAPIC_VIRTUAL_PAGE, LAPIC_GPA)],
-    ).expect("fixed LAPIC alias mapping remains valid");
+    )
+    .expect("fixed LAPIC alias mapping remains valid");
     first_layout.install_tables(&mut memory)?;
     lapic_mapping.install_page_tables(&mut memory)?;
     first_image.load(&mut memory)?;
@@ -150,35 +222,110 @@ pub fn run_two_vcpu_guest_ipi() -> Result<TwoVcpuGuestIpiResult, Error> {
     let (command_tx, command_rx) = mpsc::channel::<WorkerCommand>();
     let worker = std::thread::spawn(move || -> Result<SecondVcpuResult, Error> {
         let mut port_io = PortIoBus::with_debug_port();
-        let readiness = run_expected_debug_output(&mut second_vcpu, &mut port_io, b'R', "guest IPI second-vCPU readiness")?;
+        let readiness = run_expected_debug_output(
+            &mut second_vcpu,
+            &mut port_io,
+            b'R',
+            "guest IPI second-vCPU readiness",
+        )?;
         let ready_rflags = second_vcpu.registers()?.rflags;
-        require_interrupt_disabled_flags(SECOND_VCPU_ID, "guest IPI second-vCPU readiness state", ready_rflags)?;
-        ready_tx.send(ready_rflags).map_err(|_| verification_error(SECOND_VCPU_ID, "guest IPI worker readiness channel", "main thread dropped readiness receiver"))?;
-        match command_rx.recv().map_err(|_| verification_error(SECOND_VCPU_ID, "guest IPI worker command channel", "main thread dropped command sender"))? {
+        require_interrupt_disabled_flags(
+            SECOND_VCPU_ID,
+            "guest IPI second-vCPU readiness state",
+            ready_rflags,
+        )?;
+        ready_tx.send(ready_rflags).map_err(|_| {
+            verification_error(
+                SECOND_VCPU_ID,
+                "guest IPI worker readiness channel",
+                "main thread dropped readiness receiver",
+            )
+        })?;
+        match command_rx.recv().map_err(|_| {
+            verification_error(
+                SECOND_VCPU_ID,
+                "guest IPI worker command channel",
+                "main thread dropped command sender",
+            )
+        })? {
             WorkerCommand::Continue => {}
-            WorkerCommand::Abort => return Err(verification_error(SECOND_VCPU_ID, "guest IPI worker abort", "guest ICR delivery failed before worker resume")),
+            WorkerCommand::Abort => {
+                return Err(verification_error(
+                    SECOND_VCPU_ID,
+                    "guest IPI worker abort",
+                    "guest ICR delivery failed before worker resume",
+                ))
+            }
         }
-        let handler = run_expected_debug_output(&mut second_vcpu, &mut port_io, b'I', "guest IPI second-vCPU handler")?;
-        let mainline = run_expected_debug_output(&mut second_vcpu, &mut port_io, b'1', "guest IPI second-vCPU mainline")?;
-        let completion = run_expected_debug_output(&mut second_vcpu, &mut port_io, b'D', "guest IPI second-vCPU completion")?;
+        let handler = run_expected_debug_output(
+            &mut second_vcpu,
+            &mut port_io,
+            b'I',
+            "guest IPI second-vCPU handler",
+        )?;
+        let mainline = run_expected_debug_output(
+            &mut second_vcpu,
+            &mut port_io,
+            b'1',
+            "guest IPI second-vCPU mainline",
+        )?;
+        let completion = run_expected_debug_output(
+            &mut second_vcpu,
+            &mut port_io,
+            b'D',
+            "guest IPI second-vCPU completion",
+        )?;
         let completion_rflags = second_vcpu.registers()?.rflags;
-        require_interrupt_enabled_flags(SECOND_VCPU_ID, "guest IPI second-vCPU completion state", completion_rflags)?;
+        require_interrupt_enabled_flags(
+            SECOND_VCPU_ID,
+            "guest IPI second-vCPU completion state",
+            completion_rflags,
+        )?;
         let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
         if proof.as_slice() != SECOND_PROOF {
-            return Err(verification_error(SECOND_VCPU_ID, "guest IPI second-vCPU proof", format!("expected {:?}, got {proof:?}", SECOND_PROOF)));
+            return Err(verification_error(
+                SECOND_VCPU_ID,
+                "guest IPI second-vCPU proof",
+                format!("expected {:?}, got {proof:?}", SECOND_PROOF),
+            ));
         }
-        Ok(SecondVcpuResult { io_exits: vec![readiness, handler, mainline, completion], proof, ready_rflags, completion_rflags })
+        Ok(SecondVcpuResult {
+            io_exits: vec![readiness, handler, mainline, completion],
+            proof,
+            ready_rflags,
+            completion_rflags,
+        })
     });
 
-    let worker_ready_rflags = ready_rx.recv().map_err(|_| join_worker_failure("guest IPI worker exited before readiness"))?;
-    require_interrupt_disabled_flags(SECOND_VCPU_ID, "guest IPI worker readiness readback", worker_ready_rflags)?;
+    let worker_ready_rflags = ready_rx
+        .recv()
+        .map_err(|_| join_worker_failure("guest IPI worker exited before readiness"))?;
+    require_interrupt_disabled_flags(
+        SECOND_VCPU_ID,
+        "guest IPI worker readiness readback",
+        worker_ready_rflags,
+    )?;
 
     let mut first_port_io = PortIoBus::with_debug_port();
-    let first_barrier = run_expected_debug_output(&mut first_vcpu, &mut first_port_io, b'0', "guest IPI first-vCPU pre-ICR barrier")?;
+    let first_barrier = run_expected_debug_output(
+        &mut first_vcpu,
+        &mut first_port_io,
+        b'0',
+        "guest IPI first-vCPU pre-ICR barrier",
+    )?;
     let first_barrier_rflags = first_vcpu.registers()?.rflags;
-    require_interrupt_enabled_flags(FIRST_VCPU_ID, "guest IPI first-vCPU pre-ICR state", first_barrier_rflags)?;
+    require_interrupt_enabled_flags(
+        FIRST_VCPU_ID,
+        "guest IPI first-vCPU pre-ICR state",
+        first_barrier_rflags,
+    )?;
 
-    let first_send = match run_expected_debug_output(&mut first_vcpu, &mut first_port_io, b'S', "guest IPI first-vCPU post-ICR barrier") {
+    let first_send = match run_expected_debug_output(
+        &mut first_vcpu,
+        &mut first_port_io,
+        b'S',
+        "guest IPI first-vCPU post-ICR barrier",
+    ) {
         Ok(exit) => exit,
         Err(error) => {
             let _ = command_tx.send(WorkerCommand::Abort);
@@ -187,18 +334,52 @@ pub fn run_two_vcpu_guest_ipi() -> Result<TwoVcpuGuestIpiResult, Error> {
         }
     };
     let first_send_rflags = first_vcpu.registers()?.rflags;
-    require_interrupt_enabled_flags(FIRST_VCPU_ID, "guest IPI first-vCPU post-ICR state", first_send_rflags)?;
+    require_interrupt_enabled_flags(
+        FIRST_VCPU_ID,
+        "guest IPI first-vCPU post-ICR state",
+        first_send_rflags,
+    )?;
 
-    command_tx.send(WorkerCommand::Continue).map_err(|_| verification_error(FIRST_VCPU_ID, "guest IPI worker resume channel", "worker exited before resume command"))?;
-    let second = worker.join().map_err(|_| verification_error(SECOND_VCPU_ID, "guest IPI worker join", "second-vCPU worker panicked"))??;
+    command_tx.send(WorkerCommand::Continue).map_err(|_| {
+        verification_error(
+            FIRST_VCPU_ID,
+            "guest IPI worker resume channel",
+            "worker exited before resume command",
+        )
+    })?;
+    let second = worker.join().map_err(|_| {
+        verification_error(
+            SECOND_VCPU_ID,
+            "guest IPI worker join",
+            "second-vCPU worker panicked",
+        )
+    })??;
 
-    let first_mainline = run_expected_debug_output(&mut first_vcpu, &mut first_port_io, b'M', "guest IPI first-vCPU target isolation")?;
-    let first_completion = run_expected_debug_output(&mut first_vcpu, &mut first_port_io, b'D', "guest IPI first-vCPU completion")?;
+    let first_mainline = run_expected_debug_output(
+        &mut first_vcpu,
+        &mut first_port_io,
+        b'M',
+        "guest IPI first-vCPU target isolation",
+    )?;
+    let first_completion = run_expected_debug_output(
+        &mut first_vcpu,
+        &mut first_port_io,
+        b'D',
+        "guest IPI first-vCPU completion",
+    )?;
     let first_completion_rflags = first_vcpu.registers()?.rflags;
-    require_interrupt_enabled_flags(FIRST_VCPU_ID, "guest IPI first-vCPU completion state", first_completion_rflags)?;
+    require_interrupt_enabled_flags(
+        FIRST_VCPU_ID,
+        "guest IPI first-vCPU completion state",
+        first_completion_rflags,
+    )?;
     let first_proof = first_port_io.debug_output().unwrap_or(&[]).to_vec();
     if first_proof.as_slice() != FIRST_PROOF {
-        return Err(verification_error(FIRST_VCPU_ID, "guest IPI first-vCPU proof", format!("expected {:?}, got {first_proof:?}", FIRST_PROOF)));
+        return Err(verification_error(
+            FIRST_VCPU_ID,
+            "guest IPI first-vCPU proof",
+            format!("expected {:?}, got {first_proof:?}", FIRST_PROOF),
+        ));
     }
 
     Ok(TwoVcpuGuestIpiResult {
@@ -215,37 +396,83 @@ pub fn run_two_vcpu_guest_ipi() -> Result<TwoVcpuGuestIpiResult, Error> {
     })
 }
 
-fn run_expected_debug_output(vcpu: &mut Vcpu, port_io: &mut PortIoBus, expected: u8, stage: &'static str) -> Result<PortIoExit, Error> {
+fn run_expected_debug_output(
+    vcpu: &mut Vcpu,
+    port_io: &mut PortIoBus,
+    expected: u8,
+    stage: &'static str,
+) -> Result<PortIoExit, Error> {
     let exit = vcpu.run_once()?;
     if exit != VcpuExit::Io {
-        return Err(verification_error(vcpu.id(), stage, format!("expected KVM_EXIT_IO, got {exit:?}")));
+        return Err(verification_error(
+            vcpu.id(),
+            stage,
+            format!("expected KVM_EXIT_IO, got {exit:?}"),
+        ));
     }
     let io_exit = vcpu.port_io_exit()?;
-    if io_exit.direction() != PortIoDirection::Out || io_exit.port() != DEBUG_PORT || io_exit.size() != 1 || io_exit.count() != 1 || io_exit.output_data() != [expected] {
-        return Err(verification_error(vcpu.id(), stage, format!("unexpected debug output exit: {io_exit:?}; expected byte {expected:#x}")));
+    if io_exit.direction() != PortIoDirection::Out
+        || io_exit.port() != DEBUG_PORT
+        || io_exit.size() != 1
+        || io_exit.count() != 1
+        || io_exit.output_data() != [expected]
+    {
+        return Err(verification_error(
+            vcpu.id(),
+            stage,
+            format!("unexpected debug output exit: {io_exit:?}; expected byte {expected:#x}"),
+        ));
     }
     if port_io.dispatch(&io_exit)? != PortIoService::Output {
-        return Err(verification_error(vcpu.id(), stage, "debug output unexpectedly requested an input response"));
+        return Err(verification_error(
+            vcpu.id(),
+            stage,
+            "debug output unexpectedly requested an input response",
+        ));
     }
     Ok(io_exit)
 }
 
-fn require_interrupt_disabled_flags(id: VcpuId, stage: &'static str, rflags: u64) -> Result<(), Error> {
-    if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT || rflags & X86_RFLAGS_INTERRUPT_ENABLE != 0 {
-        return Err(verification_error(id, stage, format!("expected architectural bit1 set and IF clear, got RFLAGS {rflags:#x}")));
+fn require_interrupt_disabled_flags(
+    id: VcpuId,
+    stage: &'static str,
+    rflags: u64,
+) -> Result<(), Error> {
+    if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
+        || rflags & X86_RFLAGS_INTERRUPT_ENABLE != 0
+    {
+        return Err(verification_error(
+            id,
+            stage,
+            format!("expected architectural bit1 set and IF clear, got RFLAGS {rflags:#x}"),
+        ));
     }
     Ok(())
 }
 
-fn require_interrupt_enabled_flags(id: VcpuId, stage: &'static str, rflags: u64) -> Result<(), Error> {
-    if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT || rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE {
-        return Err(verification_error(id, stage, format!("expected architectural bit1 and IF set, got RFLAGS {rflags:#x}")));
+fn require_interrupt_enabled_flags(
+    id: VcpuId,
+    stage: &'static str,
+    rflags: u64,
+) -> Result<(), Error> {
+    if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
+        || rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
+    {
+        return Err(verification_error(
+            id,
+            stage,
+            format!("expected architectural bit1 and IF set, got RFLAGS {rflags:#x}"),
+        ));
     }
     Ok(())
 }
 
 fn verification_error(id: VcpuId, operation: &'static str, detail: impl Into<String>) -> Error {
-    Error::HostEnvironment(HostEnvironmentError::VcpuOperation { id: id.get(), operation, source: io::Error::new(io::ErrorKind::InvalidData, detail.into()) })
+    Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
+        id: id.get(),
+        operation,
+        source: io::Error::new(io::ErrorKind::InvalidData, detail.into()),
+    })
 }
 
 fn join_worker_failure(detail: &'static str) -> Error {
@@ -264,13 +491,22 @@ mod tests {
         assert_eq!(TARGET_VECTOR, 0x52);
         assert_eq!(ICR_HIGH_VALUE, 0x0100_0000);
         assert_eq!(ICR_LOW_VALUE, 0x52);
-        assert_eq!(&FIRST_GUEST_BYTES[16..26], &[0xc7, 0x83, 0x10, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
-        assert_eq!(&FIRST_GUEST_BYTES[26..36], &[0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x52, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            &FIRST_GUEST_BYTES[16..26],
+            &[0xc7, 0x83, 0x10, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
+        );
+        assert_eq!(
+            &FIRST_GUEST_BYTES[26..36],
+            &[0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x52, 0x00, 0x00, 0x00]
+        );
     }
 
     #[test]
     fn handler_acknowledges_local_apic_before_iretq() {
-        assert_eq!(&HANDLER_BYTES[4..14], &[0xc7, 0x83, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            &HANDLER_BYTES[4..14],
+            &[0xc7, 0x83, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
         assert_eq!(&HANDLER_BYTES[14..], &[0x48, 0xcf]);
     }
 
