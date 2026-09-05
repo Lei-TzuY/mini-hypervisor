@@ -123,13 +123,13 @@ jobs:
           armed_rflags=$((armed_rflags_hex))
           (( (armed_rflags & 0x2) == 0x2 ))
           (( (armed_rflags & 0x200) == 0x200 ))
-          grep -F 'irqchip proof: [82, 65, 73, 77]' <<<"$output"
-          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10034, rflags=' <<<"$output")"
-          rflags_hex="${report##*rflags=}"
-          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
-          rflags=$((rflags_hex))
-          (( (rflags & 0x2) == 0x2 ))
-          (( (rflags & 0x200) == 0x200 ))
+          completion="$(grep -F 'irqchip completion rflags:' <<<"$output")"
+          completion_rflags_hex="${completion##*rflags: }"
+          [[ "$completion_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          completion_rflags=$((completion_rflags_hex))
+          (( (completion_rflags & 0x2) == 0x2 ))
+          (( (completion_rflags & 0x200) == 0x200 ))
+          grep -F 'irqchip proof: [82, 65, 73, 77, 68]' <<<"$output"
 
   msrv:
     runs-on: ubuntu-latest
