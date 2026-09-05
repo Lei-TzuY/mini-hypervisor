@@ -10,7 +10,7 @@ use crate::long_mode::LONG_MODE_IDENTITY_MAP_SIZE;
 use crate::memory::{GuestMemory, GuestPhysAddr};
 use crate::portio::{PortIoBus, PortIoService, DEBUG_PORT};
 use crate::vcpu::{PortIoDirection, PortIoExit, VcpuExit, VcpuId};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
 const KVM_CAP_IRQCHIP: i32 = 0;
 const KVM_CREATE_IRQCHIP: libc::c_ulong = 0xAE60;
@@ -60,6 +60,22 @@ impl KvmIrqLevel {
             irq,
             level: level as u32,
         }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct VmIrqLineHandle {
+    fd: OwnedFd,
+}
+
+impl VmIrqLineHandle {
+    pub(crate) fn set_gsi_level(&self, gsi: u32, asserted: bool) -> io::Result<()> {
+        set_irq_line(self.fd.as_raw_fd(), KvmIrqLevel::new(gsi, asserted))
+    }
+
+    pub(crate) fn pulse_gsi_edge(&self, gsi: u32) -> io::Result<()> {
+        self.set_gsi_level(gsi, true)?;
+        self.set_gsi_level(gsi, false)
     }
 }
 
@@ -254,6 +270,18 @@ impl KvmBackend {
 }
 
 impl Vm {
+    pub(crate) fn duplicate_irq_line_handle(&self) -> io::Result<VmIrqLineHandle> {
+        // SAFETY: `dup` only duplicates this process-owned KVM VM file descriptor. The returned
+        // descriptor refers to the same kernel VM object and is immediately wrapped in `OwnedFd`.
+        let raw_fd = unsafe { libc::dup(self.fd.as_raw_fd()) };
+        if raw_fd == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: successful `dup` returns a fresh owned descriptor that must be closed exactly once.
+        let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+        Ok(VmIrqLineHandle { fd })
+    }
+
     pub fn set_gsi_level(&self, gsi: u32, asserted: bool) -> Result<(), Error> {
         let operation = if asserted {
             "KVM_IRQ_LINE assert"
@@ -384,12 +412,19 @@ const _: () = {
 mod irqchip_tests {
     use super::*;
 
+    fn assert_send<T: Send>() {}
+
     #[test]
     fn irqchip_uapi_contract_matches_x86_kvm() {
         assert_eq!(KVM_CAP_IRQCHIP, 0);
         assert_eq!(KVM_CREATE_IRQCHIP, 0xAE60);
         assert_eq!(KVM_IRQ_LINE, 0x4008_AE61);
         assert_eq!(std::mem::size_of::<KvmIrqLevel>(), 8);
+    }
+
+    #[test]
+    fn irq_line_worker_handle_is_send_without_sharing_vm_memory() {
+        assert_send::<VmIrqLineHandle>();
     }
 
     #[test]
@@ -425,3 +460,5 @@ mod irqchip_tests {
         assert!(require_interrupt_enabled_flags("test", 0x002).is_err());
     }
 }
+
+include!("async_timer.rs");
