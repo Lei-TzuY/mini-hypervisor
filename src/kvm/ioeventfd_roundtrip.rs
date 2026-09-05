@@ -369,12 +369,14 @@ fn run_ioeventfd_irqfd_roundtrip(
     // Remove both kernel-assisted registrations before accepting worker or guest proof results.
     let ioeventfd_cleanup = doorbell_registration.deassign(&vm);
     let irqfd_cleanup = irqfd_registration.deassign(&vm);
-
-    let doorbell_events = bridge_join??;
-    let watchdog_fired = watchdog_join?;
     ioeventfd_cleanup
         .map_err(|source| roundtrip_vm_error("deassign round-trip KVM_IOEVENTFD", source))?;
     irqfd_cleanup.map_err(|source| roundtrip_vm_error("deassign round-trip KVM_IRQFD", source))?;
+
+    let bridge_result = bridge_join?;
+    let doorbell_events = bridge_result
+        .map_err(|source| roundtrip_vm_error("ioeventfd/irqfd bridge worker", source))?;
+    let watchdog_fired = watchdog_join?;
     if watchdog_fired {
         return Err(verification_error(
             "ioeventfd/irqfd round-trip watchdog",
