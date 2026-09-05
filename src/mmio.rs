@@ -2,6 +2,7 @@ use crate::error::{Error, MmioError};
 use crate::vcpu::{MmioDirection, MmioExit};
 use std::fmt;
 
+pub mod dual_source_interrupt;
 pub mod interrupt;
 pub mod level_interrupt;
 pub mod long_mode;
