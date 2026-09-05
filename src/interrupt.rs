@@ -55,12 +55,27 @@ const LONG_MODE_INTERRUPT_HANDLER_BYTES: [u8; 6] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LongModeInterruptConfigurationError {
     Boot(LongModeConfigurationError),
-    VectorReservedForExceptions { vector: u8 },
-    EntryOverlapsInterruptTables { entry: u64 },
-    HandlerOutsideIdentityMap { handler: u64, mapped_size: u64 },
-    HandlerOverlapsReservedTables { handler: u64 },
-    InterruptStackFrameOutsideIdentityMap { stack_pointer: u64, frame_bytes: u64 },
-    InterruptStackFrameOverlapsReservedTables { stack_pointer: u64, frame_start: u64 },
+    VectorReservedForExceptions {
+        vector: u8,
+    },
+    EntryOverlapsInterruptTables {
+        entry: u64,
+    },
+    HandlerOutsideIdentityMap {
+        handler: u64,
+        mapped_size: u64,
+    },
+    HandlerOverlapsReservedTables {
+        handler: u64,
+    },
+    InterruptStackFrameOutsideIdentityMap {
+        stack_pointer: u64,
+        frame_bytes: u64,
+    },
+    InterruptStackFrameOverlapsReservedTables {
+        stack_pointer: u64,
+        frame_start: u64,
+    },
 }
 
 impl fmt::Display for LongModeInterruptConfigurationError {
@@ -138,9 +153,9 @@ impl LongModeInterruptLayout {
         let boot = LongModeBootLayout::new(memory, entry, stack_pointer)?;
 
         if vector < X86_EXCEPTION_VECTOR_COUNT {
-            return Err(LongModeInterruptConfigurationError::VectorReservedForExceptions {
-                vector,
-            });
+            return Err(
+                LongModeInterruptConfigurationError::VectorReservedForExceptions { vector },
+            );
         }
         if is_interrupt_table_address(entry.get()) {
             return Err(
@@ -319,11 +334,8 @@ pub fn run_long_mode_interrupt_guest(
     vcpu.inject_interrupt(layout.vector())?;
 
     let mut port_io = PortIoBus::with_debug_port();
-    let execution = run_vcpu_until_stopped(
-        &mut vcpu,
-        &mut port_io,
-        LONG_MODE_INTERRUPT_EXIT_BUDGET,
-    )?;
+    let execution =
+        run_vcpu_until_stopped(&mut vcpu, &mut port_io, LONG_MODE_INTERRUPT_EXIT_BUDGET)?;
     if execution.io_exits().len() != LONG_MODE_INTERRUPT_PROOF.len() {
         return Err(Error::VmExit(VmExitError::UnexpectedSequence {
             stage: "long-mode direct interrupt proof output count",
@@ -353,8 +365,7 @@ fn encode_interrupt_gate(handler: u64) -> [u8; 16] {
 }
 
 const fn is_interrupt_table_address(address: u64) -> bool {
-    address >= LONG_MODE_INTERRUPT_GDT_ADDR.get()
-        && address < LONG_MODE_INTERRUPT_TABLE_END.get()
+    address >= LONG_MODE_INTERRUPT_GDT_ADDR.get() && address < LONG_MODE_INTERRUPT_TABLE_END.get()
 }
 
 const fn is_reserved_table_address(address: u64) -> bool {
@@ -402,12 +413,15 @@ mod tests {
         );
         let mut gate = [0_u8; 16];
         memory.read(gate_address, &mut gate).unwrap();
-        assert_eq!(gate, encode_interrupt_gate(LONG_MODE_INTERRUPT_HANDLER.get()));
+        assert_eq!(
+            gate,
+            encode_interrupt_gate(LONG_MODE_INTERRUPT_HANDLER.get())
+        );
         assert_eq!(
             gate,
             [
-                0x00, 0x10, 0x08, 0x00, 0x00, 0x8e, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00,
+                0x00, 0x10, 0x08, 0x00, 0x00, 0x8e, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00,
             ]
         );
         assert_eq!(layout.idt_limit(), 0x40f);
@@ -423,9 +437,7 @@ mod tests {
                 0x1f,
                 LONG_MODE_INTERRUPT_HANDLER,
             ),
-            Err(LongModeInterruptConfigurationError::VectorReservedForExceptions {
-                vector: 0x1f
-            })
+            Err(LongModeInterruptConfigurationError::VectorReservedForExceptions { vector: 0x1f })
         ));
         assert!(matches!(
             LongModeInterruptLayout::new(
@@ -469,16 +481,22 @@ mod tests {
                 LONG_MODE_INTERRUPT_VECTOR,
                 LONG_MODE_INTERRUPT_HANDLER,
             ),
-            Err(LongModeInterruptConfigurationError::InterruptStackFrameOverlapsReservedTables {
-                ..
-            })
+            Err(
+                LongModeInterruptConfigurationError::InterruptStackFrameOverlapsReservedTables { .. }
+            )
         ));
     }
 
     #[test]
     fn deterministic_guest_and_handler_machine_code_are_stable() {
-        assert_eq!(LONG_MODE_INTERRUPT_GUEST_BYTES, [0xfb, 0x90, 0xb0, b'M', 0xe6, 0xe9, 0xf4]);
-        assert_eq!(LONG_MODE_INTERRUPT_HANDLER_BYTES, [0xb0, b'I', 0xe6, 0xe9, 0x48, 0xcf]);
+        assert_eq!(
+            LONG_MODE_INTERRUPT_GUEST_BYTES,
+            [0xfb, 0x90, 0xb0, b'M', 0xe6, 0xe9, 0xf4]
+        );
+        assert_eq!(
+            LONG_MODE_INTERRUPT_HANDLER_BYTES,
+            [0xb0, b'I', 0xe6, 0xe9, 0x48, 0xcf]
+        );
         assert_eq!(LONG_MODE_INTERRUPT_PROOF, b"IM");
         assert_eq!(
             LONG_MODE_INTERRUPT_GUEST_ENTRY.get() + LONG_MODE_INTERRUPT_GUEST_BYTES.len() as u64,
