@@ -160,6 +160,9 @@ fn run_timer_interrupt_guest(
     let armed = vcpu.registers()?;
     require_interrupt_disabled_flags("async timer armed barrier state", armed.rflags)?;
 
+    // Preflight the watchdog before selecting a delivery transport. In irqfd mode this guarantees
+    // that a watchdog fd failure occurs before KVM_IRQFD can establish kernel registration state;
+    // once the registration exists, every subsequent non-hanging path reaches explicit deassign.
     let watchdog_irq = vm
         .duplicate_irq_line_handle()
         .map_err(|source| async_timer_vm_error("duplicate async timer watchdog IRQ-line handle", source))?;
@@ -186,6 +189,11 @@ fn run_timer_interrupt_guest(
         }
     });
 
+    // The guest has IF clear at A, then executes the indivisible handoff `sti; hlt` on the next
+    // KVM_RUN. x86 STI shadow defers a pending maskable interrupt until after the following HLT
+    // instruction, so correctness does not depend on whether the selected host delivery fires just
+    // before or just after KVM reaches HLT. Reaching T before W proves the interrupt crossed the PIC
+    // path and completed the HLT handoff.
     let execution = (|| -> Result<_, Error> {
         let handler_io = run_expected_debug_output(
             &mut vcpu,
@@ -210,6 +218,9 @@ fn run_timer_interrupt_guest(
         Ok((handler_io, woke_io, completion_io, completion.rflags))
     })();
 
+    // On every non-hanging path, cancel the watchdog, join both workers, and explicitly remove an
+    // irqfd assignment before interpreting proof results. Cleanup is attempted even when a worker
+    // panicked so the accelerated registration never becomes a silent lifetime leak.
     let _ = watchdog_cancel_tx.send(());
     let PreparedAsyncTimerDelivery {
         timer_worker,
