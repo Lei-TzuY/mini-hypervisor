@@ -355,7 +355,7 @@ fn unhandled(io: &PortIoExit) -> PortIoError {
 #[cfg(test)]
 mod tests {
     use self::virtio::{VIRTIO_PCI_VENDOR_ID, VIRTIO_RNG_PCI_DEVICE_ID};
-    use self::virtio_blk::{VIRTIO_BLK_PCI_DEVICE_ID, VIRTIO_BLK_PCI_CLASS_CODE};
+    use self::virtio_blk::{VIRTIO_BLK_PCI_CLASS_CODE, VIRTIO_BLK_PCI_DEVICE_ID};
     use super::*;
 
     const BAR0: u32 = 0x1000_0000;
@@ -428,11 +428,20 @@ mod tests {
             read_config(&mut config, 0x00),
             (u32::from(VIRTIO_BLK_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID)
         );
-        assert_eq!(read_config(&mut config, 0x08) >> 24, u32::from(VIRTIO_BLK_PCI_CLASS_CODE));
+        assert_eq!(
+            read_config(&mut config, 0x08) >> 24,
+            u32::from(VIRTIO_BLK_PCI_CLASS_CODE)
+        );
         assert_eq!(read_config(&mut config, 0x10), BAR0);
         assert_eq!(read_config(&mut config, 0x34) & 0xff, 0x40);
-        assert_eq!(read_config(&mut config, 0x64).to_le_bytes(), [0x09, 0x74, 16, 3]);
-        assert_eq!(read_config(&mut config, 0x74).to_le_bytes(), [0x09, 0, 16, 4]);
+        assert_eq!(
+            read_config(&mut config, 0x64).to_le_bytes(),
+            [0x09, 0x74, 16, 3]
+        );
+        assert_eq!(
+            read_config(&mut config, 0x74).to_le_bytes(),
+            [0x09, 0, 16, 4]
+        );
     }
 
     #[test]
