@@ -318,6 +318,44 @@ jobs:
           (( (completion_rflags & 0x2) == 0x2 ))
           (( (completion_rflags & 0x200) == 0x200 ))
           grep -F 'irqfd timer proof: [82, 65, 84, 87, 68]' <<<"$output"
+      - name: Strict KVM ioeventfd to irqfd round-trip proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin ioeventfd-irqfd-roundtrip)"
+          printf '%s\n' "$output"
+          grep -F 'ioeventfd capability: KVM_CAP_IOEVENTFD' <<<"$output"
+          grep -F 'irqfd capability: KVM_CAP_IRQFD' <<<"$output"
+          grep -F 'round-trip doorbell GPA: 0x10000000' <<<"$output"
+          grep -F 'round-trip doorbell value: 90' <<<"$output"
+          grep -F 'round-trip doorbell events: 1' <<<"$output"
+          grep -F 'round-trip GSI: 0' <<<"$output"
+          grep -F 'round-trip vector: 0x40' <<<"$output"
+          spiv_line="$(grep -F 'round-trip LAPIC SPIV:' <<<"$output")"
+          spiv_hex="${spiv_line##*: }"
+          [[ "$spiv_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          spiv=$((spiv_hex))
+          (( (spiv & 0x100) == 0x100 ))
+          lint0_line="$(grep -F 'round-trip LAPIC LINT0:' <<<"$output")"
+          lint0_hex="${lint0_line##*: }"
+          [[ "$lint0_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          lint0=$((lint0_hex))
+          (( (lint0 & 0x700) == 0x700 ))
+          (( (lint0 & 0x10000) == 0 ))
+          armed="$(grep -F 'round-trip armed rflags:' <<<"$output")"
+          armed_rflags_hex="${armed##*rflags: }"
+          [[ "$armed_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          armed_rflags=$((armed_rflags_hex))
+          (( (armed_rflags & 0x2) == 0x2 ))
+          (( (armed_rflags & 0x200) == 0 ))
+          completion="$(grep -F 'round-trip completion rflags:' <<<"$output")"
+          completion_rflags_hex="${completion##*rflags: }"
+          [[ "$completion_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          completion_rflags=$((completion_rflags_hex))
+          (( (completion_rflags & 0x2) == 0x2 ))
+          (( (completion_rflags & 0x200) == 0x200 ))
+          grep -F 'round-trip proof: [82, 65, 84, 87, 68]' <<<"$output"
 
   msrv:
     runs-on: ubuntu-latest
