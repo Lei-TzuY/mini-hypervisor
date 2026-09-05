@@ -7,24 +7,6 @@ use std::os::fd::AsRawFd;
 
 const KVM_EXIT_IRQ_WINDOW_OPEN: u32 = 7;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct InterruptWindowObservation {
-    rip: u64,
-    rflags: u64,
-}
-
-impl InterruptWindowObservation {
-    #[must_use]
-    pub(crate) const fn rip(self) -> u64 {
-        self.rip
-    }
-
-    #[must_use]
-    pub(crate) const fn rflags(self) -> u64 {
-        self.rflags
-    }
-}
-
 impl Vcpu {
     pub fn initialize_long_mode_interrupts(
         &self,
@@ -39,7 +21,7 @@ impl Vcpu {
             .map_err(|source| vcpu_operation(self.id, "KVM_SET_SREGS", source))
     }
 
-    pub(crate) fn wait_for_interrupt_window(&mut self) -> Result<InterruptWindowObservation, Error> {
+    pub(crate) fn wait_for_interrupt_window(&mut self) -> Result<(u64, u64), Error> {
         self.set_interrupt_window_request(true);
         let exit_result = self.run_once();
         self.set_interrupt_window_request(false);
@@ -70,10 +52,7 @@ impl Vcpu {
         }
 
         let registers = self.registers()?;
-        Ok(InterruptWindowObservation {
-            rip: registers.rip,
-            rflags: registers.rflags,
-        })
+        Ok((registers.rip, registers.rflags))
     }
 
     pub fn inject_interrupt(&self, vector: u8) -> Result<(), Error> {
