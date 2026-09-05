@@ -77,12 +77,8 @@ pub fn run_mmio_guest(config: VmConfig) -> Result<MmioGuestResult, Error> {
     vcpu.initialize_real_mode(image.entry())?;
     let mut port_io = PortIoBus::with_debug_port();
     let mut mmio = MmioBus::with_byte_device(MMIO_GUEST_READ_VALUE);
-    let execution = run_vcpu_until_stopped_with_mmio(
-        &mut vcpu,
-        &mut port_io,
-        &mut mmio,
-        MMIO_EXIT_BUDGET,
-    )?;
+    let execution =
+        run_vcpu_until_stopped_with_mmio(&mut vcpu, &mut port_io, &mut mmio, MMIO_EXIT_BUDGET)?;
 
     debug_assert_eq!(execution.completed_exits(), MMIO_EXIT_BUDGET);
     debug_assert_eq!(execution.mmio_exits().len(), 2);
@@ -111,7 +107,10 @@ mod tests {
     #[test]
     fn mmio_guest_machine_code_and_contract_are_stable() {
         assert_eq!(MMIO_GUEST_BYTES.len(), 0x17);
-        assert_eq!(MMIO_GUEST_ENTRY.get() + MMIO_GUEST_BYTES.len() as u64, MMIO_GUEST_TERMINAL_RIP);
+        assert_eq!(
+            MMIO_GUEST_ENTRY.get() + MMIO_GUEST_BYTES.len() as u64,
+            MMIO_GUEST_TERMINAL_RIP
+        );
         assert_eq!(MMIO_GUEST_PROOF, b"RMIO");
         assert_eq!(MMIO_GUEST_WRITE_VALUE, b'W');
         assert_eq!(MMIO_GUEST_READ_VALUE, b'R');
@@ -119,8 +118,8 @@ mod tests {
         assert_eq!(
             MMIO_GUEST_BYTES,
             [
-                0xb0, b'W', 0xa2, 0x00, 0x20, 0xa0, 0x00, 0x20, 0xe6, 0xe9, 0xb0, b'M', 0xe6,
-                0xe9, 0xb0, b'I', 0xe6, 0xe9, 0xb0, b'O', 0xe6, 0xe9, 0xf4,
+                0xb0, b'W', 0xa2, 0x00, 0x20, 0xa0, 0x00, 0x20, 0xe6, 0xe9, 0xb0, b'M', 0xe6, 0xe9,
+                0xb0, b'I', 0xe6, 0xe9, 0xb0, b'O', 0xe6, 0xe9, 0xf4,
             ]
         );
     }
