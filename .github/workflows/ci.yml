@@ -212,7 +212,7 @@ jobs:
           grep -F 'multi-device second writes: [89]' <<<"$output"
           grep -F 'multi-device MMIO exits: 5' <<<"$output"
           grep -F 'multi-device proof: [65, 66, 65, 77]' <<<"$output"
-          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10029, rflags=' <<<"$output")"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x1002b, rflags=' <<<"$output")"
           rflags_hex="${report##*rflags=}"
           [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
           rflags=$((rflags_hex))
