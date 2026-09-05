@@ -1,6 +1,7 @@
 #[path = "pci.rs"]
 pub mod pci;
 pub mod pci_fixture;
+pub mod virtio_rng_fixture;
 
 use crate::error::{Error, PortIoError};
 use crate::vcpu::{PortIoDirection, PortIoExit};
