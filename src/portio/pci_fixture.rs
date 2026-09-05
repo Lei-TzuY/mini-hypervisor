@@ -1,7 +1,11 @@
 use super::pci::{
     config_selector, PciConfigMechanism1, SyntheticPciFunction, PCI_CONFIG_ADDRESS_PORT,
-    PCI_CONFIG_DATA_PORT, SYNTHETIC_PCI_CLASS_CODE, SYNTHETIC_PCI_DEVICE_ID,
-    SYNTHETIC_PCI_REVISION, SYNTHETIC_PCI_VENDOR_ID,
+    PCI_CONFIG_DATA_PORT,
+};
+#[cfg(test)]
+use super::pci::{
+    SYNTHETIC_PCI_CLASS_CODE, SYNTHETIC_PCI_DEVICE_ID, SYNTHETIC_PCI_REVISION,
+    SYNTHETIC_PCI_VENDOR_ID,
 };
 use super::{PortIoBus, DEBUG_PORT};
 use crate::config::VmConfig;
@@ -29,36 +33,112 @@ const PCI_DISCOVERY_EXIT_BUDGET: u32 = 12;
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 
 const PCI_DISCOVERY_GUEST_BYTES: [u8; 106] = [
-    0x66, 0xba, 0xf8, 0x0c, // mov $0xcf8, %dx
-    0xb8, 0x00, 0x08, 0x00, 0x80, // mov $0x80000800, %eax -- 00:01.0 identity
+    0x66,
+    0xba,
+    0xf8,
+    0x0c, // mov $0xcf8, %dx
+    0xb8,
+    0x00,
+    0x08,
+    0x00,
+    0x80, // mov $0x80000800, %eax -- 00:01.0 identity
     0xef, // out %eax, %dx
-    0x66, 0xba, 0xfc, 0x0c, // mov $0xcfc, %dx
+    0x66,
+    0xba,
+    0xfc,
+    0x0c, // mov $0xcfc, %dx
     0xed, // in %dx, %eax
-    0x3d, 0xfe, 0xca, 0x01, 0x00, // cmp $0x0001cafe, %eax
-    0x75, 0x4f, // jne failure
-    0xb0, b'P', 0xe6, 0xe9, // proof: PCI identity
-    0x66, 0xba, 0xf8, 0x0c,
-    0xb8, 0x08, 0x08, 0x00, 0x80, // select class/revision dword
+    0x3d,
+    0xfe,
+    0xca,
+    0x01,
+    0x00, // cmp $0x0001cafe, %eax
+    0x75,
+    0x4f, // jne failure
+    0xb0,
+    b'P',
+    0xe6,
+    0xe9, // proof: PCI identity
+    0x66,
+    0xba,
+    0xf8,
+    0x0c,
+    0xb8,
+    0x08,
+    0x08,
+    0x00,
+    0x80, // select class/revision dword
     0xef,
-    0x66, 0xba, 0xfc, 0x0c,
+    0x66,
+    0xba,
+    0xfc,
+    0x0c,
     0xed,
-    0x3d, 0x01, 0x00, 0x00, 0xff, // class 0xff, revision 1
-    0x75, 0x35, // jne failure
-    0xb0, b'C', 0xe6, 0xe9, // proof: class/revision
-    0x66, 0xba, 0xf8, 0x0c,
-    0xb8, 0x10, 0x08, 0x00, 0x80, // select BAR0
+    0x3d,
+    0x01,
+    0x00,
+    0x00,
+    0xff, // class 0xff, revision 1
+    0x75,
+    0x35, // jne failure
+    0xb0,
+    b'C',
+    0xe6,
+    0xe9, // proof: class/revision
+    0x66,
+    0xba,
+    0xf8,
+    0x0c,
+    0xb8,
+    0x10,
+    0x08,
+    0x00,
+    0x80, // select BAR0
     0xef,
-    0x66, 0xba, 0xfc, 0x0c,
+    0x66,
+    0xba,
+    0xfc,
+    0x0c,
     0xed,
-    0x25, 0xf0, 0xff, 0xff, 0xff, // mask BAR attribute bits
-    0x3d, 0x00, 0x00, 0x00, 0x10, // cmp $0x10000000, %eax
-    0x75, 0x16, // jne failure
-    0xb0, b'B', 0xe6, 0xe9, // proof: BAR0
-    0x48, 0xbb, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs $0x500000, %rbx
-    0xc6, 0x03, PCI_BAR_WRITE_VALUE, // write W through VA mapped to BAR0 GPA
-    0xb0, b'M', 0xe6, 0xe9, // proof: MMIO completed
+    0x25,
+    0xf0,
+    0xff,
+    0xff,
+    0xff, // mask BAR attribute bits
+    0x3d,
+    0x00,
+    0x00,
+    0x00,
+    0x10, // cmp $0x10000000, %eax
+    0x75,
+    0x16, // jne failure
+    0xb0,
+    b'B',
+    0xe6,
+    0xe9, // proof: BAR0
+    0x48,
+    0xbb,
+    0x00,
+    0x00,
+    0x50,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00, // movabs $0x500000, %rbx
+    0xc6,
+    0x03,
+    PCI_BAR_WRITE_VALUE, // write W through VA mapped to BAR0 GPA
+    0xb0,
+    b'M',
+    0xe6,
+    0xe9, // proof: MMIO completed
     0xf4, // hlt
-    0xb0, b'F', 0xe6, 0xe9, 0xf4, // failure proof + hlt
+    0xb0,
+    b'F',
+    0xe6,
+    0xe9,
+    0xf4, // failure proof + hlt
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,12 +186,9 @@ pub fn run_pci_discovery_guest(config: VmConfig) -> Result<PciDiscoveryGuestResu
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm()?;
     let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE)?;
-    let layout = LongModeMmioBootLayout::new(
-        memory.region(),
-        image.entry(),
-        LONG_MODE_MMIO_STACK_POINTER,
-    )
-    .expect("fixed PCI discovery MMIO mapping remains valid");
+    let layout =
+        LongModeMmioBootLayout::new(memory.region(), image.entry(), LONG_MODE_MMIO_STACK_POINTER)
+            .expect("fixed PCI discovery MMIO mapping remains valid");
     layout.install_page_tables(&mut memory)?;
     image.load(&mut memory)?;
     vm.register_guest_memory(memory)?;
@@ -142,7 +219,10 @@ pub fn run_pci_discovery_guest(config: VmConfig) -> Result<PciDiscoveryGuestResu
     if writes.as_slice() != [PCI_BAR_WRITE_VALUE] || proof.as_slice() != PCI_DISCOVERY_PROOF {
         return Err(verification_error(format!(
             "expected BAR writes {:?} and proof {:?}; got writes {:?}, proof {:?}",
-            [PCI_BAR_WRITE_VALUE], PCI_DISCOVERY_PROOF, writes, proof
+            [PCI_BAR_WRITE_VALUE],
+            PCI_DISCOVERY_PROOF,
+            writes,
+            proof
         )));
     }
 
@@ -165,7 +245,11 @@ pub fn run_pci_discovery_guest(config: VmConfig) -> Result<PciDiscoveryGuestResu
 }
 
 fn validate_io_sequence(exits: &[PortIoExit]) -> Result<(), Error> {
-    let selectors = [config_selector(0x00), config_selector(0x08), config_selector(0x10)];
+    let selectors = [
+        config_selector(0x00),
+        config_selector(0x08),
+        config_selector(0x10),
+    ];
     let expected_proof = [b'P', b'C', b'B', b'M'];
     if exits.len() != 10 {
         return Err(verification_error(format!(
@@ -256,9 +340,15 @@ mod tests {
     #[test]
     fn fixture_machine_code_and_terminal_rip_are_stable() {
         assert_eq!(PCI_DISCOVERY_GUEST_BYTES.len(), 106);
-        assert_eq!(PCI_DISCOVERY_TERMINAL_RIP, LONG_MODE_MMIO_GUEST_ENTRY.get() + 101);
+        assert_eq!(
+            PCI_DISCOVERY_TERMINAL_RIP,
+            LONG_MODE_MMIO_GUEST_ENTRY.get() + 101
+        );
         assert_eq!(PCI_DISCOVERY_GUEST_BYTES[100], 0xf4);
-        assert_eq!(&PCI_DISCOVERY_GUEST_BYTES[101..], &[0xb0, b'F', 0xe6, 0xe9, 0xf4]);
+        assert_eq!(
+            &PCI_DISCOVERY_GUEST_BYTES[101..],
+            &[0xb0, b'F', 0xe6, 0xe9, 0xf4]
+        );
     }
 
     #[test]
