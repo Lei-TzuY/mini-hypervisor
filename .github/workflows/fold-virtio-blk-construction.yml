@@ -19,34 +19,44 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "55dc50d1e02f0408e9ef222c7ba007801cb8b147"
-
-          mkdir -p src/pci/virtio_blk src/portio/virtio_blk_fixture
-          git mv src/pci/virtio_blk_write_readback.rs src/pci/virtio_blk/write_readback.rs
-          git mv src/portio/virtio_blk_write_readback_fixture.rs src/portio/virtio_blk_fixture/write_readback.rs
+          test "$(git rev-parse HEAD^)" = "65e07a993060ac20234ba1ef557a5b174443c579"
 
           python3 - <<'PY'
           from pathlib import Path
 
-          parent_replacements = {
-              Path("src/pci/virtio_blk.rs"): (
-                  'mod write_readback {\n    use super::*;\n    include!("virtio_blk_write_readback.rs");\n}\n',
-                  'mod write_readback;\n',
-              ),
-              Path("src/portio/virtio_blk_fixture.rs"): (
-                  'mod write_readback {\n    use super::*;\n    include!("virtio_blk_write_readback_fixture.rs");\n}\n',
-                  'mod write_readback;\n',
-              ),
+          replacements = {
+              Path("src/pci/virtio_blk.rs"): [
+                  (
+                      'mod write_readback {\n    use super::*;\n    include!("virtio_blk_write_readback.rs");\n}\n',
+                      'mod virtio_blk_write_readback;\n',
+                  ),
+                  (
+                      'pub use write_readback::VIRTIO_BLK_T_OUT;\n',
+                      'pub use virtio_blk_write_readback::VIRTIO_BLK_T_OUT;\n',
+                  ),
+              ],
+              Path("src/portio/virtio_blk_fixture.rs"): [
+                  (
+                      'mod write_readback {\n    use super::*;\n    include!("virtio_blk_write_readback_fixture.rs");\n}\n',
+                      'mod virtio_blk_write_readback_fixture;\n',
+                  ),
+                  (
+                      'pub use write_readback::{\n',
+                      'pub use virtio_blk_write_readback_fixture::{\n',
+                  ),
+              ],
           }
-          for path, (old, new) in parent_replacements.items():
+          for path, edits in replacements.items():
               text = path.read_text()
-              if text.count(old) != 1:
-                  raise SystemExit(f"expected exactly one construction wrapper in {path}")
-              path.write_text(text.replace(old, new, 1))
+              for old, new in edits:
+                  if text.count(old) != 1:
+                      raise SystemExit(f"expected exactly one construction fragment in {path}: {old!r}")
+                  text = text.replace(old, new, 1)
+              path.write_text(text)
 
           for path in [
-              Path("src/pci/virtio_blk/write_readback.rs"),
-              Path("src/portio/virtio_blk_fixture/write_readback.rs"),
+              Path("src/pci/virtio_blk_write_readback.rs"),
+              Path("src/portio/virtio_blk_write_readback_fixture.rs"),
           ]:
               text = path.read_text()
               if text.startswith("use super::*;\n"):
@@ -64,24 +74,16 @@ jobs:
           allowed = {
               ".github/workflows/fold-virtio-blk-construction.yml",
               "src/pci/virtio_blk.rs",
-              "src/pci/virtio_blk/write_readback.rs",
               "src/pci/virtio_blk_write_readback.rs",
               "src/portio/virtio_blk_fixture.rs",
-              "src/portio/virtio_blk_fixture/write_readback.rs",
               "src/portio/virtio_blk_write_readback_fixture.rs",
           }
           changed = set(subprocess.check_output(
-              ["git", "diff", "--name-only", "--no-renames"], text=True
+              ["git", "diff", "--name-only"], text=True
           ).splitlines())
+          required = allowed - {".github/workflows/fold-virtio-blk-construction.yml"}
           unexpected = changed - allowed
-          missing = {
-              "src/pci/virtio_blk.rs",
-              "src/pci/virtio_blk/write_readback.rs",
-              "src/pci/virtio_blk_write_readback.rs",
-              "src/portio/virtio_blk_fixture.rs",
-              "src/portio/virtio_blk_fixture/write_readback.rs",
-              "src/portio/virtio_blk_write_readback_fixture.rs",
-          } - changed
+          missing = required - changed
           if unexpected or missing:
               raise SystemExit(f"cleanup scope mismatch: changed={sorted(changed)}, unexpected={sorted(unexpected)}, missing={sorted(missing)}")
           PY
