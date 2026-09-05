@@ -1,12 +1,8 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::error::{Error, HostEnvironmentError};
 use mini_hypervisor::portio::pci::virtio::VIRTIO_F_VERSION_1;
-use mini_hypervisor::portio::pci::virtio_blk::{
-    deterministic_sector, VIRTIO_BLK_S_OK,
-};
-use mini_hypervisor::portio::virtio_blk_fixture::{
-    run_virtio_blk_pci_guest, VIRTIO_BLK_PROOF,
-};
+use mini_hypervisor::portio::pci::virtio_blk::{deterministic_sector, VIRTIO_BLK_S_OK};
+use mini_hypervisor::portio::virtio_blk_fixture::{run_virtio_blk_pci_guest, VIRTIO_BLK_PROOF};
 use mini_hypervisor::vcpu::VcpuExit;
 
 #[test]
