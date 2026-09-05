@@ -19,8 +19,10 @@ const KVM_CREATE_IRQCHIP: libc::c_ulong = 0xAE60;
 const KVM_IRQ_LINE: libc::c_ulong = 0x4008_AE61;
 const IRQCHIP_POST_PULSE_EXIT_BUDGET: u32 = 3;
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
+const IRQCHIP_READY_BYTE: u8 = b'R';
+const IRQCHIP_ARMED_BYTE: u8 = b'A';
 
-const IRQCHIP_GUEST_BYTES: [u8; 49] = [
+const IRQCHIP_GUEST_BYTES: [u8; 52] = [
     0xfa, // cli
     0xb0, 0x11, 0xe6, 0x20, 0xe6, 0xa0, // ICW1: initialize master and slave PICs
     0xb0, 0x40, 0xe6, 0x21, // ICW2: master IRQ0..7 -> vectors 0x40..0x47
@@ -32,8 +34,8 @@ const IRQCHIP_GUEST_BYTES: [u8; 49] = [
     0xb0, 0xff, 0xe6, 0xa1, // OCW1: mask every slave IRQ
     0xfb, // sti
     0x90, // nop -- complete STI's one-instruction interrupt shadow
-    0xb0, b'R', 0xe6, 0xe9, // readiness proof; the following KVM_RUN commits this I/O
-    0xf4, // hlt -- stable armed wait point; GSI0 must wake this vCPU
+    0xb0, IRQCHIP_READY_BYTE, 0xe6, 0xe9, // first readiness output
+    0xb0, IRQCHIP_ARMED_BYTE, 0xe6, 0xe9, // second I/O barrier; R is committed here
     0xb0, b'M', 0xe6, 0xe9, // resumed-main proof after interrupt + IRETQ
     0xf4, // terminal hlt
 ];
@@ -64,8 +66,7 @@ impl KvmIrqLevel {
 pub struct IrqchipGuestResult {
     gsi: u32,
     vector: u8,
-    readiness_rip: u64,
-    readiness_rflags: u64,
+    armed_rflags: u64,
     io_exits: Vec<PortIoExit>,
     proof: Vec<u8>,
     report: VmExitReport,
@@ -83,13 +84,8 @@ impl IrqchipGuestResult {
     }
 
     #[must_use]
-    pub const fn readiness_rip(&self) -> u64 {
-        self.readiness_rip
-    }
-
-    #[must_use]
-    pub const fn readiness_rflags(&self) -> u64 {
-        self.readiness_rflags
+    pub const fn armed_rflags(&self) -> u64 {
+        self.armed_rflags
     }
 
     #[must_use]
@@ -111,9 +107,8 @@ impl IrqchipGuestResult {
 impl KvmBackend {
     pub const IRQCHIP_GSI: u32 = 0;
     pub const IRQCHIP_VECTOR: u8 = LONG_MODE_INTERRUPT_VECTOR;
-    pub const IRQCHIP_PROOF: &'static [u8; 3] = b"RIM";
-    pub const IRQCHIP_READY_RIP: u64 = 0x1_002c;
-    pub const IRQCHIP_TERMINAL_RIP: u64 = 0x1_0031;
+    pub const IRQCHIP_PROOF: &'static [u8; 4] = b"RAIM";
+    pub const IRQCHIP_TERMINAL_RIP: u64 = 0x1_0034;
 
     pub fn create_vm_with_irqchip(&self) -> Result<Vm, Error> {
         require_irqchip_capability(self)?;
@@ -161,49 +156,33 @@ impl KvmBackend {
         vcpu.initialize_long_mode_interrupts(&layout)?;
         let mut port_io = PortIoBus::with_debug_port();
 
-        let readiness_output_exit = vcpu.run_once()?;
-        if readiness_output_exit != VcpuExit::Io {
-            return Err(Error::VmExit(VmExitError::UnexpectedSequence {
-                stage: "irqchip readiness output",
-                expected_reason: VcpuExit::Io.reason(),
-                actual_reason: readiness_output_exit.reason(),
-            }));
-        }
-        let readiness_io = vcpu.port_io_exit()?;
-        validate_readiness_io(&readiness_io)?;
-        if port_io.dispatch(&readiness_io)? != PortIoService::Output {
-            return Err(verification_error(
-                "irqchip readiness output",
-                "readiness exit unexpectedly requested an input response",
-            ));
-        }
+        let readiness_io = run_expected_debug_output(
+            &mut vcpu,
+            &mut port_io,
+            IRQCHIP_READY_BYTE,
+            "irqchip readiness output",
+        )?;
 
-        // A serviceable KVM_EXIT_IO is not a portable architectural commit point: on some KVM
-        // implementations KVM_GET_REGS still reports RIP at the I/O instruction until the next
-        // KVM_RUN completes that exit. Re-enter once with no GSI asserted; the guest completes the
-        // readiness OUT and reaches this dedicated HLT. Only that committed halted state is used as
-        // the host-visible arm point for the edge-triggered GSI proof.
-        let armed_exit = vcpu.run_once()?;
-        if armed_exit != VcpuExit::Hlt {
-            return Err(Error::VmExit(VmExitError::UnexpectedSequence {
-                stage: "irqchip armed wait",
-                expected_reason: VcpuExit::Hlt.reason(),
-                actual_reason: armed_exit.reason(),
-            }));
-        }
-
-        let readiness = vcpu.registers()?;
-        if readiness.rip != Self::IRQCHIP_READY_RIP
-            || readiness.rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
-            || readiness.rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
+        // Re-entering KVM_RUN to reach a second I/O exit commits the preceding R output on every
+        // supported KVM implementation. A serviceable KVM_EXIT_IO is not itself a portable RIP
+        // commit point, so this fixture never assigns architectural meaning to the RIP observed at
+        // either output exit. The second A output is the explicit userspace barrier: only after it
+        // has been observed and guest IF is verified do we assert the GSI edge.
+        let armed_io = run_expected_debug_output(
+            &mut vcpu,
+            &mut port_io,
+            IRQCHIP_ARMED_BYTE,
+            "irqchip armed barrier",
+        )?;
+        let armed = vcpu.registers()?;
+        if armed.rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
+            || armed.rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
         {
             return Err(verification_error(
-                "irqchip armed wait state",
+                "irqchip armed barrier state",
                 format!(
-                    "expected committed HLT RIP {:#x} with reserved RFLAGS bit and IF set, got RIP {:#x}, RFLAGS {:#x}",
-                    Self::IRQCHIP_READY_RIP,
-                    readiness.rip,
-                    readiness.rflags
+                    "expected architectural RFLAGS bit 1 and IF set after R→A barrier, got RFLAGS {:#x}",
+                    armed.rflags
                 ),
             ));
         }
@@ -217,6 +196,7 @@ impl KvmBackend {
 
         let mut io_exits = Vec::with_capacity(Self::IRQCHIP_PROOF.len());
         io_exits.push(readiness_io);
+        io_exits.push(armed_io);
         io_exits.extend_from_slice(execution.io_exits());
         let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
         let report = execution.report();
@@ -245,8 +225,7 @@ impl KvmBackend {
         Ok(IrqchipGuestResult {
             gsi: Self::IRQCHIP_GSI,
             vector: Self::IRQCHIP_VECTOR,
-            readiness_rip: readiness.rip,
-            readiness_rflags: readiness.rflags,
+            armed_rflags: armed.rflags,
             io_exits,
             proof,
             report,
@@ -301,17 +280,47 @@ fn set_irq_line(fd: std::os::fd::RawFd, request: KvmIrqLevel) -> io::Result<()> 
     }
 }
 
-fn validate_readiness_io(io_exit: &PortIoExit) -> Result<(), Error> {
+fn run_expected_debug_output(
+    vcpu: &mut crate::vcpu::Vcpu,
+    port_io: &mut PortIoBus,
+    expected: u8,
+    stage: &'static str,
+) -> Result<PortIoExit, Error> {
+    let exit = vcpu.run_once()?;
+    if exit != VcpuExit::Io {
+        return Err(Error::VmExit(VmExitError::UnexpectedSequence {
+            stage,
+            expected_reason: VcpuExit::Io.reason(),
+            actual_reason: exit.reason(),
+        }));
+    }
+    let io_exit = vcpu.port_io_exit()?;
+    validate_debug_output(&io_exit, expected, stage)?;
+    if port_io.dispatch(&io_exit)? != PortIoService::Output {
+        return Err(verification_error(
+            stage,
+            "debug output exit unexpectedly requested an input response",
+        ));
+    }
+    Ok(io_exit)
+}
+
+fn validate_debug_output(
+    io_exit: &PortIoExit,
+    expected: u8,
+    stage: &'static str,
+) -> Result<(), Error> {
     if io_exit.direction() != PortIoDirection::Out
         || io_exit.size() != 1
         || io_exit.port() != DEBUG_PORT
         || io_exit.count() != 1
-        || io_exit.output_data() != b"R"
+        || io_exit.output_data() != [expected]
     {
         return Err(verification_error(
-            "irqchip readiness output",
+            stage,
             format!(
-                "expected byte-wide debug-port output R, got direction {:?}, size {}, port {:#x}, count {}, data {:?}",
+                "expected byte-wide debug-port output {:?}, got direction {:?}, size {}, port {:#x}, count {}, data {:?}",
+                char::from(expected),
                 io_exit.direction(),
                 io_exit.size(),
                 io_exit.port(),
@@ -362,12 +371,12 @@ mod irqchip_tests {
 
     #[test]
     fn deterministic_irqchip_guest_and_handler_bytes_are_stable() {
-        assert_eq!(IRQCHIP_GUEST_BYTES.len(), 49);
-        assert_eq!(IRQCHIP_GUEST_BYTES[43], 0xf4);
+        assert_eq!(IRQCHIP_GUEST_BYTES.len(), 52);
+        assert_eq!(&IRQCHIP_GUEST_BYTES[39..43], &[0xb0, b'R', 0xe6, 0xe9]);
+        assert_eq!(&IRQCHIP_GUEST_BYTES[43..47], &[0xb0, b'A', 0xe6, 0xe9]);
         assert_eq!(IRQCHIP_HANDLER_BYTES.len(), 10);
-        assert_eq!(KvmBackend::IRQCHIP_READY_RIP, 0x1_002c);
-        assert_eq!(KvmBackend::IRQCHIP_TERMINAL_RIP, 0x1_0031);
-        assert_eq!(KvmBackend::IRQCHIP_PROOF, b"RIM");
+        assert_eq!(KvmBackend::IRQCHIP_TERMINAL_RIP, 0x1_0034);
+        assert_eq!(KvmBackend::IRQCHIP_PROOF, b"RAIM");
         assert_eq!(KvmBackend::IRQCHIP_GSI, 0);
         assert_eq!(KvmBackend::IRQCHIP_VECTOR, 0x40);
     }
