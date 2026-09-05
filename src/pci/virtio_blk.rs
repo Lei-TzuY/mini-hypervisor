@@ -1,4 +1,6 @@
 mod virtio_blk_backing;
+#[path = "virtio_blk_indirect.rs"]
+mod indirect;
 #[path = "virtio_blk_write_readback.rs"]
 mod write_readback;
 
@@ -28,9 +30,12 @@ pub const VIRTIO_BLK_CONFIG_OFFSET: u64 = 0x300;
 pub const VIRTIO_BLK_CONFIG_LENGTH: u32 = 8;
 pub const VIRTIO_BLK_T_IN: u32 = 0;
 pub const VIRTIO_BLK_S_OK: u8 = 0;
+pub const VIRTIO_RING_F_INDIRECT_DESC: u64 = 1 << 28;
 pub const VIRTQ_DESC_F_NEXT: u16 = 1;
 pub const VIRTQ_DESC_F_WRITE: u16 = 2;
+pub const VIRTQ_DESC_F_INDIRECT: u16 = 4;
 
+const VIRTIO_BLK_SUPPORTED_FEATURES: u64 = VIRTIO_F_VERSION_1 | VIRTIO_RING_F_INDIRECT_DESC;
 const COMMON_DEVICE_FEATURE_SELECT: u64 = 0x00;
 const COMMON_DEVICE_FEATURE: u64 = 0x04;
 const COMMON_DRIVER_FEATURE_SELECT: u64 = 0x08;
@@ -114,6 +119,22 @@ pub enum VirtioBlkError {
         required: u32,
     },
     DescriptorChainCycle {
+        index: u16,
+    },
+    IndirectFeatureNotNegotiated,
+    InvalidIndirectTableLength {
+        length: u32,
+        descriptor_size: u32,
+    },
+    IndirectTableTooLarge {
+        entries: u32,
+        maximum: u32,
+    },
+    IndirectDescriptorIndexOutOfRange {
+        index: u16,
+        entries: u32,
+    },
+    NestedIndirectDescriptor {
         index: u16,
     },
     InvalidRequestType {
@@ -210,6 +231,29 @@ impl fmt::Display for VirtioBlkError {
             Self::DescriptorChainCycle { index } => {
                 write!(f, "virtio-blk descriptor chain revisits descriptor {index}")
             }
+            Self::IndirectFeatureNotNegotiated => write!(
+                f,
+                "virtio-blk indirect descriptor used without negotiated VIRTIO_RING_F_INDIRECT_DESC"
+            ),
+            Self::InvalidIndirectTableLength {
+                length,
+                descriptor_size,
+            } => write!(
+                f,
+                "virtio-blk indirect descriptor table length {length} is not a valid multiple of descriptor size {descriptor_size} with at least three entries"
+            ),
+            Self::IndirectTableTooLarge { entries, maximum } => write!(
+                f,
+                "virtio-blk indirect descriptor table has {entries} entries, exceeding bounded maximum {maximum}"
+            ),
+            Self::IndirectDescriptorIndexOutOfRange { index, entries } => write!(
+                f,
+                "virtio-blk indirect descriptor index {index} is outside table with {entries} entries"
+            ),
+            Self::NestedIndirectDescriptor { index } => write!(
+                f,
+                "virtio-blk indirect descriptor table entry {index} illegally contains the INDIRECT flag"
+            ),
             Self::InvalidRequestType { request_type } => {
                 write!(f, "unsupported virtio-blk request type {request_type}")
             }
@@ -564,34 +608,20 @@ impl VirtioBlkDevice {
         )?;
         self.ensure_descriptor_index(head)?;
 
-        let header = self.read_descriptor(memory, head)?;
-        self.require_flags(head, header.flags, VIRTQ_DESC_F_NEXT)?;
-        self.require_length(head, header.length, 16)?;
-        let data_index = header.next;
-        self.ensure_descriptor_index(data_index)?;
-        if data_index == head {
-            return Err(VirtioBlkError::DescriptorChainCycle { index: data_index }.into());
-        }
-
-        let data = self.read_descriptor(memory, data_index)?;
+        let chain = self.resolve_request_chain(memory, head)?;
+        let header = chain.header;
+        let data = chain.data;
+        let status = chain.status;
         self.require_flags(
-            data_index,
+            chain.data_index,
             data.flags,
             VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
         )?;
-        self.require_length(data_index, data.length, VIRTIO_BLK_SECTOR_SIZE as u32)?;
-        let status_index = data.next;
-        self.ensure_descriptor_index(status_index)?;
-        if status_index == head || status_index == data_index {
-            return Err(VirtioBlkError::DescriptorChainCycle {
-                index: status_index,
-            }
-            .into());
-        }
-
-        let status = self.read_descriptor(memory, status_index)?;
-        self.require_flags(status_index, status.flags, VIRTQ_DESC_F_WRITE)?;
-        self.require_length(status_index, status.length, 1)?;
+        self.require_length(
+            chain.data_index,
+            data.length,
+            VIRTIO_BLK_SECTOR_SIZE as u32,
+        )?;
 
         let mut request = [0_u8; 16];
         memory.read(GuestPhysAddr::new(header.address), &mut request)?;
@@ -697,7 +727,8 @@ impl VirtioBlkDevice {
 
     fn device_feature_word(&self) -> u32 {
         match self.device_feature_select {
-            1 => (VIRTIO_F_VERSION_1 >> 32) as u32,
+            0 => VIRTIO_BLK_SUPPORTED_FEATURES as u32,
+            1 => (VIRTIO_BLK_SUPPORTED_FEATURES >> 32) as u32,
             _ => 0,
         }
     }
@@ -734,6 +765,11 @@ impl VirtioBlkDevice {
         Ok(())
     }
 
+    fn negotiated_features_valid(&self) -> bool {
+        self.driver_features & VIRTIO_F_VERSION_1 == VIRTIO_F_VERSION_1
+            && self.driver_features & !VIRTIO_BLK_SUPPORTED_FEATURES == 0
+    }
+
     fn write_status(&mut self, requested: u8) -> Result<(), VirtioBlkError> {
         if requested == 0 {
             self.reset();
@@ -760,7 +796,7 @@ impl VirtioBlkDevice {
                     requested,
                 });
             }
-            if self.driver_features != VIRTIO_F_VERSION_1 {
+            if !self.negotiated_features_valid() {
                 self.status = requested & !VIRTIO_STATUS_FEATURES_OK;
                 return Ok(());
             }
@@ -832,7 +868,7 @@ impl VirtioBlkDevice {
     fn ensure_queue_ready(&self) -> Result<(), VirtioBlkError> {
         if self.status & VIRTIO_STATUS_DRIVER_OK == 0
             || self.status & VIRTIO_STATUS_FEATURES_OK == 0
-            || self.driver_features != VIRTIO_F_VERSION_1
+            || !self.negotiated_features_valid()
             || !self.queue_enabled
             || self.queue_desc == 0
             || self.queue_driver == 0
@@ -960,6 +996,22 @@ mod tests {
         let sector = deterministic_sector();
         assert_eq!(&sector[..16], b"BLK-SECTOR-0000!");
         assert_eq!(&sector[VIRTIO_BLK_SECTOR_SIZE - 8..], b"BLKEND!!");
+    }
+
+    #[test]
+    fn indirect_feature_is_advertised_without_forcing_existing_direct_drivers_to_select_it() {
+        let mut device = VirtioBlkDevice::new(BAR);
+        device.device_feature_select = 0;
+        assert_eq!(
+            device.device_feature_word() & VIRTIO_RING_F_INDIRECT_DESC as u32,
+            VIRTIO_RING_F_INDIRECT_DESC as u32
+        );
+        device.driver_features = VIRTIO_F_VERSION_1;
+        assert!(device.negotiated_features_valid());
+        device.driver_features = VIRTIO_F_VERSION_1 | VIRTIO_RING_F_INDIRECT_DESC;
+        assert!(device.negotiated_features_valid());
+        device.driver_features |= 1;
+        assert!(!device.negotiated_features_valid());
     }
 
     #[test]
