@@ -365,7 +365,7 @@ mod tests {
     fn level_interrupt_device_coalesces_repeated_commands_until_ack() {
         let base = 0x1000_0000;
         let mut bus = MmioBus::with_level_interrupt_byte_device_at(base);
-        for value in [b'W', b'X'] {
+        for value in *b"WX" {
             assert_eq!(
                 bus.dispatch(&exit_at(base, MmioDirection::Write, 1, &[value]))
                     .unwrap(),
