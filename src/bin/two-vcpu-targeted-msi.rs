@@ -9,6 +9,10 @@ fn main() -> ExitCode {
             println!("targeted MSI address: {:#x}", result.msi_address());
             println!("targeted MSI data: {:#x}", result.msi_data());
             println!("targeted MSI deliveries: {}", result.msi_delivery_count());
+            println!(
+                "targeted MSI second runnable mp-state: {}",
+                result.second_mp_state()
+            );
             println!("targeted MSI first proof: {:?}", result.first_proof());
             println!("targeted MSI second proof: {:?}", result.second_proof());
             println!(
@@ -27,6 +31,7 @@ fn main() -> ExitCode {
             if result.msi_address() == TARGET_MSI_ADDRESS
                 && result.msi_data() == TARGET_MSI_DATA
                 && result.msi_delivery_count() == 1
+                && result.second_mp_state() == 0
                 && result.first_proof() == FIRST_PROOF
                 && result.second_proof() == SECOND_PROOF
             {
