@@ -29,7 +29,11 @@ fn pci_config_discovers_bar_and_drives_mmio_device() {
             assert_eq!(result.io_exits().len(), 10);
             assert_eq!(result.mmio_exits().len(), 1);
 
-            let selectors = [config_selector(0x00), config_selector(0x08), config_selector(0x10)];
+            let selectors = [
+                config_selector(0x00),
+                config_selector(0x08),
+                config_selector(0x10),
+            ];
             for (cycle, selector) in selectors.into_iter().enumerate() {
                 let base = cycle * 3;
                 let address = &result.io_exits()[base];
