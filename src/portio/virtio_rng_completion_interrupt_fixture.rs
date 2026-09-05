@@ -247,22 +247,16 @@ pub fn run_virtio_rng_completion_interrupt_guest(
                     verification_error("virtio-rng VM lost registered guest memory")
                 })?;
                 let completion = mmio
-                    .process_virtio_rng_notification(
-                        VIRTIO_RNG_INTERRUPT_BAR0_GPA,
-                        memory,
-                    )
+                    .process_virtio_rng_notification(VIRTIO_RNG_INTERRUPT_BAR0_GPA, memory)
                     .map_err(|error| {
                         verification_error(format!(
                             "virtio-rng queue processing failed before interrupt: {error}"
                         ))
                     })?
                     .ok_or_else(|| {
-                        verification_error(
-                            "virtio-rng BAR disappeared before queue processing",
-                        )
+                        verification_error("virtio-rng BAR disappeared before queue processing")
                     })?;
-                vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, true)
-                    .map_err(|source| verification_io_error("assert virtio-rng INTx GSI", source))?;
+                vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, true)?;
                 queue_completion = Some(completion);
                 line_asserted = true;
                 assert_count += 1;
@@ -272,9 +266,7 @@ pub fn run_virtio_rng_completion_interrupt_guest(
                         "virtio-rng ISR ACK barrier arrived without an asserted completion line",
                     ));
                 }
-                vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, false).map_err(|source| {
-                    verification_io_error("deassert virtio-rng INTx GSI", source)
-                })?;
+                vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, false)?;
                 line_asserted = false;
                 deassert_count += 1;
             }
@@ -549,18 +541,10 @@ fn verification_error(detail: impl Into<String>) -> Error {
     })
 }
 
-fn verification_io_error(operation: &'static str, source: io::Error) -> Error {
-    Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
-        id: VcpuId::BOOT.get(),
-        operation,
-        source,
-    })
-}
-
 fn build_guest() -> Vec<u8> {
     let mut code = Vec::new();
     emit_pic_setup(&mut code);
-    code.extend_from_slice(&[0xfb, 0x90]); // sti; nop -- finish interrupt shadow
+    code.extend_from_slice(&[0xfb, 0x90]);
 
     emit_pci_read(&mut code, 0x00);
     emit_cmp_eax(
@@ -580,7 +564,7 @@ fn build_guest() -> Vec<u8> {
     emit_cmp_eax(&mut code, VIRTIO_RNG_INTERRUPT_BAR0_GPA as u32);
     emit_debug(&mut code, b'P');
 
-    emit_movabs(&mut code, 3, 0x0050_0000); // rbx = BAR virtual address
+    emit_movabs(&mut code, 3, 0x0050_0000);
     emit_mmio_byte_write(&mut code, 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
     emit_mmio_byte_write(
         &mut code,
@@ -599,23 +583,11 @@ fn build_guest() -> Vec<u8> {
     );
     emit_mmio_word_write(&mut code, 0x16, 0);
     emit_mmio_word_write(&mut code, 0x18, VIRTIO_QUEUE_SIZE);
-    emit_mmio_dword_write(
-        &mut code,
-        0x20,
-        VIRTIO_RNG_INTERRUPT_DESCRIPTOR_GPA as u32,
-    );
+    emit_mmio_dword_write(&mut code, 0x20, VIRTIO_RNG_INTERRUPT_DESCRIPTOR_GPA as u32);
     emit_mmio_dword_write(&mut code, 0x24, 0);
-    emit_mmio_dword_write(
-        &mut code,
-        0x28,
-        VIRTIO_RNG_INTERRUPT_AVAIL_GPA as u32,
-    );
+    emit_mmio_dword_write(&mut code, 0x28, VIRTIO_RNG_INTERRUPT_AVAIL_GPA as u32);
     emit_mmio_dword_write(&mut code, 0x2c, 0);
-    emit_mmio_dword_write(
-        &mut code,
-        0x30,
-        VIRTIO_RNG_INTERRUPT_USED_GPA as u32,
-    );
+    emit_mmio_dword_write(&mut code, 0x30, VIRTIO_RNG_INTERRUPT_USED_GPA as u32);
     emit_mmio_dword_write(&mut code, 0x34, 0);
     emit_mmio_word_write(&mut code, 0x1c, 1);
     emit_mmio_byte_write(
@@ -657,13 +629,13 @@ fn build_interrupt_handler() -> Vec<u8> {
     code.extend_from_slice(&(VIRTIO_ISR_OFFSET as u32).to_le_bytes());
     emit_cmp_al(&mut code, VIRTIO_ISR_QUEUE_INTERRUPT);
     emit_debug(&mut code, ISR_ACK_BARRIER);
-    code.extend_from_slice(&[0xb0, 0x20, 0xe6, 0x20]); // master PIC EOI
-    code.extend_from_slice(&[0x48, 0xcf]); // iretq
+    code.extend_from_slice(&[0xb0, 0x20, 0xe6, 0x20]);
+    code.extend_from_slice(&[0x48, 0xcf]);
     code
 }
 
 fn emit_pic_setup(code: &mut Vec<u8>) {
-    code.push(0xfa); // cli
+    code.push(0xfa);
     code.extend_from_slice(&[0xb0, 0x11, 0xe6, 0x20, 0xe6, 0xa0]);
     code.extend_from_slice(&[0xb0, 0x40, 0xe6, 0x21]);
     code.extend_from_slice(&[0xb0, 0x48, 0xe6, 0xa1]);
@@ -772,7 +744,7 @@ mod tests {
     }
 
     #[test]
-    fn exit_budget_matches_twelve_config_eighteen_proof_and_twenty_one_mmio_plus_hlt() {
+    fn exit_budget_matches_exact_userspace_exit_contract() {
         assert_eq!(VIRTIO_RNG_INTERRUPT_EXIT_BUDGET, 40);
     }
 }
