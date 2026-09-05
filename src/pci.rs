@@ -1,6 +1,11 @@
 use crate::error::PortIoError;
 use crate::vcpu::{PortIoDirection, PortIoExit};
 
+#[path = "pci/virtio.rs"]
+pub mod virtio;
+
+use virtio::VirtioRngPciFunction;
+
 pub const PCI_CONFIG_ADDRESS_PORT: u16 = 0x0cf8;
 pub const PCI_CONFIG_DATA_PORT: u16 = 0x0cfc;
 pub const SYNTHETIC_PCI_BUS: u8 = 0;
@@ -51,9 +56,24 @@ impl SyntheticPciFunction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum PciFunction {
+    Synthetic(SyntheticPciFunction),
+    VirtioRng(VirtioRngPciFunction),
+}
+
+impl PciFunction {
+    fn read_dword(&self, offset: u8) -> u32 {
+        match self {
+            Self::Synthetic(function) => function.read_dword(offset),
+            Self::VirtioRng(function) => function.read_dword(offset),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PciConfigMechanism1 {
     address: u32,
-    function: SyntheticPciFunction,
+    function: PciFunction,
 }
 
 impl PciConfigMechanism1 {
@@ -61,7 +81,15 @@ impl PciConfigMechanism1 {
     pub const fn new(function: SyntheticPciFunction) -> Self {
         Self {
             address: 0,
-            function,
+            function: PciFunction::Synthetic(function),
+        }
+    }
+
+    #[must_use]
+    pub const fn with_virtio_rng(function: VirtioRngPciFunction) -> Self {
+        Self {
+            address: 0,
+            function: PciFunction::VirtioRng(function),
         }
     }
 
@@ -132,6 +160,7 @@ fn unhandled(io: &PortIoExit) -> PortIoError {
 
 #[cfg(test)]
 mod tests {
+    use self::virtio::{VIRTIO_PCI_VENDOR_ID, VIRTIO_RNG_PCI_DEVICE_ID};
     use super::*;
 
     const BAR0: u32 = 0x1000_0000;
@@ -174,6 +203,29 @@ mod tests {
             (u32::from(SYNTHETIC_PCI_CLASS_CODE) << 24) | u32::from(SYNTHETIC_PCI_REVISION)
         );
         assert_eq!(read_config(&mut config, 0x10), BAR0);
+    }
+
+    #[test]
+    fn virtio_rng_uses_same_mechanism_without_relabeling_synthetic_function() {
+        let mut config = PciConfigMechanism1::with_virtio_rng(VirtioRngPciFunction::new(BAR0));
+        assert_eq!(
+            read_config(&mut config, 0x00),
+            (u32::from(VIRTIO_RNG_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID)
+        );
+        assert_eq!(read_config(&mut config, 0x10), BAR0);
+        assert_eq!(read_config(&mut config, 0x34) & 0xff, 0x40);
+        assert_eq!(
+            read_config(&mut config, 0x40).to_le_bytes(),
+            [0x09, 0x50, 16, 1]
+        );
+        assert_eq!(
+            read_config(&mut config, 0x50).to_le_bytes(),
+            [0x09, 0x64, 20, 2]
+        );
+        assert_eq!(
+            read_config(&mut config, 0x64).to_le_bytes(),
+            [0x09, 0x00, 16, 3]
+        );
     }
 
     #[test]

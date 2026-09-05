@@ -1,6 +1,13 @@
-use crate::error::{Error, MmioError};
+use crate::error::{Error, HostEnvironmentError, MmioError};
+use crate::memory::GuestMemory;
+use crate::portio::pci::virtio::{
+    VirtioRngDevice, VirtioRngError, VirtioRngEvent, VirtioRngProcessError,
+    VirtioRngQueueCompletion, VIRTIO_RNG_BAR_SIZE,
+};
 use crate::vcpu::{MmioDirection, MmioExit};
+use std::collections::VecDeque;
 use std::fmt;
+use std::io;
 
 pub mod dual_source_interrupt;
 pub mod interrupt;
@@ -26,6 +33,7 @@ pub enum MmioDeviceEvent {
     InterruptRequested,
     InterruptLineAssertRequested,
     InterruptLineDeassertRequested,
+    VirtioQueueNotified { queue: u16 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,6 +108,8 @@ enum ByteMmioDeviceMode {
 #[derive(Debug, Default)]
 pub struct MmioBus {
     byte_devices: Vec<ByteMmioDevice>,
+    virtio_rng_devices: Vec<VirtioRngDevice>,
+    virtio_events: VecDeque<MmioDeviceEventRecord>,
 }
 
 impl MmioBus {
@@ -107,6 +117,8 @@ impl MmioBus {
     pub const fn empty() -> Self {
         Self {
             byte_devices: Vec::new(),
+            virtio_rng_devices: Vec::new(),
+            virtio_events: VecDeque::new(),
         }
     }
 
@@ -123,6 +135,8 @@ impl MmioBus {
                 read_value,
                 ByteMmioDeviceMode::Plain,
             )],
+            virtio_rng_devices: Vec::new(),
+            virtio_events: VecDeque::new(),
         }
     }
 
@@ -134,6 +148,8 @@ impl MmioBus {
                 read_value,
                 ByteMmioDeviceMode::EdgeInterrupt,
             )],
+            virtio_rng_devices: Vec::new(),
+            virtio_events: VecDeque::new(),
         }
     }
 
@@ -145,6 +161,8 @@ impl MmioBus {
                 0,
                 ByteMmioDeviceMode::LevelInterrupt,
             )],
+            virtio_rng_devices: Vec::new(),
+            virtio_events: VecDeque::new(),
         }
     }
 
@@ -171,19 +189,47 @@ impl MmioBus {
         ))
     }
 
+    pub fn register_virtio_rng_device_at(
+        &mut self,
+        address: u64,
+    ) -> Result<(), MmioRegistrationError> {
+        let size = u64::from(VIRTIO_RNG_BAR_SIZE);
+        self.ensure_range_available(address, size)?;
+        self.virtio_rng_devices.push(VirtioRngDevice::new(address));
+        Ok(())
+    }
+
     pub fn dispatch(&mut self, exit: &MmioExit) -> Result<MmioService, Error> {
-        match self
+        if let Some(device) = self
             .byte_devices
             .iter_mut()
             .find(|device| device.handles(exit.address()))
         {
-            Some(device) => device.handle(exit).map_err(Error::Mmio),
-            None => Err(Error::Mmio(MmioError::UnhandledAddress {
-                address: exit.address(),
-                direction: exit.direction().raw(),
-                length: exit.length(),
-            })),
+            return device.handle(exit).map_err(Error::Mmio);
         }
+
+        if let Some(index) = self
+            .virtio_rng_devices
+            .iter()
+            .position(|device| virtio_handles(device, exit.address()))
+        {
+            let (service, event) = {
+                let device = &mut self.virtio_rng_devices[index];
+                dispatch_virtio_rng(device, exit)?
+            };
+            if let Some(event) = event {
+                let address = self.virtio_rng_devices[index].bar0();
+                self.virtio_events
+                    .push_back(MmioDeviceEventRecord::new(address, event));
+            }
+            return Ok(service);
+        }
+
+        Err(Error::Mmio(MmioError::UnhandledAddress {
+            address: exit.address(),
+            direction: exit.direction().raw(),
+            length: exit.length(),
+        }))
     }
 
     pub fn take_device_event_record(&mut self) -> Option<MmioDeviceEventRecord> {
@@ -193,7 +239,7 @@ impl MmioBus {
                 return Some(MmioDeviceEventRecord::new(device_address, event));
             }
         }
-        None
+        self.virtio_events.pop_front()
     }
 
     pub fn take_device_event(&mut self) -> Option<MmioDeviceEvent> {
@@ -201,9 +247,48 @@ impl MmioBus {
             .map(MmioDeviceEventRecord::event)
     }
 
+    pub fn process_virtio_rng_notification(
+        &mut self,
+        address: u64,
+        memory: &mut GuestMemory,
+    ) -> Result<Option<VirtioRngQueueCompletion>, VirtioRngProcessError> {
+        match self
+            .virtio_rng_devices
+            .iter_mut()
+            .find(|device| device.bar0() == address)
+        {
+            Some(device) => device.process_notified_queue(memory).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    #[must_use]
+    pub fn virtio_rng_status_at(&self, address: u64) -> Option<u8> {
+        self.virtio_rng_devices
+            .iter()
+            .find(|device| device.bar0() == address)
+            .map(VirtioRngDevice::status)
+    }
+
+    #[must_use]
+    pub fn virtio_rng_driver_features_at(&self, address: u64) -> Option<u64> {
+        self.virtio_rng_devices
+            .iter()
+            .find(|device| device.bar0() == address)
+            .map(VirtioRngDevice::driver_features)
+    }
+
+    #[must_use]
+    pub fn virtio_rng_queue_enabled_at(&self, address: u64) -> Option<bool> {
+        self.virtio_rng_devices
+            .iter()
+            .find(|device| device.bar0() == address)
+            .map(VirtioRngDevice::queue_enabled)
+    }
+
     #[must_use]
     pub fn writes(&self) -> Option<&[u8]> {
-        if self.byte_devices.len() == 1 {
+        if self.byte_devices.len() == 1 && self.virtio_rng_devices.is_empty() {
             self.byte_devices.first().map(ByteMmioDevice::writes)
         } else {
             None
@@ -220,12 +305,17 @@ impl MmioBus {
 
     fn register_device(&mut self, device: ByteMmioDevice) -> Result<(), MmioRegistrationError> {
         let (address, size) = device.address_range();
+        self.ensure_range_available(address, size)?;
+        self.byte_devices.push(device);
+        Ok(())
+    }
+
+    fn ensure_range_available(&self, address: u64, size: u64) -> Result<(), MmioRegistrationError> {
         let end = address
             .checked_add(size)
             .ok_or(MmioRegistrationError::AddressRangeOverflow { address, size })?;
 
-        for existing in &self.byte_devices {
-            let (existing_address, existing_size) = existing.address_range();
+        for (existing_address, existing_size) in self.registered_ranges() {
             let existing_end = existing_address.checked_add(existing_size).ok_or(
                 MmioRegistrationError::AddressRangeOverflow {
                     address: existing_address,
@@ -241,10 +331,58 @@ impl MmioBus {
                 });
             }
         }
-
-        self.byte_devices.push(device);
         Ok(())
     }
+
+    fn registered_ranges(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
+        self.byte_devices
+            .iter()
+            .map(ByteMmioDevice::address_range)
+            .chain(
+                self.virtio_rng_devices
+                    .iter()
+                    .map(|device| (device.bar0(), u64::from(VIRTIO_RNG_BAR_SIZE))),
+            )
+    }
+}
+
+fn virtio_handles(device: &VirtioRngDevice, address: u64) -> bool {
+    device
+        .bar0()
+        .checked_add(u64::from(VIRTIO_RNG_BAR_SIZE))
+        .is_some_and(|end| (device.bar0()..end).contains(&address))
+}
+
+fn dispatch_virtio_rng(
+    device: &mut VirtioRngDevice,
+    exit: &MmioExit,
+) -> Result<(MmioService, Option<MmioDeviceEvent>), Error> {
+    let offset = exit.address() - device.bar0();
+    let length = usize::try_from(exit.length()).expect("validated MMIO length fits usize");
+    match exit.direction() {
+        MmioDirection::Read => device
+            .read(offset, length)
+            .map(|bytes| (MmioService::Read(bytes), None))
+            .map_err(virtio_mmio_error),
+        MmioDirection::Write => device
+            .write(offset, exit.write_data())
+            .map(|event| {
+                let event = event.map(|event| match event {
+                    VirtioRngEvent::QueueNotified { queue } => {
+                        MmioDeviceEvent::VirtioQueueNotified { queue }
+                    }
+                });
+                (MmioService::Write, event)
+            })
+            .map_err(virtio_mmio_error),
+    }
+}
+
+fn virtio_mmio_error(error: VirtioRngError) -> Error {
+    Error::HostEnvironment(HostEnvironmentError::Io {
+        operation: "service virtio-rng MMIO device model",
+        source: io::Error::new(io::ErrorKind::InvalidData, error),
+    })
 }
 
 #[derive(Debug)]
@@ -398,6 +536,9 @@ fn exact_write_byte(exit: &MmioExit) -> Result<u8, MmioError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::portio::pci::virtio::{
+        VIRTIO_F_VERSION_1, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
+    };
 
     fn exit_at(address: u64, direction: MmioDirection, length: u32, write_data: &[u8]) -> MmioExit {
         MmioExit::new_for_test(address, direction, length, write_data.to_vec())
@@ -733,6 +874,87 @@ mod tests {
         assert_eq!(
             bus.writes_at(second),
             Some(&[b'W', LEVEL_INTERRUPT_ACK_VALUE][..])
+        );
+    }
+
+    #[test]
+    fn virtio_rng_bar_dispatches_multi_width_accesses_and_owns_notify_event() {
+        let base = 0x1000_0000;
+        let mut bus = MmioBus::empty();
+        bus.register_virtio_rng_device_at(base).unwrap();
+
+        assert_eq!(
+            bus.dispatch(&exit_at(
+                base + 0x14,
+                MmioDirection::Write,
+                1,
+                &[VIRTIO_STATUS_ACKNOWLEDGE]
+            ))
+            .unwrap(),
+            MmioService::Write
+        );
+        assert_eq!(
+            bus.dispatch(&exit_at(
+                base + 0x14,
+                MmioDirection::Write,
+                1,
+                &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER]
+            ))
+            .unwrap(),
+            MmioService::Write
+        );
+        assert_eq!(
+            bus.dispatch(&exit_at(
+                base + 0x08,
+                MmioDirection::Write,
+                4,
+                &1_u32.to_le_bytes()
+            ))
+            .unwrap(),
+            MmioService::Write
+        );
+        assert_eq!(
+            bus.dispatch(&exit_at(
+                base + 0x0c,
+                MmioDirection::Write,
+                4,
+                &1_u32.to_le_bytes()
+            ))
+            .unwrap(),
+            MmioService::Write
+        );
+        assert_eq!(
+            bus.virtio_rng_driver_features_at(base),
+            Some(VIRTIO_F_VERSION_1)
+        );
+        assert_eq!(bus.take_device_event(), None);
+    }
+
+    #[test]
+    fn virtio_rng_registration_participates_in_range_overlap_checks() {
+        let base = 0x1000_0000;
+        let mut bus = MmioBus::empty();
+        bus.register_virtio_rng_device_at(base).unwrap();
+        assert_eq!(
+            bus.register_byte_device_at(base + 0x100, b'X'),
+            Err(MmioRegistrationError::AddressRangeOverlap {
+                address: base + 0x100,
+                size: 1,
+                existing_address: base,
+                existing_size: u64::from(VIRTIO_RNG_BAR_SIZE),
+            })
+        );
+
+        let mut reverse = MmioBus::empty();
+        reverse.register_byte_device_at(base + 0xfff, b'Y').unwrap();
+        assert_eq!(
+            reverse.register_virtio_rng_device_at(base),
+            Err(MmioRegistrationError::AddressRangeOverlap {
+                address: base,
+                size: u64::from(VIRTIO_RNG_BAR_SIZE),
+                existing_address: base + 0xfff,
+                existing_size: 1,
+            })
         );
     }
 

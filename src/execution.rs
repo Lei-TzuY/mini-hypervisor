@@ -55,6 +55,19 @@ pub fn run_vcpu_until_stopped_with_mmio(
     mmio: &mut MmioBus,
     exit_budget: u32,
 ) -> Result<VmExecutionResult, Error> {
+    run_vcpu_until_stopped_with_mmio_observer(vcpu, port_io, mmio, exit_budget, |_, _| Ok(()))
+}
+
+pub fn run_vcpu_until_stopped_with_mmio_observer<F>(
+    vcpu: &mut Vcpu,
+    port_io: &mut PortIoBus,
+    mmio: &mut MmioBus,
+    exit_budget: u32,
+    mut observer: F,
+) -> Result<VmExecutionResult, Error>
+where
+    F: FnMut(&VmExitContinuation, &mut MmioBus) -> Result<(), Error>,
+{
     let mut budget = ExitBudget::new(vcpu.id(), exit_budget);
     let mut io_exits = Vec::new();
     let mut mmio_exits = Vec::new();
@@ -68,9 +81,13 @@ pub fn run_vcpu_until_stopped_with_mmio(
         let disposition = dispatch_vcpu_exit(vcpu, exit, port_io, mmio)
             .map_err(|error| attach_completed_exit_trace(error, &exit_reasons))?;
         match disposition {
-            VmExitDisposition::Continue(VmExitContinuation::PortIo(io)) => io_exits.push(io),
-            VmExitDisposition::Continue(VmExitContinuation::Mmio(access)) => {
-                mmio_exits.push(access)
+            VmExitDisposition::Continue(continuation) => {
+                observer(&continuation, mmio)
+                    .map_err(|error| attach_completed_exit_trace(error, &exit_reasons))?;
+                match continuation {
+                    VmExitContinuation::PortIo(io) => io_exits.push(io),
+                    VmExitContinuation::Mmio(access) => mmio_exits.push(access),
+                }
             }
             VmExitDisposition::Stopped(report) => {
                 debug_assert_eq!(exit_reasons.len(), budget.completed() as usize);
@@ -392,7 +409,7 @@ mod tests {
                 rip: 0x1234,
                 rflags: 0x2,
                 exit_reasons,
-            }) if exit_reasons == [sys::KVM_EXIT_IO, 0xfeed_beef]
+            }) if exit_reasons == [sys::KVM_EXIT_IO, unknown_reason]
         ));
     }
 
