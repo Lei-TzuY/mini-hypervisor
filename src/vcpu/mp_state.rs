@@ -13,8 +13,11 @@ struct VcpuMpState(u32);
 impl VcpuMpState {
     const RUNNABLE: Self = Self(0);
     const UNINITIALIZED: Self = Self(1);
+    #[cfg(test)]
     const INIT_RECEIVED: Self = Self(2);
+    #[cfg(test)]
     const HALTED: Self = Self(3);
+    #[cfg(test)]
     const SIPI_RECEIVED: Self = Self(4);
 
     const fn raw(self) -> u32 {
