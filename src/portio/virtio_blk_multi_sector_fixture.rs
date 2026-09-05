@@ -10,8 +10,8 @@ use crate::mmio::long_mode::{
 };
 use crate::mmio::{MmioBus, MmioDeviceEvent, MmioDeviceEventRecord};
 use crate::portio::pci::virtio::{
-    VIRTIO_F_VERSION_1, VIRTIO_ISR_OFFSET, VIRTIO_PCI_VENDOR_ID, VIRTIO_STATUS_ACKNOWLEDGE,
-    VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
+    VIRTIO_ISR_OFFSET, VIRTIO_PCI_VENDOR_ID, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
+    VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
 use crate::portio::pci::virtio_blk::{
     VirtioBlkPciFunction, VirtioBlkQueueCompletion, VIRTIO_BLK_CAPACITY_SECTORS,
