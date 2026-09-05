@@ -313,8 +313,8 @@ impl LongModeBootLayout {
                 LONG_MODE_ALIAS_PT_ADDR.get() | PAGE_TABLE_ENTRY_FLAGS,
             )?;
             for mapping in &self.page_mappings {
-                let index = (mapping.virtual_page - LONG_MODE_ALIAS_VIRTUAL_BASE)
-                    / LONG_MODE_PAGE_SIZE;
+                let index =
+                    (mapping.virtual_page - LONG_MODE_ALIAS_VIRTUAL_BASE) / LONG_MODE_PAGE_SIZE;
                 write_u64(
                     memory,
                     GuestPhysAddr::new(LONG_MODE_ALIAS_PT_ADDR.get() + index * 8),
@@ -348,12 +348,9 @@ fn validate_memory_and_stack(
             mapped_size: LONG_MODE_IDENTITY_MAP_SIZE,
         });
     }
-    if stack_pointer > LONG_MODE_PML4_ADDR.get()
-        && stack_pointer <= LONG_MODE_PAGE_TABLE_END.get()
+    if stack_pointer > LONG_MODE_PML4_ADDR.get() && stack_pointer <= LONG_MODE_PAGE_TABLE_END.get()
     {
-        return Err(LongModeConfigurationError::StackPointerOverlapsPageTables {
-            stack_pointer,
-        });
+        return Err(LongModeConfigurationError::StackPointerOverlapsPageTables { stack_pointer });
     }
     Ok(())
 }
@@ -379,10 +376,7 @@ fn validate_page_mappings(
                 physical_page: mapping.physical_page.get(),
             });
         }
-        let Some(physical_end) = mapping
-            .physical_page
-            .get()
-            .checked_add(LONG_MODE_PAGE_SIZE)
+        let Some(physical_end) = mapping.physical_page.get().checked_add(LONG_MODE_PAGE_SIZE)
         else {
             return Err(LongModeConfigurationError::MappingPhysicalPageOutsideRam {
                 physical_page: mapping.physical_page.get(),
@@ -506,10 +500,8 @@ mod tests {
 
     #[test]
     fn installs_bounded_nonidentity_alias_mapping() {
-        let mapping = LongModePageMapping::new(
-            LONG_MODE_ALIAS_VIRTUAL_BASE,
-            GuestPhysAddr::new(0x1_0000),
-        );
+        let mapping =
+            LongModePageMapping::new(LONG_MODE_ALIAS_VIRTUAL_BASE, GuestPhysAddr::new(0x1_0000));
         let layout = LongModeBootLayout::with_page_mappings(
             memory_region(),
             LONG_MODE_ALIAS_VIRTUAL_BASE + 0x123,
@@ -587,10 +579,8 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_alias_virtual_pages() {
-        let mapping = LongModePageMapping::new(
-            LONG_MODE_ALIAS_VIRTUAL_BASE,
-            GuestPhysAddr::new(0x1_0000),
-        );
+        let mapping =
+            LongModePageMapping::new(LONG_MODE_ALIAS_VIRTUAL_BASE, GuestPhysAddr::new(0x1_0000));
         assert!(matches!(
             LongModeBootLayout::with_page_mappings(
                 memory_region(),
