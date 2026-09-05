@@ -1,3 +1,4 @@
+use crate::memory::GuestMemory;
 use crate::portio::pci::virtio_blk::{
     VirtioBlkProcessError, VirtioBlkQueueCompletion, VIRTIO_BLK_SECTOR_SIZE,
 };
