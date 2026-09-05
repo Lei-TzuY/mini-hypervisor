@@ -4,48 +4,49 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` contains the Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 `ET_EXEC` loading/execution, bounded non-identity ELF64 virtual mapping, bounded bidirectional userspace MMIO execution, long-mode virtual-MMIO composition, direct and controller-backed interrupt delivery, MMIO-device interrupt lifecycles, bounded multi-device MMIO registration/mapping, dual-source legacy-PIC routing, host-driven timer delivery through both direct `KVM_IRQ_LINE` and irqfd/eventfd, one ioeventfd-to-irqfd accelerated doorbell round trip, and one synthetic guest-discovered PCI BAR-backed MMIO function.
+`main` contains the Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 `ET_EXEC` loading/execution, bounded non-identity ELF64 virtual mapping, bounded bidirectional userspace MMIO execution, long-mode virtual-MMIO composition, direct and controller-backed interrupt delivery, MMIO-device interrupt lifecycles, bounded multi-device MMIO registration/mapping, dual-source legacy-PIC routing, host-driven timer delivery through both direct `KVM_IRQ_LINE` and irqfd/eventfd, one ioeventfd-to-irqfd accelerated doorbell round trip, one synthetic guest-discovered PCI BAR-backed MMIO function, and one modern virtio-rng PCI split-ring request.
 
-The synthetic PCI discovery phase is integrated at commit `98a3b3b61e3e674944f460ce66d7bce21b8fcc8f` through PR #89. Exact merged-main CI #412 completed successfully with format, Clippy, tests, build, rustdoc, Rust 1.74 MSRV, all thirteen earlier strict real-KVM gates, and the fourteenth strict PCI configuration/BAR gate. Its executable guest discovers synthetic function `00:01.0` through legacy PCI configuration mechanism #1, verifies vendor/device/class/BAR values, then writes the discovered BAR-backed GPA `0x10000000` and finishes with proof `PCBM`.
+The modern virtio-rng request phase is integrated at commit `d35bb5e73b47ad1204793ed3119b56e2bbc9d605` through PR #90. Exact merged-main CI #435 completed successfully with format, Clippy, tests, build, rustdoc, Rust 1.74 MSRV, all fourteen earlier strict real-KVM gates, and the fifteenth strict virtio-rng PCI request gate. Its executable guest discovers modern virtio-rng identity and capabilities, negotiates `VIRTIO_F_VERSION_1`, configures one checked split queue, submits one writable descriptor, receives the deterministic eight-byte payload `RNGDATA!`, observes used tuple `1/0/8`, and completes with proof `PVNR`.
 
-That synthetic one-function PCI phase is sealed. Do not farm more fixed BDFs, BAR values, or configuration registers merely to extend the phase number.
+That one-request non-interrupting virtio transport phase is sealed. Do not farm more fixed payloads, descriptor counts, duplicate queues, or equivalent single-request variants merely to extend the phase number.
 
-## Selected milestone — one modern virtio-rng PCI split request
+## Selected milestone — virtio-rng completion through bounded legacy INTx
 
-The next architecture boundary is a truthful standards-shaped device transport. This milestone adds a separate modern virtio-rng PCI function rather than relabeling the sealed synthetic device. The guest must discover standard virtio PCI capabilities, negotiate the bounded feature/status contract, configure one split request queue in checked guest RAM, notify queue 0, and observe one deterministic device completion end to end.
+The next architecture boundary is guest-visible request-completion interrupt ownership. Keep the integrated modern PCI transport, BAR, feature/status negotiation, queue layout, descriptor contract, deterministic payload and checked guest-memory processing unchanged, but make successful queue completion own virtio ISR bit 0 and one legacy INTx-style level interrupt through the already integrated in-kernel irqchip/PIC/LAPIC ExtINT path.
 
-This remains a deliberately bounded first virtio slice. The fixed payload is deterministic test evidence only; it is not an entropy-quality, cryptographic, interoperability, or full virtio-conformance claim.
+This is a deliberately bounded legacy-INTx completion proof. It is not an MSI/MSI-X, generic PCI interrupt-routing, irqfd-backed INTx, interrupt-suppression/event-index, packed-ring, interoperability, entropy-quality or full virtio-conformance claim.
 
 Acceptance contract:
 
-- preserve all fourteen integrated strict real-KVM gates and every existing long-mode, ELF64, MMIO, interrupt, accelerated-event, synthetic-PCI, diagnostic, and Rust 1.74 MSRV contract;
-- keep the existing synthetic `vendor=0xcafe/device=0x0001` function unchanged as an independent historical proof;
-- expose a separate modern virtio-rng PCI function with vendor `0x1af4`, device `0x1044` (virtio device type 4), revision 1, and a PCI capabilities list;
-- expose standard vendor-specific virtio PCI capabilities for common configuration, queue notification, and ISR status, all backed by one bounded memory BAR at GPA `0x10000000`;
-- offer only `VIRTIO_F_VERSION_1` and require the bounded ACKNOWLEDGE -> DRIVER -> FEATURES_OK -> DRIVER_OK progression before queue notification;
-- expose exactly one split virtqueue (`requestq`, queue 0) with bounded power-of-two size and explicit descriptor/driver/device GPAs;
-- require one direct descriptor marked device-writable; NEXT, INDIRECT, read-only descriptors, out-of-range descriptor indices, too-small buffers, address overflow, and malformed register accesses remain hard failures;
-- consume queue state through checked `GuestMemory` reads/writes, fill exactly the fixed eight-byte payload `RNGDATA!`, write one used element with descriptor id 0 and length 8, and advance `used.idx` to 1;
-- preserve the repository completion invariant for serviceable notify MMIO: queue processing occurs only after the subsequent explicit guest debug-port `N` barrier proves the notify write completed;
-- the deterministic guest must discover PCI identity/capability pointers/BAR through six CF8/CFC cycles, emit `P`, negotiate the virtio common configuration and emit `V`, build the one-entry split ring, notify queue 0, emit completion barrier `N`, verify used-ring fields and payload inside guest code, emit `R`, and halt;
-- exact success proof is `PVNR`; exact host-visible state is driver features `0x100000000`, device status `0x0f`, queue enabled, `used.idx=1`, used id 0, used len 8, payload bytes `[82, 78, 71, 68, 65, 84, 65, 33]`, sixteen port-I/O exits, and nineteen MMIO exits;
-- the execution budget is exact: six PCI config cycles × two exits + nineteen MMIO exits + four proof outputs + one HLT = 36; serviceable MMIO completion requires re-entry but does not invent an extra exit;
-- KVM-aware integration must independently validate PCI cycles, proof bytes, final status/features/queue state, used-ring fields, payload, notify MMIO metadata, HLT terminal state, and architectural RFLAGS bit 1;
-- stable CI must retain all fourteen integrated strict real-KVM gates unchanged and add an independent fifteenth virtio-rng gate requiring modern identity `0x1af4/0x1044`, BAR0 `0x10000000`, features `0x100000000`, status `0x0f`, queue enabled, used tuple `1/0/8`, payload `RNGDATA!`, proof bytes `[80, 86, 78, 82]`, sixteen port-I/O exits, nineteen MMIO exits, HLT, and architectural RFLAGS bit 1;
-- queue negotiation, descriptor safety, guest-memory bounds, notify completion ordering, proof/state verification, exact exit accounting, or MSRV failures remain hard and must not be swallowed, skipped into success, retried into success, or hidden by changing expected values.
+- preserve all fifteen integrated strict real-KVM gates and every existing long-mode, ELF64, MMIO, accelerated-event, PCI, virtio, diagnostic and Rust 1.74 MSRV contract;
+- retain the integrated modern virtio-rng PCI identity, capabilities, BAR0 GPA `0x10000000`, `VIRTIO_F_VERSION_1`, one split queue, checked direct writable descriptor, deterministic `RNGDATA!` payload, used-ring update and notify-completion ordering;
+- successful queue processing must set virtio ISR queue bit 0 only after payload and used-ring writes plus queue state commit; failed queue processing must not create a completion interrupt state;
+- expose the ISR capability byte at BAR offset `0x200` with read-to-clear semantics: the first guest ISR read after successful completion must return `1`, and a later guest ISR read after handler return must return `0`;
+- compose the existing `LongModeMmioInterruptLayout`, in-kernel irqchip, LAPIC ExtINT setup and bounded GSI0/vector `0x40` route; do not introduce a parallel interrupt-table or controller path;
+- the deterministic guest initializes the legacy PIC, enables interrupts, performs the same modern virtio-rng discovery/negotiation/queue/request sequence as the integrated slice, and emits notify barrier `N` only after the serviceable notify MMIO write has architecturally completed;
+- userspace must consume exactly one retained `VirtioQueueNotified { queue: 0 }` event at `N`, process exactly one queue completion successfully, and only then assert GSI0 level;
+- the interrupt handler emits `I`, reads ISR at BAR+`0x200`, requires the returned value to equal `1`, and emits barrier `A` only after that serviceable ISR read has completed;
+- userspace may deassert GSI0 only at `A`, never at the ISR `KVM_EXIT_MMIO` itself; deassert count must be exactly one and the line must not remain asserted at terminal verification;
+- after deassertion the handler issues master-PIC EOI and `iretq`; resumed main verifies used tuple `1/0/8` and payload `RNGDATA!`, reads ISR again and requires `0`, emits `R`, and halts;
+- exact debug proof is `PVNIAR`; the two added ISR reads extend the integrated nineteen virtio MMIO accesses to exactly twenty-one MMIO exits, while exact port-I/O count is eighteen (six PCI config cycles × two exits plus six proof bytes);
+- exact host-visible completion state is descriptor id `0`, length `8`, `used.idx=1`, used id `0`, used len `8`, payload bytes `[82, 78, 71, 68, 65, 84, 65, 33]`, one assert, one deassert, GSI0, vector `0x40`, software-enabled LAPIC SPIV and unmasked ExtINT LINT0;
+- terminal state must be HLT at the deterministic generated guest terminal RIP with architectural RFLAGS bit 1 and IF set;
+- KVM-aware integration must independently validate completion fields, payload, proof bytes, exact twenty-one MMIO exits including both ISR reads, exact eighteen port-I/O exits, one assert/deassert lifecycle, LAPIC state and terminal RFLAGS;
+- stable CI must retain all fifteen integrated strict real-KVM gates unchanged and add an independent sixteenth virtio-rng completion-interrupt gate requiring GSI0/vector `0x40`, lifecycle `assert=1 deassert=1`, used tuple `1/0/8`, payload `RNGDATA!`, proof bytes `[80, 86, 78, 73, 65, 82]`, eighteen port-I/O exits, twenty-one MMIO exits, semantic LAPIC ExtINT state, HLT and architectural RFLAGS bit 1 plus IF;
+- queue processing, ISR ownership/read-to-clear behavior, serviceable-MMIO completion ordering, GSI assertion/deassertion ownership, guest-memory bounds, proof/state verification, exact exit accounting or MSRV failures remain hard and must not be swallowed, skipped into success, retried into success or hidden by changing expected values.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- packed rings, indirect descriptors, descriptor chains, multiple queues, notification-data, ring reset, admin queues, or arbitrary guest-driver compatibility;
-- INTx queue completion interrupts, MSI, MSI-X, PCIe ECAM, BAR relocation/sizing, multiple BARs, bridges, hotplug, or a general PCI bus enumerator;
-- device-specific configuration beyond the bounded virtio-rng identity, DMA/IOMMU infrastructure, or a general DMA engine;
-- entropy/randomness quality claims, cryptographic claims, performance/latency claims, or full virtio conformance/interoperability claims;
-- SMP/multi-vCPU execution, migration, resumable execution, or whole-VM snapshots.
+- MSI, MSI-X, PCIe ECAM, arbitrary PCI interrupt routing, IOAPIC programming, shared INTx lines or irqfd-backed INTx acceleration;
+- interrupt suppression, event-index, packed rings, indirect descriptors, descriptor chains, multiple requests, additional queues, periodic work or a general virtio scheduler;
+- more virtio device types, a general guest-driver compatibility layer, BAR relocation/sizing, PCI bridges or hotplug;
+- real entropy/randomness quality claims, cryptographic claims, full virtio conformance/interoperability claims, performance or latency claims;
+- DMA/IOMMU infrastructure, SMP/multi-vCPU execution, migration, resumable execution or whole-VM snapshots.
 
 ## Promotion rule
 
-After this one-request virtio-rng phase is integrated and exact merged-`main` CI is green, seal the single-request transport rather than farming descriptor counts, fixed payloads, or duplicate queues.
+After this single virtio-rng INTx completion lifecycle is integrated and exact merged-`main` CI is green, seal the fixed GSI0/vector0x40 legacy-INTx proof rather than farming repeated requests, more fixed ISR reads or duplicate interrupt vectors.
 
-The next architecture audit should prefer a cross-layer virtio capability that materially changes execution. A strong candidate is virtio request-completion interrupt delivery, combining the standards-shaped queue with the already-integrated controller/irqfd stack, only if the guest-visible interrupt programming and acknowledgement semantics can be proven end to end. MSI/MSI-X, a second standard virtio device, PCIe ECAM, DMA/IOMMU, SMP, migration, and performance work remain separate frontiers unless one becomes a necessary executable prerequisite.
+The next architecture audit should prefer a materially higher transport/control-plane frontier. Strong candidates include MSI/MSI-X only when PCI capability programming and executable interrupt delivery can be proven end to end, irqfd-backed device completion only if it changes ownership/acceleration semantics rather than duplicating the existing INTx proof, a second standards-shaped virtio device when it exercises a different queue/data contract, or PCIe/DMA/IOMMU/SMP work when one becomes a necessary executable prerequisite. Performance work remains separate and requires controlled benchmark evidence.
