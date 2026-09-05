@@ -42,9 +42,9 @@ fn configure_interrupt_tables(sregs: &mut sys::KvmSregs, layout: &LongModeInterr
 mod tests {
     use super::*;
     use crate::interrupt::{
-        LONG_MODE_INTERRUPT_GDT_ADDR, LONG_MODE_INTERRUPT_GUEST_ENTRY,
-        LONG_MODE_INTERRUPT_HANDLER, LONG_MODE_INTERRUPT_IDT_ADDR,
-        LONG_MODE_INTERRUPT_STACK_POINTER, LONG_MODE_INTERRUPT_VECTOR,
+        LONG_MODE_INTERRUPT_GDT_ADDR, LONG_MODE_INTERRUPT_GUEST_ENTRY, LONG_MODE_INTERRUPT_HANDLER,
+        LONG_MODE_INTERRUPT_IDT_ADDR, LONG_MODE_INTERRUPT_STACK_POINTER,
+        LONG_MODE_INTERRUPT_VECTOR,
     };
     use crate::long_mode::LONG_MODE_IDENTITY_MAP_SIZE;
     use crate::memory::{GuestMemoryRegion, GuestPhysAddr};
