@@ -1,0 +1,32 @@
+name: Temporary indirect formatter
+
+on:
+  push:
+    branches:
+      - milestone/virtio-blk-indirect-descriptors
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: milestone/virtio-blk-indirect-descriptors
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format and commit
+        shell: bash
+        run: |
+          cargo fmt --all
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name 'LeiZ'
+          git config user.email '52287354+Lei-TzuY@users.noreply.github.com'
+          git add -- '*.rs'
+          git commit -m 'Format virtio-blk indirect implementation'
+          git push origin HEAD:milestone/virtio-blk-indirect-descriptors
