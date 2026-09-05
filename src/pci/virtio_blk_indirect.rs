@@ -10,7 +10,6 @@ pub(super) struct ResolvedRequestChain {
     pub(super) data: Descriptor,
     pub(super) data_index: u16,
     pub(super) status: Descriptor,
-    pub(super) status_index: u16,
 }
 
 impl VirtioBlkDevice {
@@ -59,7 +58,6 @@ impl VirtioBlkDevice {
             data,
             data_index,
             status,
-            status_index,
         })
     }
 
@@ -120,7 +118,6 @@ impl VirtioBlkDevice {
             data,
             data_index,
             status,
-            status_index,
         })
     }
 
@@ -151,5 +148,191 @@ impl VirtioBlkDevice {
         } else {
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BAR: u64 = 0x1000_0000;
+    const DESC: u64 = 0x18000;
+    const AVAIL: u64 = 0x18100;
+    const USED: u64 = 0x18200;
+    const TABLE: u64 = 0x18300;
+    const HEADER: u64 = 0x18400;
+    const DATA: u64 = 0x18500;
+    const STATUS: u64 = 0x18800;
+    const MEMORY_SIZE: u64 = 0x20_000;
+
+    fn ready_device() -> VirtioBlkDevice {
+        let mut device = VirtioBlkDevice::new(BAR);
+        device.driver_features = VIRTIO_F_VERSION_1 | VIRTIO_RING_F_INDIRECT_DESC;
+        device.status = VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK;
+        device.queue_size = 4;
+        device.queue_enabled = true;
+        device.queue_desc = DESC;
+        device.queue_driver = AVAIL;
+        device.queue_device = USED;
+        device
+    }
+
+    fn write_descriptor(
+        memory: &mut GuestMemory,
+        table: u64,
+        index: u16,
+        address: u64,
+        length: u32,
+        flags: u16,
+        next: u16,
+    ) {
+        let mut bytes = [0_u8; 16];
+        bytes[0..8].copy_from_slice(&address.to_le_bytes());
+        bytes[8..12].copy_from_slice(&length.to_le_bytes());
+        bytes[12..14].copy_from_slice(&flags.to_le_bytes());
+        bytes[14..16].copy_from_slice(&next.to_le_bytes());
+        memory
+            .write(
+                GuestPhysAddr::new(table + 16 * u64::from(index)),
+                &bytes,
+            )
+            .unwrap();
+    }
+
+    fn prepare_indirect_request(
+        memory: &mut GuestMemory,
+        device: &mut VirtioBlkDevice,
+        request_type: u32,
+        data_flags: u16,
+        avail_idx: u16,
+        ring_slot: u16,
+    ) {
+        write_descriptor(memory, DESC, 0, TABLE, 48, VIRTQ_DESC_F_INDIRECT, 0);
+        write_descriptor(memory, TABLE, 0, HEADER, 16, VIRTQ_DESC_F_NEXT, 1);
+        write_descriptor(
+            memory,
+            TABLE,
+            1,
+            DATA,
+            VIRTIO_BLK_SECTOR_SIZE as u32,
+            data_flags,
+            2,
+        );
+        write_descriptor(memory, TABLE, 2, STATUS, 1, VIRTQ_DESC_F_WRITE, 0);
+        let mut header = [0_u8; 16];
+        header[0..4].copy_from_slice(&request_type.to_le_bytes());
+        memory.write(GuestPhysAddr::new(HEADER), &header).unwrap();
+        memory
+            .write(GuestPhysAddr::new(AVAIL + 2), &avail_idx.to_le_bytes())
+            .unwrap();
+        memory
+            .write(
+                GuestPhysAddr::new(AVAIL + 4 + 2 * u64::from(ring_slot)),
+                &0_u16.to_le_bytes(),
+            )
+            .unwrap();
+        memory.write(GuestPhysAddr::new(STATUS), &[0xff]).unwrap();
+        device.notify_pending = true;
+    }
+
+    #[test]
+    fn indirect_out_then_in_uses_outer_head_and_round_trips_backing() {
+        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), MEMORY_SIZE).unwrap();
+        let mut device = ready_device();
+        let mut payload = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
+        for (index, byte) in payload.iter_mut().enumerate() {
+            *byte = (index as u8).wrapping_mul(13).wrapping_add(9);
+        }
+        memory.write(GuestPhysAddr::new(DATA), &payload).unwrap();
+        prepare_indirect_request(
+            &mut memory,
+            &mut device,
+            VIRTIO_BLK_T_OUT,
+            VIRTQ_DESC_F_NEXT,
+            1,
+            0,
+        );
+
+        let write = device.process_notified_queue_atomic(&mut memory).unwrap();
+        assert_eq!(write.descriptor_id(), 0);
+        assert_eq!(write.length(), 1);
+        assert_eq!(device.sector0(), &payload);
+
+        memory
+            .write(GuestPhysAddr::new(DATA), &[0x5a; VIRTIO_BLK_SECTOR_SIZE])
+            .unwrap();
+        prepare_indirect_request(
+            &mut memory,
+            &mut device,
+            VIRTIO_BLK_T_IN,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            2,
+            1,
+        );
+        let read = device.process_notified_queue_atomic(&mut memory).unwrap();
+        assert_eq!(read.descriptor_id(), 0);
+        assert_eq!(read.length(), (VIRTIO_BLK_SECTOR_SIZE + 1) as u32);
+        let mut readback = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
+        memory
+            .read(GuestPhysAddr::new(DATA), &mut readback)
+            .unwrap();
+        assert_eq!(readback, payload);
+        assert_eq!(read_guest_u16(&memory, USED + 2).unwrap(), 2);
+    }
+
+    #[test]
+    fn indirect_head_requires_negotiated_feature_without_mutation() {
+        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), MEMORY_SIZE).unwrap();
+        let mut device = ready_device();
+        device.driver_features = VIRTIO_F_VERSION_1;
+        let original = *device.sector0();
+        prepare_indirect_request(
+            &mut memory,
+            &mut device,
+            VIRTIO_BLK_T_OUT,
+            VIRTQ_DESC_F_NEXT,
+            1,
+            0,
+        );
+
+        let error = device.process_notified_queue_atomic(&mut memory).unwrap_err();
+        assert!(matches!(
+            error,
+            VirtioBlkProcessError::Device(VirtioBlkError::IndirectFeatureNotNegotiated)
+        ));
+        assert_eq!(device.sector0(), &original);
+        assert_eq!(device.last_avail_idx, 0);
+        assert_eq!(device.last_used_idx, 0);
+        assert!(device.notify_pending);
+        assert_eq!(device.isr_status, 0);
+    }
+
+    #[test]
+    fn invalid_indirect_topology_fails_before_queue_or_backing_mutation() {
+        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), MEMORY_SIZE).unwrap();
+        let mut device = ready_device();
+        let original = *device.sector0();
+        prepare_indirect_request(
+            &mut memory,
+            &mut device,
+            VIRTIO_BLK_T_OUT,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_INDIRECT,
+            1,
+            0,
+        );
+
+        let error = device.process_notified_queue_atomic(&mut memory).unwrap_err();
+        assert!(matches!(
+            error,
+            VirtioBlkProcessError::Device(VirtioBlkError::NestedIndirectDescriptor { index: 1 })
+        ));
+        assert_eq!(device.sector0(), &original);
+        assert_eq!(device.last_avail_idx, 0);
+        assert_eq!(device.last_used_idx, 0);
+        assert!(device.notify_pending);
+        assert_eq!(device.isr_status, 0);
     }
 }
