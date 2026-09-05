@@ -19,6 +19,7 @@ pub use special_register_snapshot::{
     VcpuSpecialRegisterSnapshotComparison,
 };
 mod special_register_restore;
+mod interrupt;
 
 mod msr_readback;
 pub use msr_readback::{VcpuMsrValue, VcpuMsrValues};
