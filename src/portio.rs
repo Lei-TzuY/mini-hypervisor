@@ -3,10 +3,11 @@ pub mod pci;
 pub mod pci_fixture;
 pub mod virtio_rng_completion_interrupt_fixture;
 pub mod virtio_rng_fixture;
+pub mod virtio_rng_msi_completion_fixture;
 
 use crate::error::{Error, PortIoError};
 use crate::vcpu::{PortIoDirection, PortIoExit};
-use pci::{PciConfigMechanism1, PciConfigService};
+use pci::{PciConfigMechanism1, PciConfigService, PciMsiMessage};
 
 pub const DEBUG_PORT: u16 = 0x00e9;
 
@@ -82,6 +83,13 @@ impl PortIoBus {
     #[must_use]
     pub fn debug_output(&self) -> Option<&[u8]> {
         self.debug_port.as_ref().map(DebugPort::bytes)
+    }
+
+    #[must_use]
+    pub fn virtio_rng_msi_message(&self) -> Option<PciMsiMessage> {
+        self.pci_config
+            .as_ref()
+            .and_then(PciConfigMechanism1::virtio_rng_msi_message)
     }
 }
 
