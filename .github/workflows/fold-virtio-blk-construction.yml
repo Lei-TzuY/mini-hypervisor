@@ -19,7 +19,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "65e07a993060ac20234ba1ef557a5b174443c579"
+          test "$(git rev-parse HEAD^)" = "e3bcc013a882cd4ce73f91f1bf18f8a31278c1f1"
 
           python3 - <<'PY'
           from pathlib import Path
@@ -65,6 +65,7 @@ jobs:
           PY
 
           git rm .github/workflows/fold-virtio-blk-construction.yml
+          cargo fmt --all
           cargo fmt --all -- --check
           cargo check --all-targets --all-features
           git diff --check
