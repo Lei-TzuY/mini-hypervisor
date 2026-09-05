@@ -1,6 +1,7 @@
 use crate::error::{Error, MmioError};
 use crate::vcpu::{MmioDirection, MmioExit};
 
+pub mod interrupt;
 pub mod long_mode;
 
 pub const BYTE_DEVICE_ADDRESS: u64 = 0x2000;
@@ -9,6 +10,11 @@ pub const BYTE_DEVICE_ADDRESS: u64 = 0x2000;
 pub enum MmioService {
     Write,
     Read(Vec<u8>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MmioDeviceEvent {
+    InterruptRequested,
 }
 
 #[derive(Debug, Default)]
@@ -30,11 +36,14 @@ impl MmioBus {
     #[must_use]
     pub fn with_byte_device_at(address: u64, read_value: u8) -> Self {
         Self {
-            byte_device: Some(ByteMmioDevice {
-                address,
-                read_value,
-                writes: Vec::new(),
-            }),
+            byte_device: Some(ByteMmioDevice::new(address, read_value, false)),
+        }
+    }
+
+    #[must_use]
+    pub fn with_interrupting_byte_device_at(address: u64, read_value: u8) -> Self {
+        Self {
+            byte_device: Some(ByteMmioDevice::new(address, read_value, true)),
         }
     }
 
@@ -51,6 +60,12 @@ impl MmioBus {
         }
     }
 
+    pub fn take_device_event(&mut self) -> Option<MmioDeviceEvent> {
+        self.byte_device
+            .as_mut()
+            .and_then(ByteMmioDevice::take_event)
+    }
+
     #[must_use]
     pub fn writes(&self) -> Option<&[u8]> {
         self.byte_device.as_ref().map(ByteMmioDevice::writes)
@@ -62,9 +77,21 @@ struct ByteMmioDevice {
     address: u64,
     writes: Vec<u8>,
     read_value: u8,
+    interrupt_on_write: bool,
+    interrupt_pending: bool,
 }
 
 impl ByteMmioDevice {
+    fn new(address: u64, read_value: u8, interrupt_on_write: bool) -> Self {
+        Self {
+            address,
+            writes: Vec::new(),
+            read_value,
+            interrupt_on_write,
+            interrupt_pending: false,
+        }
+    }
+
     fn handle(&mut self, exit: &MmioExit) -> Result<MmioService, MmioError> {
         if exit.length() != 1 {
             return Err(MmioError::UnsupportedByteDeviceAccess {
@@ -84,9 +111,21 @@ impl ByteMmioDevice {
                     });
                 }
                 self.writes.push(exit.write_data()[0]);
+                if self.interrupt_on_write {
+                    self.interrupt_pending = true;
+                }
                 Ok(MmioService::Write)
             }
             MmioDirection::Read => Ok(MmioService::Read(vec![self.read_value])),
+        }
+    }
+
+    fn take_event(&mut self) -> Option<MmioDeviceEvent> {
+        if self.interrupt_pending {
+            self.interrupt_pending = false;
+            Some(MmioDeviceEvent::InterruptRequested)
+        } else {
+            None
         }
     }
 
@@ -115,6 +154,47 @@ mod tests {
             MmioService::Write
         );
         assert_eq!(bus.writes(), Some(&b"W"[..]));
+        assert_eq!(bus.take_device_event(), None);
+    }
+
+    #[test]
+    fn interrupting_byte_device_write_owns_one_consumable_event() {
+        let mut bus = MmioBus::with_interrupting_byte_device_at(BYTE_DEVICE_ADDRESS, b'R');
+        assert_eq!(
+            bus.dispatch(&exit(MmioDirection::Write, 1, b"W")).unwrap(),
+            MmioService::Write
+        );
+        assert_eq!(bus.writes(), Some(&b"W"[..]));
+        assert_eq!(
+            bus.take_device_event(),
+            Some(MmioDeviceEvent::InterruptRequested)
+        );
+        assert_eq!(bus.take_device_event(), None);
+
+        assert_eq!(
+            bus.dispatch(&exit(MmioDirection::Write, 1, b"X")).unwrap(),
+            MmioService::Write
+        );
+        assert_eq!(
+            bus.take_device_event(),
+            Some(MmioDeviceEvent::InterruptRequested)
+        );
+        assert_eq!(bus.take_device_event(), None);
+    }
+
+    #[test]
+    fn interrupting_byte_device_reads_and_invalid_accesses_do_not_request_interrupts() {
+        let mut bus = MmioBus::with_interrupting_byte_device_at(BYTE_DEVICE_ADDRESS, b'R');
+        assert_eq!(
+            bus.dispatch(&exit(MmioDirection::Read, 1, &[])).unwrap(),
+            MmioService::Read(vec![b'R'])
+        );
+        assert_eq!(bus.take_device_event(), None);
+
+        assert!(bus.dispatch(&exit(MmioDirection::Write, 2, b"W")).is_err());
+        assert_eq!(bus.take_device_event(), None);
+        assert!(bus.dispatch(&exit(MmioDirection::Write, 1, b"AB")).is_err());
+        assert_eq!(bus.take_device_event(), None);
     }
 
     #[test]
