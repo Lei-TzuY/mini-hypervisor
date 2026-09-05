@@ -190,7 +190,10 @@ mod tests {
         let mut memory = GuestMemory::new(GuestPhysAddr::new(0), MEMORY_SIZE).unwrap();
         let mut device = ready_device();
         let sector0 = *device.sector0();
-        let sector3_before = device.backing_range(3, VIRTIO_BLK_SECTOR_SIZE as u32).unwrap().to_vec();
+        let sector3_before = device
+            .backing_range(3, VIRTIO_BLK_SECTOR_SIZE as u32)
+            .unwrap()
+            .to_vec();
         let payload = two_sector_payload();
         memory.write(GuestPhysAddr::new(DATA), &payload).unwrap();
         prepare_request(
@@ -210,7 +213,9 @@ mod tests {
         assert_eq!(device.backing_range(1, TWO_SECTORS).unwrap(), payload);
         assert_eq!(device.sector0(), &sector0);
         assert_eq!(
-            device.backing_range(3, VIRTIO_BLK_SECTOR_SIZE as u32).unwrap(),
+            device
+                .backing_range(3, VIRTIO_BLK_SECTOR_SIZE as u32)
+                .unwrap(),
             sector3_before
         );
 
@@ -231,7 +236,9 @@ mod tests {
         assert_eq!(read.sector(), 1);
         assert_eq!(read.length(), TWO_SECTORS + 1);
         let mut readback = vec![0_u8; TWO_SECTORS as usize];
-        memory.read(GuestPhysAddr::new(DATA), &mut readback).unwrap();
+        memory
+            .read(GuestPhysAddr::new(DATA), &mut readback)
+            .unwrap();
         assert_eq!(readback, payload);
         assert_eq!(read_guest_u16(&memory, USED + 2).unwrap(), 2);
     }
@@ -255,7 +262,9 @@ mod tests {
             0,
         );
 
-        let error = device.process_notified_queue_atomic(&mut memory).unwrap_err();
+        let error = device
+            .process_notified_queue_atomic(&mut memory)
+            .unwrap_err();
         assert!(matches!(
             error,
             VirtioBlkProcessError::Device(VirtioBlkError::RequestRangeOutOfRange {
@@ -286,7 +295,9 @@ mod tests {
             0,
         );
 
-        let error = device.process_notified_queue_atomic(&mut memory).unwrap_err();
+        let error = device
+            .process_notified_queue_atomic(&mut memory)
+            .unwrap_err();
         assert!(matches!(
             error,
             VirtioBlkProcessError::Device(VirtioBlkError::InvalidDataLength {
