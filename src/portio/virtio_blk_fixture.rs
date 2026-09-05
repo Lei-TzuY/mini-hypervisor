@@ -601,8 +601,7 @@ fn emit_ring_setup(code: &mut Vec<u8>) {
     code.extend_from_slice(&[0xc7, 0x47, 0x18]);
     code.extend_from_slice(&(VIRTIO_BLK_SECTOR_SIZE as u32).to_le_bytes());
     code.extend_from_slice(&[0xc7, 0x47, 0x1c]);
-    let descriptor1_tail =
-        u32::from(VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE) | (2_u32 << 16);
+    let descriptor1_tail = u32::from(VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE) | (2_u32 << 16);
     code.extend_from_slice(&descriptor1_tail.to_le_bytes());
 
     code.extend_from_slice(&[0x48, 0xc7, 0x47, 0x20]);
