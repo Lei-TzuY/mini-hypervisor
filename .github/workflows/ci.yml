@@ -106,14 +106,14 @@ jobs:
           printf '%s\n' "$output"
           grep -F 'irqchip GSI: 0' <<<"$output"
           grep -F 'irqchip vector: 0x40' <<<"$output"
-          ready="$(grep -F 'irqchip readiness: rip=0x1002c, rflags=' <<<"$output")"
-          ready_rflags_hex="${ready##*rflags=}"
-          [[ "$ready_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
-          ready_rflags=$((ready_rflags_hex))
-          (( (ready_rflags & 0x2) == 0x2 ))
-          (( (ready_rflags & 0x200) == 0x200 ))
-          grep -F 'irqchip proof: [82, 73, 77]' <<<"$output"
-          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10031, rflags=' <<<"$output")"
+          armed="$(grep -F 'irqchip armed rflags:' <<<"$output")"
+          armed_rflags_hex="${armed##*rflags: }"
+          [[ "$armed_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          armed_rflags=$((armed_rflags_hex))
+          (( (armed_rflags & 0x2) == 0x2 ))
+          (( (armed_rflags & 0x200) == 0x200 ))
+          grep -F 'irqchip proof: [82, 65, 73, 77]' <<<"$output"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10034, rflags=' <<<"$output")"
           rflags_hex="${report##*rflags=}"
           [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
           rflags=$((rflags_hex))
