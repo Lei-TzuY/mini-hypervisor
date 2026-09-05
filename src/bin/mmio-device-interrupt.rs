@@ -7,7 +7,10 @@ fn main() -> ExitCode {
         Ok(result) => {
             println!("mmio interrupt GSI: {}", result.gsi());
             println!("mmio interrupt vector: {:#x}", result.vector());
-            println!("mmio interrupt device events: {}", result.device_event_count());
+            println!(
+                "mmio interrupt device events: {}",
+                result.device_event_count()
+            );
             println!("mmio interrupt writes: {:?}", result.writes());
             println!("mmio interrupt LAPIC SPIV: {:#x}", result.lapic_spiv());
             println!("mmio interrupt LAPIC LINT0: {:#x}", result.lapic_lint0());
