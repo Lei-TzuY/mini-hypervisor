@@ -1,12 +1,16 @@
 use crate::error::{Error, VmExitError};
+use crate::mmio::MmioBus;
 use crate::portio::PortIoBus;
-use crate::vcpu::{PortIoExit, Vcpu, VcpuExit, VcpuId};
-use crate::vmexit::{dispatch_vcpu_exit, VmExitDisposition, VmExitReport};
+use crate::vcpu::{MmioExit, PortIoExit, Vcpu, VcpuExit, VcpuId};
+use crate::vmexit::{
+    dispatch_vcpu_exit, VmExitContinuation, VmExitDisposition, VmExitReport,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VmExecutionResult {
     report: VmExitReport,
     io_exits: Vec<PortIoExit>,
+    mmio_exits: Vec<MmioExit>,
     exit_reasons: Vec<u32>,
     completed_exits: u32,
 }
@@ -23,6 +27,11 @@ impl VmExecutionResult {
     }
 
     #[must_use]
+    pub fn mmio_exits(&self) -> &[MmioExit] {
+        &self.mmio_exits
+    }
+
+    #[must_use]
     pub fn exit_reasons(&self) -> &[u32] {
         &self.exit_reasons
     }
@@ -36,10 +45,12 @@ impl VmExecutionResult {
 pub fn run_vcpu_until_stopped(
     vcpu: &mut Vcpu,
     port_io: &mut PortIoBus,
+    mmio: &mut MmioBus,
     exit_budget: u32,
 ) -> Result<VmExecutionResult, Error> {
     let mut budget = ExitBudget::new(vcpu.id(), exit_budget);
     let mut io_exits = Vec::new();
+    let mut mmio_exits = Vec::new();
     let mut exit_reasons = Vec::new();
 
     loop {
@@ -47,16 +58,20 @@ pub fn run_vcpu_until_stopped(
         let exit = vcpu.run_once()?;
         record_completed_exit(&mut budget, &mut exit_reasons, exit.reason());
 
-        let disposition = dispatch_vcpu_exit(vcpu, exit, port_io)
+        let disposition = dispatch_vcpu_exit(vcpu, exit, port_io, mmio)
             .map_err(|error| attach_completed_exit_trace(error, &exit_reasons))?;
         match disposition {
-            VmExitDisposition::Continue(io) => io_exits.push(io),
+            VmExitDisposition::Continue(VmExitContinuation::PortIo(io)) => io_exits.push(io),
+            VmExitDisposition::Continue(VmExitContinuation::Mmio(access)) => {
+                mmio_exits.push(access)
+            }
             VmExitDisposition::Stopped(report) => {
                 debug_assert_eq!(exit_reasons.len(), budget.completed() as usize);
                 debug_assert_eq!(exit_reasons.last().copied(), Some(report.exit().reason()));
                 return Ok(VmExecutionResult {
                     report,
                     io_exits,
+                    mmio_exits,
                     exit_reasons,
                     completed_exits: budget.completed(),
                 });
@@ -338,6 +353,18 @@ mod tests {
 
         assert_eq!(exit_reasons, [sys::KVM_EXIT_IO, sys::KVM_EXIT_HLT]);
         assert_eq!(exit_reasons.len(), budget.completed() as usize);
+    }
+
+    #[test]
+    fn mmio_reason_participates_in_budget_and_trace() {
+        let mut budget = ExitBudget::new(VcpuId::BOOT, 2);
+        let mut exit_reasons = Vec::new();
+        record_completed_exit(&mut budget, &mut exit_reasons, VcpuExit::Mmio.reason());
+        record_completed_exit(&mut budget, &mut exit_reasons, sys::KVM_EXIT_HLT);
+        assert_eq!(
+            exit_reasons,
+            [VcpuExit::Mmio.reason(), sys::KVM_EXIT_HLT]
+        );
     }
 
     #[test]
