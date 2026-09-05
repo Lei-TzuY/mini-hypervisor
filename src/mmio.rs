@@ -9,6 +9,7 @@ pub const BYTE_DEVICE_ADDRESS: u64 = 0x2000;
 pub const LEVEL_INTERRUPT_STATUS_OFFSET: u64 = 1;
 pub const LEVEL_INTERRUPT_ACK_OFFSET: u64 = 2;
 pub const LEVEL_INTERRUPT_STATUS_PENDING: u8 = 1;
+const LEVEL_INTERRUPT_ACK_VALUE: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MmioService {
@@ -190,6 +191,13 @@ impl ByteMmioDevice {
             }
             (LEVEL_INTERRUPT_ACK_OFFSET, MmioDirection::Write) => {
                 let value = exact_write_byte(exit)?;
+                if value != LEVEL_INTERRUPT_ACK_VALUE {
+                    return Err(MmioError::UnsupportedByteDeviceAccess {
+                        address: exit.address(),
+                        direction: exit.direction().raw(),
+                        length: exit.length(),
+                    });
+                }
                 self.writes.push(value);
                 self.level_interrupt_pending = false;
                 Ok(MmioService::Write)
@@ -338,7 +346,7 @@ mod tests {
                 base + LEVEL_INTERRUPT_ACK_OFFSET,
                 MmioDirection::Write,
                 1,
-                &[1]
+                &[LEVEL_INTERRUPT_ACK_VALUE]
             ))
             .unwrap(),
             MmioService::Write
@@ -358,7 +366,48 @@ mod tests {
             .unwrap(),
             MmioService::Read(vec![0])
         );
-        assert_eq!(bus.writes(), Some(&[b'W', 1][..]));
+        assert_eq!(
+            bus.writes(),
+            Some(&[b'W', LEVEL_INTERRUPT_ACK_VALUE][..])
+        );
+    }
+
+    #[test]
+    fn level_interrupt_device_rejects_invalid_ack_without_mutating_pending_state() {
+        let base = 0x1000_0000;
+        let mut bus = MmioBus::with_level_interrupt_byte_device_at(base);
+        assert_eq!(
+            bus.dispatch(&exit_at(base, MmioDirection::Write, 1, b"W"))
+                .unwrap(),
+            MmioService::Write
+        );
+        assert_eq!(
+            bus.take_device_event(),
+            Some(MmioDeviceEvent::InterruptLineAssertRequested)
+        );
+        assert_eq!(bus.take_device_event(), None);
+
+        assert!(bus
+            .dispatch(&exit_at(
+                base + LEVEL_INTERRUPT_ACK_OFFSET,
+                MmioDirection::Write,
+                1,
+                &[2]
+            ))
+            .is_err());
+        assert_eq!(bus.take_device_event(), None);
+        assert_eq!(bus.writes(), Some(&b"W"[..]));
+        assert_eq!(
+            bus.dispatch(&exit_at(
+                base + LEVEL_INTERRUPT_STATUS_OFFSET,
+                MmioDirection::Read,
+                1,
+                &[]
+            ))
+            .unwrap(),
+            MmioService::Read(vec![LEVEL_INTERRUPT_STATUS_PENDING])
+        );
+        assert_eq!(bus.take_device_event(), None);
     }
 
     #[test]
