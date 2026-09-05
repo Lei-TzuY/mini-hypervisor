@@ -1,0 +1,60 @@
+name: Strict KVM two-vCPU guest IPI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/portio.rs'
+      - 'src/portio/two_vcpu_guest_ipi_fixture.rs'
+      - 'src/bin/two-vcpu-guest-ipi.rs'
+      - 'tests/two_vcpu_guest_ipi_guest.rs'
+      - 'src/mmio/long_mode.rs'
+      - 'src/kvm/irqchip.rs'
+      - 'src/kvm/mp_state.rs'
+      - 'src/vcpu/interrupt.rs'
+      - 'src/vcpu/mp_state.rs'
+      - 'src/interrupt.rs'
+      - '.github/workflows/two-vcpu-guest-ipi.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  guest-ipi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM guest-originated xAPIC IPI isolation proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin two-vcpu-guest-ipi)"
+          printf '%s\n' "$output"
+          grep -F 'guest IPI LAPIC alias: 0x500000' <<<"$output"
+          grep -F 'guest IPI LAPIC GPA: 0xfee00000' <<<"$output"
+          grep -F 'guest IPI destination APIC ID: 1' <<<"$output"
+          grep -F 'guest IPI vector: 0x52' <<<"$output"
+          grep -F 'guest IPI ICR high: 0x1000000' <<<"$output"
+          grep -F 'guest IPI ICR low: 0x52' <<<"$output"
+          grep -F 'guest IPI second runnable mp-state: 0' <<<"$output"
+          grep -F 'guest IPI first proof: [48, 83, 77, 68]' <<<"$output"
+          grep -F 'guest IPI second proof: [82, 73, 49, 68]' <<<"$output"
+
+          for label in 'guest IPI first barrier rflags:' 'guest IPI first send rflags:' 'guest IPI first completion rflags:' 'guest IPI second completion rflags:'; do
+            line="$(grep -F "$label" <<<"$output")"
+            hex="${line##*: }"
+            [[ "$hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            rflags=$((hex))
+            (( (rflags & 0x2) == 0x2 ))
+            (( (rflags & 0x200) == 0x200 ))
+          done
+
+          ready="$(grep -F 'guest IPI second ready rflags:' <<<"$output")"
+          ready_hex="${ready##*: }"
+          [[ "$ready_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          ready_rflags=$((ready_hex))
+          (( (ready_rflags & 0x2) == 0x2 ))
+          (( (ready_rflags & 0x200) == 0 ))
