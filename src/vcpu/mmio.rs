@@ -162,12 +162,7 @@ fn decode_mmio(id: VcpuId, raw: KvmRunMmio) -> Result<MmioExit, Error> {
     } else {
         Vec::new()
     };
-    Ok(MmioExit::new(
-        raw.phys_addr,
-        direction,
-        raw.len,
-        write_data,
-    ))
+    Ok(MmioExit::new(raw.phys_addr, direction, raw.len, write_data))
 }
 
 fn mmio_direction(id: VcpuId, is_write: u8) -> Result<MmioDirection, Error> {
@@ -258,7 +253,10 @@ mod tests {
         ));
         assert!(matches!(
             checked_mmio_length(VcpuId::BOOT, 0x2000, 9),
-            Err(Error::VmExit(VmExitError::InvalidMmioLength { length: 9, .. }))
+            Err(Error::VmExit(VmExitError::InvalidMmioLength {
+                length: 9,
+                ..
+            }))
         ));
         assert!(matches!(
             mmio_direction(VcpuId::new(3), 2),
