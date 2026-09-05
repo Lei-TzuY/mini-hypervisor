@@ -22,12 +22,12 @@ pub const MULTI_DEVICE_SECOND_READ_VALUE: u8 = b'B';
 pub const MULTI_DEVICE_FIRST_WRITE_VALUE: u8 = b'X';
 pub const MULTI_DEVICE_SECOND_WRITE_VALUE: u8 = b'Y';
 pub const MULTI_DEVICE_PROOF: &[u8; 4] = b"ABAM";
-pub const MULTI_DEVICE_TERMINAL_RIP: u64 = LONG_MODE_MMIO_GUEST_ENTRY.get() + 41;
+pub const MULTI_DEVICE_TERMINAL_RIP: u64 = LONG_MODE_MMIO_GUEST_ENTRY.get() + 43;
 
 const MULTI_DEVICE_EXIT_BUDGET: u32 = 10;
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 
-const MULTI_DEVICE_GUEST_BYTES: [u8; 41] = [
+const MULTI_DEVICE_GUEST_BYTES: [u8; 43] = [
     0x48,
     0xbb,
     0x00,
@@ -226,8 +226,7 @@ fn validate_mmio_sequence(exits: &[MmioExit]) -> Result<(), Error> {
         )));
     }
 
-    for (index, (exit, (address, direction, write_value))) in
-        exits.iter().zip(expected).enumerate()
+    for (index, (exit, (address, direction, write_value))) in exits.iter().zip(expected).enumerate()
     {
         let payload_matches = match write_value {
             Some(value) => exit.write_data() == [value],
@@ -264,8 +263,8 @@ mod tests {
 
     #[test]
     fn deterministic_two_device_guest_contract_is_stable() {
-        assert_eq!(MULTI_DEVICE_GUEST_BYTES.len(), 41);
-        assert_eq!(MULTI_DEVICE_TERMINAL_RIP, 0x1_0029);
+        assert_eq!(MULTI_DEVICE_GUEST_BYTES.len(), 43);
+        assert_eq!(MULTI_DEVICE_TERMINAL_RIP, 0x1_002b);
         assert_eq!(MULTI_DEVICE_PROOF, b"ABAM");
         assert_eq!(
             &MULTI_DEVICE_GUEST_BYTES[0..10],
