@@ -1,6 +1,9 @@
 use crate::error::{Error, VmExitError};
+use crate::mmio::{MmioBus, MmioService};
 use crate::portio::{PortIoBus, PortIoService};
-use crate::vcpu::{PortIoExit, Vcpu, VcpuExit, VcpuId, VcpuRegisters, VcpuSystemEventType};
+use crate::vcpu::{
+    MmioExit, PortIoExit, Vcpu, VcpuExit, VcpuId, VcpuRegisters, VcpuSystemEventType,
+};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,8 +50,14 @@ impl fmt::Display for VmExitReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VmExitContinuation {
+    PortIo(PortIoExit),
+    Mmio(MmioExit),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VmExitDisposition {
-    Continue(PortIoExit),
+    Continue(VmExitContinuation),
     Stopped(VmExitReport),
 }
 
@@ -56,6 +65,7 @@ pub fn dispatch_vcpu_exit(
     vcpu: &mut Vcpu,
     exit: VcpuExit,
     port_io: &mut PortIoBus,
+    mmio: &mut MmioBus,
 ) -> Result<VmExitDisposition, Error> {
     match exit {
         VcpuExit::Io => {
@@ -64,7 +74,17 @@ pub fn dispatch_vcpu_exit(
                 PortIoService::Output => {}
                 PortIoService::Input(response) => vcpu.write_port_io_input(&response)?,
             }
-            Ok(VmExitDisposition::Continue(io))
+            Ok(VmExitDisposition::Continue(VmExitContinuation::PortIo(io)))
+        }
+        VcpuExit::Mmio => {
+            let access = vcpu.mmio_exit()?;
+            match mmio.dispatch(&access)? {
+                MmioService::Write => {}
+                MmioService::Read(response) => vcpu.write_mmio_read_response(&response)?,
+            }
+            Ok(VmExitDisposition::Continue(VmExitContinuation::Mmio(
+                access,
+            )))
         }
         VcpuExit::Hlt | VcpuExit::Shutdown => {
             let registers = vcpu.registers()?;
@@ -217,6 +237,15 @@ mod tests {
         assert_eq!(report.exit(), VcpuExit::Shutdown);
         assert_eq!(report.rip(), 0x1001);
         assert_eq!(report.rflags(), 0x2);
+    }
+
+    #[test]
+    fn continuation_variants_preserve_owned_serviceable_exits() {
+        let io = PortIoExit::new(crate::vcpu::PortIoDirection::Out, 1, 0xe9, 1, b"K".to_vec());
+        assert!(matches!(
+            VmExitContinuation::PortIo(io),
+            VmExitContinuation::PortIo(exit) if exit.output_data() == b"K"
+        ));
     }
 
     #[test]
