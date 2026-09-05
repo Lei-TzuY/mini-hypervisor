@@ -1,6 +1,4 @@
-use super::level_interrupt::{
-    MMIO_LEVEL_INTERRUPT_ACK_VALUE, MMIO_LEVEL_INTERRUPT_COMMAND_VALUE,
-};
+use super::level_interrupt::{MMIO_LEVEL_INTERRUPT_ACK_VALUE, MMIO_LEVEL_INTERRUPT_COMMAND_VALUE};
 use super::long_mode::{
     LongModeMmioBootLayout, LongModeMmioPageMapping, LONG_MODE_MMIO_DEVICE_GPA,
     LONG_MODE_MMIO_STACK_POINTER, LONG_MODE_MMIO_VIRTUAL_PAGE,
@@ -571,10 +569,7 @@ fn service_source(
         MMIO_LEVEL_INTERRUPT_ACK_VALUE,
         "dual-source MMIO ACK write",
     )?;
-    require_write_service(
-        mmio.dispatch(&ack_exit)?,
-        "dual-source MMIO ACK service",
-    )?;
+    require_write_service(mmio.dispatch(&ack_exit)?, "dual-source MMIO ACK service")?;
     let ack_committed_io = run_expected_debug_output(
         vcpu,
         port_io,
@@ -785,9 +780,7 @@ fn require_interrupt_enabled_flags(stage: &'static str, rflags: u64) -> Result<(
     {
         return Err(verification_error(
             stage,
-            format!(
-                "expected architectural reserved bit and IF in RFLAGS, got {rflags:#x}"
-            ),
+            format!("expected architectural reserved bit and IF in RFLAGS, got {rflags:#x}"),
         ));
     }
     Ok(())
