@@ -10,6 +10,7 @@ pub enum Error {
     GuestImage(GuestImageError),
     VmExit(VmExitError),
     PortIo(PortIoError),
+    Mmio(MmioError),
 }
 
 #[derive(Debug)]
@@ -228,6 +229,30 @@ pub enum VmExitError {
         expected: usize,
         actual: usize,
     },
+    MmioPayloadUnavailable {
+        vcpu_id: u16,
+        exit_reason: u32,
+    },
+    InvalidMmioDirection {
+        vcpu_id: u16,
+        is_write: u8,
+    },
+    InvalidMmioLength {
+        vcpu_id: u16,
+        address: u64,
+        length: u32,
+        capacity: usize,
+    },
+    MmioResponseForWrite {
+        vcpu_id: u16,
+        address: u64,
+    },
+    InvalidMmioResponseLength {
+        vcpu_id: u16,
+        address: u64,
+        expected: usize,
+        actual: usize,
+    },
     ExitBudgetExhausted {
         vcpu_id: u16,
         budget: u32,
@@ -263,6 +288,25 @@ pub enum PortIoError {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MmioError {
+    UnhandledAddress {
+        address: u64,
+        direction: u8,
+        length: u32,
+    },
+    UnsupportedByteDeviceAccess {
+        address: u64,
+        direction: u8,
+        length: u32,
+    },
+    InvalidWritePayload {
+        address: u64,
+        expected: usize,
+        actual: usize,
+    },
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -273,6 +317,7 @@ impl fmt::Display for Error {
             Self::GuestImage(error) => error.fmt(f),
             Self::VmExit(error) => error.fmt(f),
             Self::PortIo(error) => error.fmt(f),
+            Self::Mmio(error) => error.fmt(f),
         }
     }
 }
@@ -286,7 +331,8 @@ impl std::error::Error for Error {
             | Self::Configuration(_)
             | Self::GuestImage(_)
             | Self::VmExit(_)
-            | Self::PortIo(_) => None,
+            | Self::PortIo(_)
+            | Self::Mmio(_) => None,
         }
     }
 }
@@ -620,6 +666,39 @@ impl fmt::Display for VmExitError {
                 f,
                 "invalid port-I/O input response for vCPU {vcpu_id} port {port:#x}: expected {expected} bytes, got {actual}"
             ),
+            Self::MmioPayloadUnavailable {
+                vcpu_id,
+                exit_reason,
+            } => write!(
+                f,
+                "vCPU {vcpu_id} has no MMIO payload for exit reason {exit_reason}"
+            ),
+            Self::InvalidMmioDirection { vcpu_id, is_write } => write!(
+                f,
+                "vCPU {vcpu_id} reported invalid KVM MMIO is_write value {is_write}"
+            ),
+            Self::InvalidMmioLength {
+                vcpu_id,
+                address,
+                length,
+                capacity,
+            } => write!(
+                f,
+                "vCPU {vcpu_id} reported invalid KVM MMIO length {length} at {address:#x}; fixed data capacity is {capacity}"
+            ),
+            Self::MmioResponseForWrite { vcpu_id, address } => write!(
+                f,
+                "cannot write an MMIO read response for vCPU {vcpu_id} write access at {address:#x}"
+            ),
+            Self::InvalidMmioResponseLength {
+                vcpu_id,
+                address,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "invalid MMIO read response for vCPU {vcpu_id} address {address:#x}: expected {expected} bytes, got {actual}"
+            ),
             Self::ExitBudgetExhausted {
                 vcpu_id,
                 budget,
@@ -684,3 +763,36 @@ impl fmt::Display for PortIoError {
 }
 
 impl std::error::Error for PortIoError {}
+
+impl fmt::Display for MmioError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnhandledAddress {
+                address,
+                direction,
+                length,
+            } => write!(
+                f,
+                "unhandled MMIO access: address={address:#x}, direction={direction}, length={length}"
+            ),
+            Self::UnsupportedByteDeviceAccess {
+                address,
+                direction,
+                length,
+            } => write!(
+                f,
+                "unsupported byte MMIO device access: address={address:#x}, direction={direction}, length={length}"
+            ),
+            Self::InvalidWritePayload {
+                address,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "invalid MMIO write payload at {address:#x}: expected {expected} bytes, got {actual}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MmioError {}
