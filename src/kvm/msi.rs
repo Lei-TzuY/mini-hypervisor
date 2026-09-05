@@ -1,6 +1,3 @@
-use crate::error::{Error, HostEnvironmentError, KvmCapabilityError};
-use crate::kvm::{KvmBackend, Vm};
-
 const KVM_CAP_SIGNAL_MSI: i32 = 77;
 const KVM_SIGNAL_MSI: libc::c_ulong = 0x4020_AEA5;
 
@@ -51,8 +48,8 @@ impl KvmMsiMessage {
     }
 }
 
-impl KvmBackend {
-    pub(crate) fn require_signal_msi_capability(&self) -> Result<(), Error> {
+impl crate::kvm::KvmBackend {
+    pub(crate) fn require_signal_msi_capability(&self) -> Result<(), crate::error::Error> {
         let capability = libc::c_ulong::try_from(KVM_CAP_SIGNAL_MSI)
             .expect("KVM_CAP_SIGNAL_MSI is a non-negative capability ID");
         let value = ioctl_with_arg(
@@ -61,23 +58,28 @@ impl KvmBackend {
             capability,
         )
         .map_err(|source| {
-            Error::HostEnvironment(HostEnvironmentError::Io {
+            crate::error::Error::HostEnvironment(crate::error::HostEnvironmentError::Io {
                 operation: "KVM_CHECK_EXTENSION KVM_CAP_SIGNAL_MSI",
                 source,
             })
         })?;
         if value <= 0 {
-            return Err(Error::KvmCapability(KvmCapabilityError::MissingExtension {
-                name: "KVM_CAP_SIGNAL_MSI",
-                id: KVM_CAP_SIGNAL_MSI,
-            }));
+            return Err(crate::error::Error::KvmCapability(
+                crate::error::KvmCapabilityError::MissingExtension {
+                    name: "KVM_CAP_SIGNAL_MSI",
+                    id: KVM_CAP_SIGNAL_MSI,
+                },
+            ));
         }
         Ok(())
     }
 }
 
-impl Vm {
-    pub(crate) fn signal_msi(&self, message: KvmMsiMessage) -> Result<(), Error> {
+impl crate::kvm::Vm {
+    pub(crate) fn signal_msi(
+        &self,
+        message: KvmMsiMessage,
+    ) -> Result<u32, crate::error::Error> {
         let request = KvmMsi::new(message.address(), message.data());
         // SAFETY: `request` is the exact fixed-size Linux `struct kvm_msi` payload and remains
         // readable for the duration of the VM ioctl.
@@ -89,13 +91,33 @@ impl Vm {
             )
         };
         if result == -1 {
-            Err(Error::HostEnvironment(HostEnvironmentError::VmOperation {
-                operation: "KVM_SIGNAL_MSI",
-                source: std::io::Error::last_os_error(),
-            }))
-        } else {
-            Ok(())
+            return Err(crate::error::Error::HostEnvironment(
+                crate::error::HostEnvironmentError::VmOperation {
+                    operation: "KVM_SIGNAL_MSI",
+                    source: std::io::Error::last_os_error(),
+                },
+            ));
         }
+        if result == 0 {
+            return Err(crate::error::Error::HostEnvironment(
+                crate::error::HostEnvironmentError::VmOperation {
+                    operation: "KVM_SIGNAL_MSI",
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::WouldBlock,
+                        "KVM_SIGNAL_MSI reported a coalesced or blocked message instead of delivery",
+                    ),
+                },
+            ));
+        }
+        u32::try_from(result).map_err(|_| {
+            crate::error::Error::HostEnvironment(crate::error::HostEnvironmentError::VmOperation {
+                operation: "KVM_SIGNAL_MSI",
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("KVM_SIGNAL_MSI returned invalid delivery count {result}"),
+                ),
+            })
+        })
     }
 }
 
