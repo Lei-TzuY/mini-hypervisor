@@ -250,7 +250,7 @@ fn validate_io_sequence(exits: &[PortIoExit]) -> Result<(), Error> {
         config_selector(0x08),
         config_selector(0x10),
     ];
-    let expected_proof = [b'P', b'C', b'B', b'M'];
+    let expected_proof = *b"PCBM";
     if exits.len() != 10 {
         return Err(verification_error(format!(
             "expected 10 port-I/O exits, got {}",
