@@ -1,8 +1,6 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::error::{Error, HostEnvironmentError};
-use mini_hypervisor::mmio::long_mode::{
-    LONG_MODE_MMIO_DEVICE_GPA, LONG_MODE_MMIO_VIRTUAL_PAGE,
-};
+use mini_hypervisor::mmio::long_mode::{LONG_MODE_MMIO_DEVICE_GPA, LONG_MODE_MMIO_VIRTUAL_PAGE};
 use mini_hypervisor::mmio::multi_device::{
     run_multi_device_mmio_guest, MULTI_DEVICE_FIRST_READ_VALUE, MULTI_DEVICE_FIRST_WRITE_VALUE,
     MULTI_DEVICE_PROOF, MULTI_DEVICE_SECOND_GPA, MULTI_DEVICE_SECOND_READ_VALUE,
