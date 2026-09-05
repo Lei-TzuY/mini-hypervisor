@@ -297,9 +297,7 @@ impl VirtioBlkPciFunction {
 
     pub(super) fn read_dword(&self, offset: u8) -> u32 {
         match offset {
-            0x00 => {
-                (u32::from(VIRTIO_BLK_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID)
-            }
+            0x00 => (u32::from(VIRTIO_BLK_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID),
             0x04 => u32::from(PCI_STATUS_CAPABILITIES_LIST) << 16,
             0x08 => {
                 (u32::from(VIRTIO_BLK_PCI_CLASS_CODE) << 24) | u32::from(VIRTIO_BLK_PCI_REVISION)
@@ -920,14 +918,8 @@ mod tests {
             (u32::from(VIRTIO_BLK_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID)
         );
         assert_eq!(function.read_dword(0x10), BAR as u32);
-        assert_eq!(
-            function.read_dword(0x64).to_le_bytes(),
-            [0x09, 0x74, 16, 3]
-        );
-        assert_eq!(
-            function.read_dword(0x74).to_le_bytes(),
-            [0x09, 0, 16, 4]
-        );
+        assert_eq!(function.read_dword(0x64).to_le_bytes(), [0x09, 0x74, 16, 3]);
+        assert_eq!(function.read_dword(0x74).to_le_bytes(), [0x09, 0, 16, 4]);
         assert_eq!(function.read_dword(0x7c), VIRTIO_BLK_CONFIG_OFFSET as u32);
         assert_eq!(function.read_dword(0x80), VIRTIO_BLK_CONFIG_LENGTH);
     }
