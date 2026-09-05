@@ -20,7 +20,7 @@ const KVM_IRQ_LINE: libc::c_ulong = 0x4008_AE61;
 const IRQCHIP_POST_PULSE_EXIT_BUDGET: u32 = 3;
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 
-const IRQCHIP_GUEST_BYTES: [u8; 48] = [
+const IRQCHIP_GUEST_BYTES: [u8; 49] = [
     0xfa, // cli
     0xb0, 0x11, 0xe6, 0x20, 0xe6, 0xa0, // ICW1: initialize master and slave PICs
     0xb0, 0x40, 0xe6, 0x21, // ICW2: master IRQ0..7 -> vectors 0x40..0x47
@@ -32,9 +32,10 @@ const IRQCHIP_GUEST_BYTES: [u8; 48] = [
     0xb0, 0xff, 0xe6, 0xa1, // OCW1: mask every slave IRQ
     0xfb, // sti
     0x90, // nop -- complete STI's one-instruction interrupt shadow
-    0xb0, b'R', 0xe6, 0xe9, // readiness proof: host may pulse GSI0 after this exit
-    0xb0, b'M', 0xe6, 0xe9, // resumed-main proof after IRETQ
-    0xf4, // hlt
+    0xb0, b'R', 0xe6, 0xe9, // readiness proof; the following KVM_RUN commits this I/O
+    0xf4, // hlt -- stable armed wait point; GSI0 must wake this vCPU
+    0xb0, b'M', 0xe6, 0xe9, // resumed-main proof after interrupt + IRETQ
+    0xf4, // terminal hlt
 ];
 
 const IRQCHIP_HANDLER_BYTES: [u8; 10] = [
@@ -111,8 +112,8 @@ impl KvmBackend {
     pub const IRQCHIP_GSI: u32 = 0;
     pub const IRQCHIP_VECTOR: u8 = LONG_MODE_INTERRUPT_VECTOR;
     pub const IRQCHIP_PROOF: &'static [u8; 3] = b"RIM";
-    pub const IRQCHIP_READY_RIP: u64 = 0x1_002b;
-    pub const IRQCHIP_TERMINAL_RIP: u64 = 0x1_0030;
+    pub const IRQCHIP_READY_RIP: u64 = 0x1_002c;
+    pub const IRQCHIP_TERMINAL_RIP: u64 = 0x1_0031;
 
     pub fn create_vm_with_irqchip(&self) -> Result<Vm, Error> {
         require_irqchip_capability(self)?;
@@ -160,12 +161,12 @@ impl KvmBackend {
         vcpu.initialize_long_mode_interrupts(&layout)?;
         let mut port_io = PortIoBus::with_debug_port();
 
-        let readiness_exit = vcpu.run_once()?;
-        if readiness_exit != VcpuExit::Io {
+        let readiness_output_exit = vcpu.run_once()?;
+        if readiness_output_exit != VcpuExit::Io {
             return Err(Error::VmExit(VmExitError::UnexpectedSequence {
                 stage: "irqchip readiness output",
                 expected_reason: VcpuExit::Io.reason(),
-                actual_reason: readiness_exit.reason(),
+                actual_reason: readiness_output_exit.reason(),
             }));
         }
         let readiness_io = vcpu.port_io_exit()?;
@@ -177,15 +178,29 @@ impl KvmBackend {
             ));
         }
 
+        // A serviceable KVM_EXIT_IO is not a portable architectural commit point: on some KVM
+        // implementations KVM_GET_REGS still reports RIP at the I/O instruction until the next
+        // KVM_RUN completes that exit. Re-enter once with no GSI asserted; the guest completes the
+        // readiness OUT and reaches this dedicated HLT. Only that committed halted state is used as
+        // the host-visible arm point for the edge-triggered GSI proof.
+        let armed_exit = vcpu.run_once()?;
+        if armed_exit != VcpuExit::Hlt {
+            return Err(Error::VmExit(VmExitError::UnexpectedSequence {
+                stage: "irqchip armed wait",
+                expected_reason: VcpuExit::Hlt.reason(),
+                actual_reason: armed_exit.reason(),
+            }));
+        }
+
         let readiness = vcpu.registers()?;
         if readiness.rip != Self::IRQCHIP_READY_RIP
             || readiness.rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
             || readiness.rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
         {
             return Err(verification_error(
-                "irqchip readiness state",
+                "irqchip armed wait state",
                 format!(
-                    "expected RIP {:#x} with reserved RFLAGS bit and IF set, got RIP {:#x}, RFLAGS {:#x}",
+                    "expected committed HLT RIP {:#x} with reserved RFLAGS bit and IF set, got RIP {:#x}, RFLAGS {:#x}",
                     Self::IRQCHIP_READY_RIP,
                     readiness.rip,
                     readiness.rflags
@@ -347,10 +362,11 @@ mod irqchip_tests {
 
     #[test]
     fn deterministic_irqchip_guest_and_handler_bytes_are_stable() {
-        assert_eq!(IRQCHIP_GUEST_BYTES.len(), 48);
+        assert_eq!(IRQCHIP_GUEST_BYTES.len(), 49);
+        assert_eq!(IRQCHIP_GUEST_BYTES[43], 0xf4);
         assert_eq!(IRQCHIP_HANDLER_BYTES.len(), 10);
-        assert_eq!(KvmBackend::IRQCHIP_READY_RIP, 0x1_002b);
-        assert_eq!(KvmBackend::IRQCHIP_TERMINAL_RIP, 0x1_0030);
+        assert_eq!(KvmBackend::IRQCHIP_READY_RIP, 0x1_002c);
+        assert_eq!(KvmBackend::IRQCHIP_TERMINAL_RIP, 0x1_0031);
         assert_eq!(KvmBackend::IRQCHIP_PROOF, b"RIM");
         assert_eq!(KvmBackend::IRQCHIP_GSI, 0);
         assert_eq!(KvmBackend::IRQCHIP_VECTOR, 0x40);
