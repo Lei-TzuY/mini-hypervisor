@@ -1,8 +1,7 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::portio::pci::virtio::{VIRTIO_F_VERSION_1, VIRTIO_PCI_VENDOR_ID};
 use mini_hypervisor::portio::pci::virtio_blk::{
-    deterministic_sector, VIRTIO_BLK_CAPACITY_SECTORS, VIRTIO_BLK_PCI_DEVICE_ID,
-    VIRTIO_BLK_S_OK,
+    deterministic_sector, VIRTIO_BLK_CAPACITY_SECTORS, VIRTIO_BLK_PCI_DEVICE_ID, VIRTIO_BLK_S_OK,
 };
 use mini_hypervisor::portio::virtio_blk_fixture::{
     run_virtio_blk_pci_guest, VIRTIO_BLK_BAR0_GPA, VIRTIO_BLK_PROOF,
