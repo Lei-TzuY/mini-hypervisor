@@ -1,0 +1,42 @@
+name: Strict KVM two-vCPU foundation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/portio.rs'
+      - 'src/portio/two_vcpu_fixture.rs'
+      - 'src/bin/two-vcpu.rs'
+      - 'tests/two_vcpu_guest.rs'
+      - '.github/workflows/two-vcpu.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  two-vcpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM two-vCPU execution proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin two-vcpu)"
+          printf '%s\n' "$output"
+          grep -F 'two-vcpu first proof: [48]' <<<"$output"
+          grep -F 'two-vcpu second proof: [49]' <<<"$output"
+          grep -F 'two-vcpu shared marker: 65' <<<"$output"
+          first="$(grep -F 'two-vcpu first report: vCPU 0 exit Hlt: rip=0x100a, rflags=' <<<"$output")"
+          second="$(grep -F 'two-vcpu second report: vCPU 1 exit Hlt: rip=0x200c, rflags=' <<<"$output")"
+          first_rflags_hex="${first##*rflags=}"
+          second_rflags_hex="${second##*rflags=}"
+          [[ "$first_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          [[ "$second_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          first_rflags=$((first_rflags_hex))
+          second_rflags=$((second_rflags_hex))
+          (( (first_rflags & 0x2) == 0x2 ))
+          (( (second_rflags & 0x2) == 0x2 ))
