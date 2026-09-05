@@ -1,4 +1,3 @@
-use super::{ioctl_noarg, ioctl_with_arg, KvmRunIoPrefix, KVM_CHECK_EXTENSION};
 use crate::config::VmConfig;
 use crate::error::{Error, HostEnvironmentError, KvmCapabilityError, VmExitError};
 use crate::execution::run_vcpu_until_stopped;
