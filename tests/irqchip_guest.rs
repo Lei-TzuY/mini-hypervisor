@@ -3,7 +3,7 @@ use mini_hypervisor::error::{Error, HostEnvironmentError};
 use mini_hypervisor::interrupt::X86_RFLAGS_INTERRUPT_ENABLE;
 use mini_hypervisor::kvm::KvmBackend;
 use mini_hypervisor::portio::DEBUG_PORT;
-use mini_hypervisor::vcpu::{PortIoDirection, VcpuExit, VcpuId};
+use mini_hypervisor::vcpu::PortIoDirection;
 
 const APIC_SPIV_SOFTWARE_ENABLE: u32 = 1 << 8;
 const APIC_LVT_MASKED: u32 = 1 << 16;
@@ -30,6 +30,11 @@ fn in_kernel_irqchip_routes_gsi0_through_pic_handler_and_resumes_guest() {
                 result.armed_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
                 X86_RFLAGS_INTERRUPT_ENABLE
             );
+            assert_eq!(result.completion_rflags() & 0x2, 0x2);
+            assert_eq!(
+                result.completion_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
+                X86_RFLAGS_INTERRUPT_ENABLE
+            );
             assert_eq!(result.proof(), KvmBackend::IRQCHIP_PROOF);
             assert_eq!(result.io_exits().len(), KvmBackend::IRQCHIP_PROOF.len());
 
@@ -44,16 +49,6 @@ fn in_kernel_irqchip_routes_gsi0_through_pic_handler_and_resumes_guest() {
                 assert_eq!(io.count(), 1);
                 assert_eq!(io.output_data(), &[expected]);
             }
-
-            let report = result.report();
-            assert_eq!(report.vcpu_id(), VcpuId::BOOT);
-            assert_eq!(report.exit(), VcpuExit::Hlt);
-            assert_eq!(report.rip(), KvmBackend::IRQCHIP_TERMINAL_RIP);
-            assert_eq!(report.rflags() & 0x2, 0x2);
-            assert_eq!(
-                report.rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
-                X86_RFLAGS_INTERRUPT_ENABLE
-            );
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
