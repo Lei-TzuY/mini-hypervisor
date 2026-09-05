@@ -26,62 +26,67 @@ jobs:
           path = Path("src/portio/virtio_blk_write_readback_fixture.rs")
           text = path.read_text()
 
-          old = "const VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET: u32 = 44;\n"
-          new = (
+          old_budget = "const VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET: u32 = 44;\n"
+          new_budgets = (
               "const VIRTIO_BLK_DIRECT_EXIT_BUDGET: u32 = 44;\n"
               "const VIRTIO_BLK_INDIRECT_EXIT_BUDGET: u32 = 49;\n"
           )
-          if old in text:
-              text = text.replace(old, new, 1)
+          if old_budget in text:
+              text = text.replace(old_budget, new_budgets, 1)
           else:
-              assert new in text, "exit budget constants are neither old nor repaired"
+              assert new_budgets in text, "exit budget constants are neither old nor repaired"
 
-          old = '''    const fn expected_driver_features(self) -> u64 {
-              match self {
-                  Self::Direct => VIRTIO_F_VERSION_1,
-                  Self::Indirect => VIRTIO_F_VERSION_1 | VIRTIO_RING_F_INDIRECT_DESC,
-              }
-          }
-          '''
-          new = old + '''
-              const fn expected_exit_budget(self) -> u32 {
-                  match self {
-                      Self::Direct => VIRTIO_BLK_DIRECT_EXIT_BUDGET,
-                      Self::Indirect => VIRTIO_BLK_INDIRECT_EXIT_BUDGET,
-                  }
-              }
-          '''
           if "const fn expected_exit_budget" not in text:
-              assert text.count(old) == 1, "driver-feature method changed unexpectedly"
-              text = text.replace(old, new, 1)
+              marker = (
+                  "    }\n"
+                  "}\n\n"
+                  "#[derive(Debug, Clone, PartialEq, Eq)]\n"
+                  "pub struct VirtioBlkWriteReadbackGuestResult"
+              )
+              replacement = (
+                  "    }\n\n"
+                  "    const fn expected_exit_budget(self) -> u32 {\n"
+                  "        match self {\n"
+                  "            Self::Direct => VIRTIO_BLK_DIRECT_EXIT_BUDGET,\n"
+                  "            Self::Indirect => VIRTIO_BLK_INDIRECT_EXIT_BUDGET,\n"
+                  "        }\n"
+                  "    }\n"
+                  "}\n\n"
+                  "#[derive(Debug, Clone, PartialEq, Eq)]\n"
+                  "pub struct VirtioBlkWriteReadbackGuestResult"
+              )
+              assert text.count(marker) == 1, "descriptor-topology impl closing marker changed unexpectedly"
+              text = text.replace(marker, replacement, 1)
 
-          old = "        VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET,\n"
-          new = "        topology.expected_exit_budget(),\n"
-          if old in text:
-              text = text.replace(old, new, 1)
+          old_call = "        VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET,\n"
+          new_call = "        topology.expected_exit_budget(),\n"
+          if old_call in text:
+              text = text.replace(old_call, new_call, 1)
           else:
-              assert new in text, "execution budget callsite changed unexpectedly"
+              assert new_call in text, "execution budget callsite changed unexpectedly"
 
-          old = '''    #[test]
-              fn exit_budget_matches_config_mmio_proof_and_hlt() {
-                  assert_eq!(VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET, 14 + 22 + 7 + 1);
-              }
-          '''
-          new = '''    #[test]
-              fn exit_budget_matches_topology_specific_config_mmio_proof_and_hlt() {
-                  assert_eq!(
-                      DescriptorTopology::Direct.expected_exit_budget(),
-                      14 + 22 + 7 + 1
-                  );
-                  assert_eq!(
-                      DescriptorTopology::Indirect.expected_exit_budget(),
-                      14 + 26 + 8 + 1
-                  );
-              }
-          '''
-          if "fn exit_budget_matches_topology_specific_config_mmio_proof_and_hlt" not in text:
-              assert text.count(old) == 1, "exit-budget regression changed unexpectedly"
-              text = text.replace(old, new, 1)
+          old_name = "fn exit_budget_matches_config_mmio_proof_and_hlt()"
+          new_name = "fn exit_budget_matches_topology_specific_config_mmio_proof_and_hlt()"
+          if old_name in text:
+              text = text.replace(old_name, new_name, 1)
+          else:
+              assert new_name in text, "exit-budget regression name changed unexpectedly"
+
+          old_assert = "        assert_eq!(VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET, 14 + 22 + 7 + 1);\n"
+          new_asserts = (
+              "        assert_eq!(\n"
+              "            DescriptorTopology::Direct.expected_exit_budget(),\n"
+              "            14 + 22 + 7 + 1\n"
+              "        );\n"
+              "        assert_eq!(\n"
+              "            DescriptorTopology::Indirect.expected_exit_budget(),\n"
+              "            14 + 26 + 8 + 1\n"
+              "        );\n"
+          )
+          if old_assert in text:
+              text = text.replace(old_assert, new_asserts, 1)
+          else:
+              assert new_asserts in text, "exit-budget regression body changed unexpectedly"
 
           path.write_text(text)
           PY
