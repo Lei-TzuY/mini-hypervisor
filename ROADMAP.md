@@ -4,47 +4,45 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-The Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 `ET_EXEC` loading/execution, and bounded non-identity ELF64 virtual mapping are integrated on `main`.
+The Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 `ET_EXEC` loading/execution, bounded non-identity ELF64 virtual mapping, and bounded bidirectional userspace MMIO device execution are integrated on `main`.
 
-The repository has typed, owned boundaries for KVM capability discovery, VM/vCPU lifecycle, bounded guest RAM, flat guest loading, configured CPUID/MSR policy and state, vCPU register/special-register/MSR snapshots, centralized VM-exit dispatch, bounded one-vCPU execution, deterministic real-mode fixtures, bidirectional debug port I/O, one strict x86-64 long-mode bootstrap/execution path, and one bounded ELF64 loader that validates and materializes `PT_LOAD` segments including explicit BSS zeroing and a fixed non-identity alias mapping window.
+The repository has typed, owned boundaries for KVM capability discovery, VM/vCPU lifecycle, bounded guest RAM, flat guest loading, configured CPUID/MSR policy and state, vCPU register/special-register/MSR snapshots, centralized VM-exit dispatch, bounded one-vCPU execution, deterministic real-mode fixtures, bidirectional debug port I/O, typed MMIO exit servicing, one fixed byte-wide userspace MMIO device, one strict x86-64 long-mode bootstrap/execution path, and one bounded ELF64 loader that validates and materializes `PT_LOAD` segments including explicit BSS zeroing and a fixed non-identity alias mapping window.
 
-Merged-main CI requires real-KVM evidence for both the flat x86-64 long-mode proof and the non-identity ELF64 proof rather than treating `/dev/kvm` execution as optional evidence.
+Merged-main CI requires real-KVM evidence for the flat x86-64 long-mode proof, the non-identity ELF64 proof, and the real-mode bidirectional MMIO proof rather than treating `/dev/kvm` execution as optional evidence.
 
-## Selected milestone — bounded bidirectional MMIO device execution
+## Selected milestone — long-mode virtual MMIO composition
 
-This milestone promotes the one-vCPU execution loop from port-I/O-only device servicing to one explicit userspace MMIO path while remaining deliberately smaller than a general device framework.
+This milestone composes the integrated x86-64 page-table layer with the integrated userspace MMIO path. It deliberately proves one virtual device access end to end instead of broadening either the RAM-backed mapping API or the MMIO device model into a generic framework.
 
 Acceptance contract:
 
-- classify Linux KVM `KVM_EXIT_MMIO` as a typed vCPU exit without disturbing existing exit classifications;
-- decode the fixed x86 `kvm_run` MMIO payload only after validating the current exit reason, direction, and `len` in `1..=8`;
-- copy MMIO write bytes into owned Rust state and never expose stale `data[]` bytes for read exits;
-- write MMIO read responses back only for read exits and require an exact response length before mutating the shared `kvm_run` buffer;
-- keep raw `kvm_run` pointers and MMIO union layout knowledge inside the vCPU layer;
-- add one fixed byte-wide userspace device at guest-physical address `0x2000` that records one-byte writes and returns one configured one-byte read value;
-- keep the existing three-argument port-I/O execution API source-compatible while adding one MMIO-aware bounded execution entry point;
-- preserve completed-exit budgeting and ordered raw exit-reason tracing across serviceable MMIO exits;
-- use a dedicated real-mode fixture with only 4 KiB registered RAM so GPA `0x2000` is deliberately unbacked in that fixture and therefore exits through KVM MMIO rather than slot-0 RAM;
-- the deterministic guest must write `W` to GPA `0x2000`, read the same address and receive `R`, emit exactly `RMIO` through the existing debug port, and reach HLT at RIP `0x117`;
-- exact execution evidence must prove MMIO write then MMIO read, captured device write `W`, guest-observed readback `R`, four debug-port exits spelling `RMIO`, terminal HLT/RIP/RFLAGS, and continued guest execution after completion of the pending MMIO read;
-- stable CI must retain the existing strict long-mode and non-identity ELF64 real-KVM proofs while independently requiring the MMIO proof;
-- existing real-mode, port-I/O, long-mode, flat-binary, and ELF64 contracts remain valid.
+- preserve `LongModePageMapping` unchanged as a RAM-backed alias contract whose physical pages remain validated inside low guest RAM;
+- introduce a separate bounded long-mode MMIO layout rather than weakening the RAM-backed mapping invariant;
+- preserve the existing low 2 MiB identity map, bootstrap page-table locations, long-mode control-register state, and current ELF alias behavior;
+- install exactly one device PTE mapping guest virtual page `0x0050_0000` to guest-physical page `0x1000_0000` through the existing fixed alias PT;
+- require the fixed device GPA to remain outside the configured slot-0 RAM and reject layout construction if caller RAM grows far enough to back that page;
+- allow the existing exact byte device to be placed at an explicit GPA while preserving the established real-mode MMIO fixture default at `0x2000`;
+- execute a reviewed 64-bit guest at identity-mapped RIP `0x10000` that uses a 64-bit address value for VA `0x500000`, writes `W`, reads the same virtual address and receives `R`, emits exactly `R64M` through port `0xe9`, and reaches HLT at RIP `0x1001e`;
+- exact execution evidence must prove KVM reports MMIO write then read at translated GPA `0x10000000`, the device captures `W`, the guest consumes readback `R`, four debug-port exits spell `R64M`, and execution continues to terminal HLT after completion of the pending MMIO read;
+- stable CI must retain the existing strict long-mode, non-identity ELF64, and real-mode MMIO proofs while independently requiring the long-mode virtual-MMIO proof;
+- existing real-mode MMIO, RAM-backed alias, ELF64, port-I/O, state, and error contracts remain valid.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- an MMIO range registry or dynamic device registration;
+- a general MMIO range registry or dynamic device registration;
 - multiple MMIO devices or overlapping-range resolution;
-- wide/register-bank semantics beyond the fixed one-byte device;
-- long-mode virtual-address mapping to an unbacked MMIO GPA;
+- caller-defined or arbitrary virtual-MMIO mappings;
+- wide/register-bank device semantics beyond the existing one-byte device;
+- relaxation of `LongModePageMapping` physical-backing validation;
+- dynamic page-table allocation or arbitrary virtual-address windows;
 - PCI configuration space or bus enumeration;
 - APIC, interrupt-controller, or interrupt-injection infrastructure;
 - eventfd/ioeventfd/irqfd acceleration;
 - virtio;
 - DMA or IOMMU modeling;
 - multiple RAM slots or memory hotplug;
-- arbitrary virtual-address windows or caller-defined page-table hierarchy;
 - SMP;
 - whole-VM snapshots;
 - migration;
@@ -52,4 +50,4 @@ This milestone deliberately does **not** add:
 
 ## Promotion rule
 
-After bounded bidirectional MMIO execution is integrated and exact merged-`main` CI is green, perform an architecture/integration audit before selecting another frontier. The leading candidates are a bounded long-mode virtual-MMIO mapping that composes the existing translation layer with the new device path, or a small explicit MMIO range/device-routing layer if the audit shows device composition is the higher-value prerequisite. Interrupt/APIC architecture remains a separate frontier and must not be expanded in parallel with unfinished MMIO work.
+After long-mode virtual MMIO composition is integrated and exact merged-`main` CI is green, perform another architecture/integration audit before selecting the next frontier. The leading candidate is a small explicit MMIO range/device-routing layer only if it can be proven by an executable multi-device or range-routing integration slice; otherwise promote to the next independent architecture layer, likely interrupt/APIC foundation. Do not farm additional fixed-address path variants once virtual-MMIO composition is sealed.
