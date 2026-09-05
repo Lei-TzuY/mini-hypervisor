@@ -4,54 +4,50 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` contains the Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 `ET_EXEC` loading/execution, bounded non-identity ELF64 virtual mapping, bounded bidirectional userspace MMIO device execution, bounded long-mode virtual-MMIO composition, bounded direct long-mode interrupt delivery, one controller-backed GSI0 route through KVM's in-kernel x86 irqchip, one MMIO-device-generated interrupt path, one stateful device-owned MMIO level-interrupt lifecycle, and bounded two-device MMIO registration/dispatch with two independent virtual-MMIO page mappings.
+`main` contains the Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 `ET_EXEC` loading/execution, bounded non-identity ELF64 virtual mapping, bounded bidirectional userspace MMIO execution, long-mode virtual-MMIO composition, direct long-mode interrupt delivery, one in-kernel x86 irqchip/GSI route, MMIO-device interrupt delivery, stateful device-owned level-interrupt lifecycle, bounded two-device MMIO registration/mapping, and two independent MMIO level-interrupt sources routed through distinct legacy-PIC GSIs/vectors.
 
-The multi-device phase is integrated at commit `37d814648c06f11b8c182cdee8f4e2d541156bb4` through PR #84. Exact merged-main CI #377 completed successfully with format, Clippy, tests, build, rustdoc, Rust 1.74 MSRV, all eight earlier strict real-KVM gates, and the ninth strict multi-device MMIO gate. Its executable proof hosts VA `0x500000`→GPA `0x10000000` and VA `0x501000`→GPA `0x10001000` in one VM, records independent writes `[X]` and `[Y]`, observes five exact MMIO exits, returns proof `ABAM`, and halts at RIP `0x1002b`.
+The dual-source routing phase is integrated at commit `22e6706483f4c4bcc07386115df362fc83cb169e` through PR #85. Exact merged-main CI #384 completed successfully with format, Clippy, tests, build, rustdoc, Rust 1.74 MSRV, all nine earlier strict real-KVM gates, and the tenth strict dual-source routing gate. Its executable proof retains source identity through two registered MMIO devices and routes GPA `0x10000000` through GSI0/vector `0x40` and GPA `0x10001000` through GSI1/vector `0x41`; two distinct handlers produce exact proof `A0SCMB1TEND` while both level lifecycles complete STATUS/ACK ownership and return to one guest mainline.
 
-That two-device registry/mapping phase is sealed. Do not farm a third identical byte device, more fixed address variants, or duplicate mapping tests merely to extend the phase number.
+That two-fixed-source legacy-PIC phase is sealed. Do not farm GSI2/GSI3 clones, a third identical MMIO source, or more fixed-address variants merely to extend the phase number.
 
-## Selected milestone — dual-source MMIO level interrupts through distinct legacy-PIC routes
+## Selected milestone — host-driven one-shot timer interrupt wakeup
 
-The next architecture boundary is interrupt-source identity and routing. Existing level-interrupt execution owns one MMIO source, one GSI0 line, and one vector `0x40`; the integrated multi-device bus now provides the missing second independent source. This milestone promotes the interrupt table, MMIO event surface, and userspace routing policy together, then proves both sources through the existing in-kernel x86 irqchip on real KVM.
+The next architecture boundary is asynchronous host event delivery. Every integrated device interrupt so far is ultimately initiated by guest execution reaching a userspace-visible MMIO command or by userspace synchronously pulsing a line between KVM runs. This milestone adds a genuinely different interaction pattern: an independent host worker owns only a duplicated KVM VM fd, waits for a one-shot timer, and drives GSI0 while the boot vCPU proceeds through a race-safe `sti; hlt` handoff.
 
-This is a deliberately bounded legacy-PIC routing model, not a claim of arbitrary `KVM_SET_GSI_ROUTING`. The deterministic guest programs the master PIC to vectors `0x40..0x47`, unmasks only IRQ0 and IRQ1, and userspace assigns the two MMIO sources to GSI0 and GSI1 respectively.
+The milestone deliberately reuses the already-proven in-kernel legacy PIC and LAPIC ExtINT path. It does not claim PIT, HPET, local-APIC timer, TSC-deadline, realtime scheduling, or a generic timer framework.
 
 Acceptance contract:
 
-- preserve all nine integrated strict real-KVM gates and every existing long-mode, ELF64, MMIO, interrupt, snapshot, CPU-policy, diagnostic, and MSRV contract;
-- promote `LongModeInterruptLayout` from one installed IDT gate to a validated bounded gate collection while retaining the existing single-gate constructor as a compatibility wrapper;
-- reject an empty gate set, exception-reserved vectors, duplicate vectors, handler addresses outside the identity map, and handler collisions with bootstrap/GDT/IDT tables before installation;
-- set the IDT limit from the highest installed vector and write every validated gate into the same existing IDT page;
-- retain MMIO device identity when consuming device events: the routing layer must receive both the registered device base and the event kind rather than infer a source from event order;
-- allow multiple level-interrupt byte devices to be registered through the existing overlap-checked MMIO registry; COMMAND/STATUS/ACK extents remain three bytes and overlapping registrations remain hard failures;
-- define a bounded legacy master-PIC route set that accepts only GSI `0..7`, derives vector `0x40 + gsi`, and rejects empty, duplicate-source, duplicate-GSI, and out-of-range route sets;
-- deterministic source 0 uses virtual page `0x500000`, GPA `0x10000000`, GSI0, vector `0x40`, and handler `0x11000`;
-- deterministic source 1 uses virtual page `0x501000`, GPA `0x10001000`, GSI1, vector `0x41`, and handler `0x12000`;
-- one guest must execute two complete level lifecycles sequentially in the same VM: source0 COMMAND→assert→handler0→STATUS=1→ACK→deassert→EOI→IRETQ, then source1 COMMAND→assert→handler1→STATUS=1→ACK→deassert→EOI→IRETQ;
-- the host may assert/deassert a GSI only after the same explicit post-MMIO completion barriers used by the integrated single-source lifecycle; serviceable `KVM_EXIT_MMIO` itself is not treated as a portable architectural commit point;
-- every assert and deassert must be resolved from a source-tagged MMIO event through the route set, and deassert must resolve to the same route that owned the preceding assert;
-- exact MMIO metadata is six one-byte exits: source0 COMMAND write, source0 STATUS read, source0 ACK write, source1 COMMAND write, source1 STATUS read, source1 ACK write;
-- exact host-visible writes are `[W, 1]` for both sources; exact event counts are two asserts and two deasserts;
-- exact debug-port proof is `A0SCMB1TEND`: `0` and `1` are emitted by different IDT handlers and therefore distinguish vector `0x40` from vector `0x41`; `S`/`T` prove each handler consumed STATUS=1; `C`/`E` are ACK completion barriers; `M`/`N` prove return to the interrupted main path; `D` is the final userspace synchronization barrier;
-- LAPIC SPIV must remain software-enabled and LINT0 must remain unmasked ExtINT; both armed observations and final completion must have architectural RFLAGS bit 1 and IF set;
-- KVM-aware integration must independently validate both route tuples, all six MMIO exits, both write traces, all eleven byte-wide debug-port exits, event counts, LAPIC state, and RFLAGS;
-- stable CI must retain the nine integrated strict real-KVM gates and add an independent tenth dual-source gate requiring route `0x10000000→GSI0→0x40`, route `0x10001000→GSI1→0x41`, two asserts, two deasserts, six MMIO exits, both writes `[87, 1]`, proof `[65, 48, 83, 67, 77, 66, 49, 84, 69, 78, 68]`, semantic LAPIC ExtINT state, and IF at both armed points and completion;
-- routing, source identity, gate installation, MMIO completion ordering, STATUS/ACK semantics, GSI ownership, proof, or architectural-state failures remain hard failures and must not be swallowed, skipped, retried into success, or hidden by changed test expectations.
+- preserve all ten integrated strict real-KVM gates and every existing long-mode, ELF64, MMIO, interrupt, snapshot, CPU-policy, diagnostic, and MSRV contract;
+- do not make `Vm`, `GuestMemory`, or the guest RAM mapping Send/Sync merely to obtain a worker thread;
+- derive a worker-safe IRQ-line handle by duplicating only the KVM VM file descriptor; the worker must not own, dereference, or alias guest RAM;
+- wrap every successful duplicate fd immediately in `OwnedFd`, surface duplication/ioctl failures as hard errors, and prove the worker handle is `Send` through the type system;
+- validate the duplicated IRQ-line descriptors with an inert deassert before the guest enters the potentially blocking HLT path, so setup failures remain synchronous;
+- deterministic guest setup programs the existing legacy master/slave PIC mapping, unmasks only IRQ0, keeps IF clear, emits readiness `R`, then emits explicit timer-arm barrier `A` while IF is still clear;
+- the next two guest instructions must be adjacent `sti; hlt`; x86 STI interrupt shadow is the correctness mechanism that closes the race if the host edge becomes pending immediately before KVM executes HLT;
+- after the one-shot timer edge, vector `0x40` handler emits `T`, sends master-PIC EOI, and `iretq`; resumed mainline emits `W`, then terminal userspace barrier `D`;
+- exact debug-port proof is `RATWD` across exactly five byte-wide exits, in that order;
+- the A-barrier register snapshot must have architectural RFLAGS bit 1 set and IF clear; the completion snapshot after `D` must have bit 1 and IF set;
+- LAPIC SPIV remains software-enabled and LINT0 remains unmasked ExtINT;
+- timer scheduling delay is only a trigger mechanism and is not a latency benchmark, deadline guarantee, performance assertion, or correctness threshold;
+- a separate fail-closed watchdog may inject a fallback GSI solely to prevent a broken timer path from wedging CI indefinitely inside KVM_RUN; if that watchdog ever fires, the execution must fail even when later guest bytes happen to match the nominal proof;
+- timer-worker panic, timer ioctl failure, watchdog intervention, watchdog failure, unexpected VM exit, wrong byte order, wrong PIC/LAPIC state, or wrong RFLAGS must remain hard failures;
+- KVM-aware integration must validate GSI/vector, semantic LAPIC state, the IF-clear arm point, IF-enabled completion, all five debug-port exits, and exact `RATWD` proof;
+- stable CI must retain the ten integrated strict real-KVM gates and add an independent eleventh hosted-KVM gate for the async timer executable.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- arbitrary `KVM_SET_GSI_ROUTING`, IOAPIC programming, MSI/MSI-X, x2APIC, or a general interrupt-routing API;
-- more than the bounded master-PIC GSI `0..7` model, slave-PIC routing, shared GSIs, level-sharing semantics, priority policy, or interrupt scheduling;
-- asynchronous timers, eventfd/irqfd/ioeventfd acceleration, or host-thread device workers;
-- PCI/PCIe configuration space, BAR enumeration, virtio transport, DMA, or IOMMU;
-- a trait-object plugin framework, dynamic hotplug, bus discovery protocol, or arbitrary device ABI;
-- SMP, cross-vCPU delivery, multiple vCPUs, migration, resumable execution, or whole-VM snapshots;
-- an unbounded guest virtual-address allocator or arbitrary caller-supplied page-table hierarchy.
+- periodic or programmable timers, PIT/HPET emulation, local-APIC timer programming, TSC-deadline, timer wheels, or a general scheduler;
+- realtime/wall-clock latency guarantees, controlled performance benchmarks, or host scheduling claims;
+- arbitrary `KVM_SET_GSI_ROUTING`, IOAPIC programming, MSI/MSI-X, x2APIC, shared GSI arbitration, or slave-PIC expansion;
+- `eventfd`, `irqfd`, `ioeventfd`, or another acceleration path;
+- PCI/PCIe configuration space, BARs, virtio transport, DMA, IOMMU, or device hotplug;
+- guest-memory sharing with the timer thread, multi-vCPU delivery, SMP, migration, resumable execution, or whole-VM snapshots.
 
 ## Promotion rule
 
-After the dual-source route is integrated and exact merged-`main` CI is green, seal the two-fixed-source legacy-PIC proof rather than adding GSI2/GSI3 clones.
+After the one-shot host timer is integrated and exact merged-`main` CI is green, seal the single asynchronous wakeup proof rather than multiplying fixed timer delays or timer instances.
 
-The next architecture audit should choose a genuinely different interaction pattern. Strong candidates are an asynchronous timer/device source that reuses the established routing and level lifecycle, a minimal PCI/virtio transport that supplies a real device-discovery/configuration surface, or a more general interrupt-controller/routing phase only when it can be backed by executable KVM evidence. SMP, irqfd acceleration, DMA/IOMMU, and migration remain separate frontiers.
+The next architecture audit should choose another materially new frontier. Strong candidates are a minimal reusable event/interrupt scheduling abstraction only if it supports a second executable source without duplicating this fixture, `eventfd`/`irqfd` acceleration backed by comparative behavior evidence, or a minimal PCI/virtio transport that introduces real discovery/configuration semantics. IOAPIC/MSI, SMP, DMA/IOMMU, and migration remain separate higher-order phases.
