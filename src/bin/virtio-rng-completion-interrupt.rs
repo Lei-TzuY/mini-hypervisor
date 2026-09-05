@@ -50,7 +50,9 @@ fn main() -> ExitCode {
             {
                 ExitCode::SUCCESS
             } else {
-                eprintln!("error: virtio-rng completion interrupt proof did not match expected state");
+                eprintln!(
+                    "error: virtio-rng completion interrupt proof did not match expected state"
+                );
                 ExitCode::FAILURE
             }
         }
