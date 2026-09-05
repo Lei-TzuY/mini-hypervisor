@@ -1,6 +1,7 @@
 use crate::error::{Error, MmioError};
 use crate::vcpu::{MmioDirection, MmioExit};
 
+pub mod interrupt;
 pub mod long_mode;
 
 pub const BYTE_DEVICE_ADDRESS: u64 = 0x2000;
