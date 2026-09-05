@@ -49,7 +49,7 @@ jobs:
           output="$(cargo run --quiet -- run-elf64)"
           printf '%s\n' "$output"
           grep -F 'elf64 proof: [76, 77, 54, 52]' <<<"$output"
-          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10124, rflags=' <<<"$output")"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x400124, rflags=' <<<"$output")"
           rflags_hex="${report##*rflags=}"
           [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
           rflags=$((rflags_hex))
