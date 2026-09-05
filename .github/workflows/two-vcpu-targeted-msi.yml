@@ -1,0 +1,59 @@
+name: Strict KVM two-vCPU targeted MSI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/portio.rs'
+      - 'src/portio/two_vcpu_targeted_msi_fixture.rs'
+      - 'src/bin/two-vcpu-targeted-msi.rs'
+      - 'tests/two_vcpu_targeted_msi_guest.rs'
+      - 'src/kvm/msi.rs'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/interrupt.rs'
+      - 'src/interrupt.rs'
+      - '.github/workflows/two-vcpu-targeted-msi.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  targeted-msi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM two-vCPU targeted MSI isolation proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin two-vcpu-targeted-msi)"
+          printf '%s\n' "$output"
+          grep -F 'targeted MSI address: 0xfee01000' <<<"$output"
+          grep -F 'targeted MSI data: 0x51' <<<"$output"
+          grep -F 'targeted MSI deliveries: 1' <<<"$output"
+          grep -F 'targeted MSI first proof: [48, 77, 68]' <<<"$output"
+          grep -F 'targeted MSI second proof: [82, 73, 49, 68]' <<<"$output"
+
+          first="$(grep -F 'targeted MSI first barrier rflags:' <<<"$output")"
+          first_hex="${first##*: }"
+          [[ "$first_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          first_rflags=$((first_hex))
+          (( (first_rflags & 0x2) == 0x2 ))
+          (( (first_rflags & 0x200) == 0x200 ))
+
+          ready="$(grep -F 'targeted MSI second ready rflags:' <<<"$output")"
+          ready_hex="${ready##*: }"
+          [[ "$ready_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          ready_rflags=$((ready_hex))
+          (( (ready_rflags & 0x2) == 0x2 ))
+          (( (ready_rflags & 0x200) == 0 ))
+
+          completion="$(grep -F 'targeted MSI second completion rflags:' <<<"$output")"
+          completion_hex="${completion##*: }"
+          [[ "$completion_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          completion_rflags=$((completion_hex))
+          (( (completion_rflags & 0x2) == 0x2 ))
+          (( (completion_rflags & 0x200) == 0x200 ))
