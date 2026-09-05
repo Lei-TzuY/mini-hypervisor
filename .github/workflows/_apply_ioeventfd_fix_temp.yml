@@ -1,0 +1,34 @@
+name: Temporary ioeventfd patch runner
+
+on:
+  push:
+    branches:
+      - milestone/virtio-blk-indirect-descriptors
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: milestone/virtio-blk-indirect-descriptors
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply patch
+        run: python3 scripts/_fix_ioeventfd_roundtrip.py
+      - name: Format and verify
+        run: |
+          cargo fmt --all
+          git diff --check
+      - name: Commit source fix
+        run: |
+          git config user.name 'LeiZ'
+          git config user.email '52287354+Lei-TzuY@users.noreply.github.com'
+          git add src/kvm/ioeventfd_roundtrip.rs
+          git diff --cached --quiet && exit 1
+          git commit -m 'Synchronize ioeventfd bridge before HLT handoff'
+          git push origin HEAD:milestone/virtio-blk-indirect-descriptors
