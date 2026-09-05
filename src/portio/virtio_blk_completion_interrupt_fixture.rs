@@ -346,10 +346,7 @@ pub fn run_virtio_blk_completion_interrupt_guest(
     let used_id = read_u32(memory, VIRTIO_BLK_INTERRUPT_USED_GPA + 4)?;
     let used_len = read_u32(memory, VIRTIO_BLK_INTERRUPT_USED_GPA + 8)?;
     let mut data = vec![0_u8; VIRTIO_BLK_SECTOR_SIZE];
-    memory.read(
-        GuestPhysAddr::new(VIRTIO_BLK_INTERRUPT_DATA_GPA),
-        &mut data,
-    )?;
+    memory.read(GuestPhysAddr::new(VIRTIO_BLK_INTERRUPT_DATA_GPA), &mut data)?;
     let mut request_status = [0xff_u8];
     memory.read(
         GuestPhysAddr::new(VIRTIO_BLK_INTERRUPT_STATUS_GPA),
@@ -473,12 +470,7 @@ fn validate_io_sequence(exits: &[PortIoExit]) -> Result<(), Error> {
 fn validate_mmio_sequence(exits: &[MmioExit]) -> Result<(), Error> {
     let expected: [(u64, MmioDirection, u32, &[u8]); 22] = [
         (0x300, MmioDirection::Read, 8, &[]),
-        (
-            0x14,
-            MmioDirection::Write,
-            1,
-            &[VIRTIO_STATUS_ACKNOWLEDGE],
-        ),
+        (0x14, MmioDirection::Write, 1, &[VIRTIO_STATUS_ACKNOWLEDGE]),
         (
             0x14,
             MmioDirection::Write,
@@ -628,23 +620,11 @@ fn build_guest() -> Vec<u8> {
     );
     emit_mmio_word_write(&mut code, 0x16, 0);
     emit_mmio_word_write(&mut code, 0x18, VIRTIO_QUEUE_SIZE);
-    emit_mmio_dword_write(
-        &mut code,
-        0x20,
-        VIRTIO_BLK_INTERRUPT_DESCRIPTOR_GPA as u32,
-    );
+    emit_mmio_dword_write(&mut code, 0x20, VIRTIO_BLK_INTERRUPT_DESCRIPTOR_GPA as u32);
     emit_mmio_dword_write(&mut code, 0x24, 0);
-    emit_mmio_dword_write(
-        &mut code,
-        0x28,
-        VIRTIO_BLK_INTERRUPT_AVAIL_GPA as u32,
-    );
+    emit_mmio_dword_write(&mut code, 0x28, VIRTIO_BLK_INTERRUPT_AVAIL_GPA as u32);
     emit_mmio_dword_write(&mut code, 0x2c, 0);
-    emit_mmio_dword_write(
-        &mut code,
-        0x30,
-        VIRTIO_BLK_INTERRUPT_USED_GPA as u32,
-    );
+    emit_mmio_dword_write(&mut code, 0x30, VIRTIO_BLK_INTERRUPT_USED_GPA as u32);
     emit_mmio_dword_write(&mut code, 0x34, 0);
     emit_mmio_word_write(&mut code, 0x1c, 1);
     emit_mmio_byte_write(
