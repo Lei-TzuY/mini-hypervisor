@@ -21,6 +21,7 @@ pub const VIRTIO_NOTIFY_LENGTH: u32 = 2;
 pub const VIRTIO_NOTIFY_OFF_MULTIPLIER: u32 = 2;
 pub const VIRTIO_ISR_OFFSET: u64 = 0x200;
 pub const VIRTIO_ISR_LENGTH: u32 = 1;
+pub const VIRTIO_ISR_QUEUE_INTERRUPT: u8 = 1;
 pub const VIRTIO_QUEUE_MAX_SIZE: u16 = 8;
 pub const VIRTIO_RNG_QUEUE_INDEX: u16 = 0;
 pub const VIRTQ_DESC_F_WRITE: u16 = 2;
@@ -309,6 +310,7 @@ pub struct VirtioRngDevice {
     notify_pending: bool,
     last_avail_idx: u16,
     last_used_idx: u16,
+    isr_status: u8,
 }
 
 impl VirtioRngDevice {
@@ -329,6 +331,7 @@ impl VirtioRngDevice {
             notify_pending: false,
             last_avail_idx: 0,
             last_used_idx: 0,
+            isr_status: 0,
         }
     }
 
@@ -352,7 +355,12 @@ impl VirtioRngDevice {
         self.queue_enabled
     }
 
-    pub fn read(&self, offset: u64, length: usize) -> Result<Vec<u8>, VirtioRngError> {
+    #[must_use]
+    pub const fn isr_status(&self) -> u8 {
+        self.isr_status
+    }
+
+    pub fn read(&mut self, offset: u64, length: usize) -> Result<Vec<u8>, VirtioRngError> {
         let bytes = match (offset, length) {
             (COMMON_DEVICE_FEATURE_SELECT, 4) => self.device_feature_select.to_le_bytes().to_vec(),
             (COMMON_DEVICE_FEATURE, 4) => self.device_feature_word().to_le_bytes().to_vec(),
@@ -377,7 +385,11 @@ impl VirtioRngDevice {
             (COMMON_QUEUE_DEVICE_HIGH, 4) => {
                 ((self.queue_device >> 32) as u32).to_le_bytes().to_vec()
             }
-            (VIRTIO_ISR_OFFSET, 1) => vec![0],
+            (VIRTIO_ISR_OFFSET, 1) => {
+                let status = self.isr_status;
+                self.isr_status = 0;
+                vec![status]
+            }
             _ => {
                 return Err(VirtioRngError::UnsupportedRegisterAccess {
                     offset,
@@ -526,6 +538,7 @@ impl VirtioRngDevice {
         self.last_avail_idx = avail_idx;
         self.last_used_idx = next_used;
         self.notify_pending = false;
+        self.isr_status |= VIRTIO_ISR_QUEUE_INTERRUPT;
         Ok(VirtioRngQueueCompletion {
             descriptor_id: u32::from(head),
             length: required,
@@ -695,6 +708,7 @@ impl VirtioRngDevice {
         self.notify_pending = false;
         self.last_avail_idx = 0;
         self.last_used_idx = 0;
+        self.isr_status = 0;
     }
 }
 
@@ -866,6 +880,7 @@ mod tests {
             .write(GuestPhysAddr::new(AVAIL + 4), &0_u16.to_le_bytes())
             .unwrap();
 
+        assert_eq!(device.isr_status(), 0);
         assert_eq!(
             device
                 .write(VIRTIO_NOTIFY_OFFSET, &0_u16.to_le_bytes())
@@ -875,6 +890,13 @@ mod tests {
         let completion = device.process_notified_queue(&mut memory).unwrap();
         assert_eq!(completion.descriptor_id(), 0);
         assert_eq!(completion.length(), 8);
+        assert_eq!(device.isr_status(), VIRTIO_ISR_QUEUE_INTERRUPT);
+        assert_eq!(
+            device.read(VIRTIO_ISR_OFFSET, 1).unwrap(),
+            vec![VIRTIO_ISR_QUEUE_INTERRUPT]
+        );
+        assert_eq!(device.isr_status(), 0);
+        assert_eq!(device.read(VIRTIO_ISR_OFFSET, 1).unwrap(), vec![0]);
 
         let mut payload = [0_u8; 8];
         memory
@@ -916,6 +938,7 @@ mod tests {
                 VirtioRngError::UnsupportedDescriptorFlags { flags: 0 }
             ))
         ));
+        assert_eq!(device.isr_status(), 0);
         let mut used_idx = [0_u8; 2];
         memory
             .read(GuestPhysAddr::new(USED + 2), &mut used_idx)
