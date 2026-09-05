@@ -4,8 +4,8 @@ use super::pci::virtio::{
 };
 use super::pci::virtio_blk::{
     deterministic_sector, VirtioBlkPciFunction, VirtioBlkQueueCompletion,
-    VIRTIO_BLK_CAPACITY_SECTORS, VIRTIO_BLK_PCI_DEVICE_ID, VIRTIO_BLK_S_OK,
-    VIRTIO_BLK_SECTOR_SIZE, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
+    VIRTIO_BLK_CAPACITY_SECTORS, VIRTIO_BLK_PCI_DEVICE_ID, VIRTIO_BLK_SECTOR_SIZE, VIRTIO_BLK_S_OK,
+    VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
 };
 use super::pci::{
     config_selector, PciConfigMechanism1, PCI_CONFIG_ADDRESS_PORT, PCI_CONFIG_DATA_PORT,
@@ -241,7 +241,10 @@ pub fn run_virtio_blk_pci_guest(config: VmConfig) -> Result<VirtioBlkPciGuestRes
     let mut data = vec![0_u8; VIRTIO_BLK_SECTOR_SIZE];
     memory.read(GuestPhysAddr::new(VIRTIO_BLK_DATA_GPA), &mut data)?;
     let mut request_status = [0xff_u8];
-    memory.read(GuestPhysAddr::new(VIRTIO_BLK_STATUS_GPA), &mut request_status)?;
+    memory.read(
+        GuestPhysAddr::new(VIRTIO_BLK_STATUS_GPA),
+        &mut request_status,
+    )?;
 
     let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
     let report = execution.report();
@@ -371,7 +374,12 @@ fn validate_mmio_sequence(exits: &[MmioExit]) -> Result<(), Error> {
             &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK],
         ),
         (0x16, MmioDirection::Write, 2, &0_u16.to_le_bytes()),
-        (0x18, MmioDirection::Write, 2, &VIRTIO_QUEUE_SIZE.to_le_bytes()),
+        (
+            0x18,
+            MmioDirection::Write,
+            2,
+            &VIRTIO_QUEUE_SIZE.to_le_bytes(),
+        ),
         (
             0x20,
             MmioDirection::Write,
@@ -398,12 +406,10 @@ fn validate_mmio_sequence(exits: &[MmioExit]) -> Result<(), Error> {
             0x14,
             MmioDirection::Write,
             1,
-            &[
-                VIRTIO_STATUS_ACKNOWLEDGE
-                    | VIRTIO_STATUS_DRIVER
-                    | VIRTIO_STATUS_FEATURES_OK
-                    | VIRTIO_STATUS_DRIVER_OK,
-            ],
+            &[VIRTIO_STATUS_ACKNOWLEDGE
+                | VIRTIO_STATUS_DRIVER
+                | VIRTIO_STATUS_FEATURES_OK
+                | VIRTIO_STATUS_DRIVER_OK],
         ),
         (0x14, MmioDirection::Read, 1, &[]),
         (0x100, MmioDirection::Write, 2, &0_u16.to_le_bytes()),
@@ -587,16 +593,17 @@ fn emit_ring_setup(code: &mut Vec<u8>) {
     code.extend_from_slice(&(VIRTIO_BLK_HEADER_GPA as u32).to_le_bytes());
     code.extend_from_slice(&[0xc7, 0x47, 0x08, 0x10, 0x00, 0x00, 0x00]);
     code.extend_from_slice(&[0xc7, 0x47, 0x0c]);
-    code.extend_from_slice(&u32::from(VIRTQ_DESC_F_NEXT | (1 << 16)).to_le_bytes());
+    let descriptor0_tail = u32::from(VIRTQ_DESC_F_NEXT) | (1_u32 << 16);
+    code.extend_from_slice(&descriptor0_tail.to_le_bytes());
 
     code.extend_from_slice(&[0x48, 0xc7, 0x47, 0x10]);
     code.extend_from_slice(&(VIRTIO_BLK_DATA_GPA as u32).to_le_bytes());
     code.extend_from_slice(&[0xc7, 0x47, 0x18]);
     code.extend_from_slice(&(VIRTIO_BLK_SECTOR_SIZE as u32).to_le_bytes());
     code.extend_from_slice(&[0xc7, 0x47, 0x1c]);
-    code.extend_from_slice(
-        &u32::from(VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE | (2 << 16)).to_le_bytes(),
-    );
+    let descriptor1_tail =
+        u32::from(VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE) | (2_u32 << 16);
+    code.extend_from_slice(&descriptor1_tail.to_le_bytes());
 
     code.extend_from_slice(&[0x48, 0xc7, 0x47, 0x20]);
     code.extend_from_slice(&(VIRTIO_BLK_STATUS_GPA as u32).to_le_bytes());
