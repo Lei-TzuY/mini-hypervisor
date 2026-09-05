@@ -22,11 +22,14 @@ Acceptance contract:
 - extend one bounded long-mode fixture with a real guest-memory GDT page at GPA `0x5000` and IDT page at GPA `0x6000`, while preserving the existing page-table bootstrap at `0x1000..0x5000`;
 - install a present ring-0 64-bit code descriptor and one present interrupt gate for vector `0x40` targeting handler RIP `0x11000`;
 - reject vectors in the x86 exception range, entry/handler collisions with reserved bootstrap/GDT/IDT pages, handlers outside the low identity map, and a bounded interrupt stack frame that would overlap reserved tables;
-- queue vector `0x40` before first `KVM_RUN` while architectural IF is initially clear; the deterministic guest at RIP `0x10000` must execute `STI` plus one interrupt-shadow instruction, enter the handler, emit `I`, execute `IRETQ`, resume the interrupted main path, emit `M`, and execute HLT;
-- exact executable evidence must therefore be `IM`, not merely handler entry: it proves interrupt delivery, handler execution, interrupt return, resumed guest execution, and terminal HLT;
+- request an interrupt window through `kvm_run.request_interrupt_window` before injection; the deterministic guest at RIP `0x10000` executes `STI` plus its one-instruction shadow and KVM must return `KVM_EXIT_IRQ_WINDOW_OPEN` with `ready_for_interrupt_injection=1`, guest IF set, and RIP `0x10002` before userspace is allowed to issue `KVM_INTERRUPT` for vector `0x40`;
+- after injection, the guest must enter the vector-`0x40` handler, emit `I`, execute `IRETQ`, resume the interrupted main path, emit `M`, and execute HLT;
+- exact executable evidence is therefore an observed ready interrupt window followed by `IM`, not merely handler entry: it proves the KVM injection handshake, interrupt delivery, handler execution, interrupt return, resumed guest execution, and terminal HLT;
 - terminal proof requires HLT at RIP `0x10007`, architectural RFLAGS bit 1 set, and IF still set;
-- stable CI must retain all four established strict real-KVM proofs and independently require the direct-interrupt proof;
-- KVM ioctl failures remain named vCPU-operation errors; unsupported host/controller states are not swallowed or reinterpreted as successful injection.
+- stable CI must retain all four established strict real-KVM proofs and independently require the direct-interrupt proof, while the KVM-aware integration regression also requires the exact interrupt-window RIP and IF state;
+- KVM ioctl failures, unexpected interrupt-window exits, and inconsistent readiness flags remain hard failures; unsupported host/controller states are not swallowed, retried into success, or reinterpreted as successful injection.
+
+A previous implementation queued `KVM_INTERRUPT` while guest IF was still clear and before the first `KVM_RUN`. That path succeeded on one hosted KVM runner but later produced `KVM_EXIT_FAIL_ENTRY` with hardware reason `0x80000021` on another candidate. The milestone now uses KVM's documented interrupt-window handshake instead of relying on host-dependent pre-entry queuing behavior.
 
 ## Scope boundary
 
@@ -37,7 +40,7 @@ This milestone deliberately does **not** add:
 - GSI routing, MSI/MSI-X, or PCI interrupt delivery;
 - x2APIC, TSC-deadline timer, or PV-unhalt exposure;
 - timer devices or periodic interrupt generation;
-- multiple pending vectors, priority arbitration, nested-interrupt policy, or interrupt-window scheduling infrastructure;
+- multiple pending vectors, priority arbitration, nested-interrupt policy, or a reusable interrupt scheduler beyond this one bounded window handshake;
 - device-generated interrupt wiring from the existing MMIO device;
 - multiple vCPUs or cross-vCPU interrupt routing;
 - eventfd/ioeventfd/irqfd acceleration;
@@ -53,4 +56,4 @@ This milestone deliberately does **not** add:
 
 ## Promotion rule
 
-After direct long-mode interrupt delivery is integrated and exact merged-`main` CI is green, perform another architecture/integration audit. The next frontier should move from a single directly injected vector toward a real interrupt-controller/device-delivery architecture only when the required KVM irqchip/APIC capability, CPU-feature exposure, routing semantics, state ownership, and executable proof can be introduced coherently. Do not farm additional fixed direct-vector variants once the `IM` handler/return proof is sealed.
+After direct long-mode interrupt delivery is integrated and exact merged-`main` CI is green, perform another architecture/integration audit. The next frontier should move from a single directly injected vector toward a real interrupt-controller/device-delivery architecture only when the required KVM irqchip/APIC capability, CPU-feature exposure, routing semantics, state ownership, and executable proof can be introduced coherently. Do not farm additional fixed direct-vector variants once the interrupt-window plus `IM` handler/return proof is sealed.
