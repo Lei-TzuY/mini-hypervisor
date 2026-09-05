@@ -48,3 +48,5 @@ mod lapic_uapi_tests {
         assert_eq!(KvmLapicState::default().regs, [0; KVM_APIC_REG_SIZE]);
     }
 }
+
+include!("msi.rs");
