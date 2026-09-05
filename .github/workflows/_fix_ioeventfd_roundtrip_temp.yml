@@ -1,0 +1,139 @@
+name: Temporary ioeventfd race fix
+
+on:
+  push:
+    branches:
+      - milestone/virtio-blk-indirect-descriptors
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: milestone/virtio-blk-indirect-descriptors
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply deterministic bridge handshake fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/kvm/ioeventfd_roundtrip.rs')
+          text = path.read_text()
+
+          old = '''    let bridge_worker = std::thread::spawn(move || -> io::Result<u64> {
+        let count = wait_eventfd_value(&doorbell_reader, IOEVENTFD_WAIT_TIMEOUT_MILLIS)?;
+        if count != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("ioeventfd doorbell counter was {count}; expected exactly 1"),
+            ));
+        }
+        irq_signal.signal()?;
+        Ok(count)
+    });
+'''
+          new = '''    let (bridge_complete_tx, bridge_complete_rx) = std::sync::mpsc::channel::<()>();
+    let bridge_worker = std::thread::spawn(move || -> io::Result<u64> {
+        let count = wait_eventfd_value(&doorbell_reader, IOEVENTFD_WAIT_TIMEOUT_MILLIS)?;
+        if count != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("ioeventfd doorbell counter was {count}; expected exactly 1"),
+            ));
+        }
+        irq_signal.signal()?;
+        bridge_complete_tx.send(()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "ioeventfd bridge completion receiver disappeared before IRQFD signal acknowledgement",
+            )
+        })?;
+        Ok(count)
+    });
+'''
+          if text.count(old) != 1:
+              raise SystemExit(f'bridge worker replacement count={text.count(old)}')
+          text = text.replace(old, new)
+
+          old = '''        let armed = vcpu.registers()?;
+        require_interrupt_disabled_flags("ioeventfd round-trip armed state", armed.rflags)?;
+
+        let handler_io = run_expected_debug_output(
+'''
+          new = '''        let armed = vcpu.registers()?;
+        require_interrupt_disabled_flags("ioeventfd round-trip armed state", armed.rflags)?;
+
+        // The ioeventfd MMIO write is architecturally committed when A is observed, but the
+        // userspace bridge still has to consume the eventfd counter and signal the irqfd. Do not
+        // re-enter the guest's sti;hlt handoff until that exact bridge step has completed; otherwise
+        // host scheduling can let HLT complete before the irqfd edge becomes pending.
+        wait_for_bridge_irqfd_signal(
+            &bridge_complete_rx,
+            std::time::Duration::from_millis(IOEVENTFD_WAIT_TIMEOUT_MILLIS as u64),
+        )?;
+
+        let handler_io = run_expected_debug_output(
+'''
+          if text.count(old) != 1:
+              raise SystemExit(f'armed barrier replacement count={text.count(old)}')
+          text = text.replace(old, new)
+
+          marker = '''fn roundtrip_vm_error(operation: &'static str, source: io::Error) -> Error {
+'''
+          helper = '''fn wait_for_bridge_irqfd_signal(
+    receiver: &std::sync::mpsc::Receiver<()>,
+    timeout: std::time::Duration,
+) -> Result<(), Error> {
+    match receiver.recv_timeout(timeout) {
+        Ok(()) => Ok(()),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(verification_error(
+            "ioeventfd/irqfd bridge completion",
+            "timed out before the doorbell event was consumed and signaled through irqfd",
+        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(verification_error(
+            "ioeventfd/irqfd bridge completion",
+            "bridge worker disconnected before confirming the irqfd signal",
+        )),
+    }
+}
+
+'''
+          if text.count(marker) != 1:
+              raise SystemExit(f'helper insertion marker count={text.count(marker)}')
+          text = text.replace(marker, helper + marker)
+
+          test_marker = '''    #[test]
+    fn deterministic_roundtrip_guest_places_doorbell_before_if_enable_handoff() {
+'''
+          test = '''    #[test]
+    fn bridge_completion_handshake_fails_closed_until_irqfd_signal_is_confirmed() {
+        let (pending_tx, pending_rx) = std::sync::mpsc::channel::<()>();
+        assert!(wait_for_bridge_irqfd_signal(&pending_rx, std::time::Duration::ZERO).is_err());
+        pending_tx.send(()).unwrap();
+        assert!(wait_for_bridge_irqfd_signal(&pending_rx, std::time::Duration::ZERO).is_ok());
+
+        let (dropped_tx, dropped_rx) = std::sync::mpsc::channel::<()>();
+        drop(dropped_tx);
+        assert!(wait_for_bridge_irqfd_signal(&dropped_rx, std::time::Duration::ZERO).is_err());
+    }
+
+'''
+          if text.count(test_marker) != 1:
+              raise SystemExit(f'test insertion marker count={text.count(test_marker)}')
+          text = text.replace(test_marker, test + test_marker)
+          path.write_text(text)
+          PY
+          cargo fmt --all
+          git diff --check
+          git config user.name 'LeiZ'
+          git config user.email '52287354+Lei-TzuY@users.noreply.github.com'
+          git add src/kvm/ioeventfd_roundtrip.rs
+          git diff --cached --quiet && exit 1
+          git commit -m 'Synchronize ioeventfd bridge before HLT handoff'
+          git push origin HEAD:milestone/virtio-blk-indirect-descriptors
