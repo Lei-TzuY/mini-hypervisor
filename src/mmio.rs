@@ -183,9 +183,11 @@ impl ByteMmioDevice {
                 self.level_interrupt_pending = true;
                 Ok(MmioService::Write)
             }
-            (LEVEL_INTERRUPT_STATUS_OFFSET, MmioDirection::Read) => Ok(MmioService::Read(vec![
-                u8::from(self.level_interrupt_pending),
-            ])),
+            (LEVEL_INTERRUPT_STATUS_OFFSET, MmioDirection::Read) => {
+                Ok(MmioService::Read(vec![u8::from(
+                    self.level_interrupt_pending,
+                )]))
+            }
             (LEVEL_INTERRUPT_ACK_OFFSET, MmioDirection::Write) => {
                 let value = exact_write_byte(exit)?;
                 self.writes.push(value);
