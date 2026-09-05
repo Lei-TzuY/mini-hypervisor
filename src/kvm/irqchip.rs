@@ -176,6 +176,11 @@ impl KvmBackend {
             "irqchip readiness output",
         )?;
 
+        // Re-entering KVM_RUN to reach a second I/O exit commits the preceding R output on every
+        // supported KVM implementation. A serviceable KVM_EXIT_IO is not itself a portable RIP
+        // commit point, so this fixture never assigns architectural meaning to the RIP observed at
+        // either output exit. The second A output is the explicit userspace barrier: only after it
+        // has been observed and guest IF is verified do we assert the GSI edge.
         let armed_io = run_expected_debug_output(
             &mut vcpu,
             &mut port_io,
@@ -208,6 +213,11 @@ impl KvmBackend {
         let completion = vcpu.registers()?;
         require_interrupt_enabled_flags("irqchip completion state", completion.rflags)?;
 
+        // With an in-kernel local APIC, x86 KVM keeps a guest HLT inside the kernel as a
+        // non-runnable vCPU until a wake event arrives instead of guaranteeing KVM_EXIT_HLT.
+        // Observing D after M is therefore the terminal userspace synchronization point. Reaching
+        // D necessarily required one more KVM_RUN after the M exit, so the resumed-main M output
+        // is committed without depending on non-portable serviceable-I/O RIP semantics.
         let io_exits = vec![
             readiness_io,
             armed_io,
@@ -281,6 +291,8 @@ fn require_irqchip_capability(backend: &KvmBackend) -> Result<(), Error> {
 }
 
 fn set_irq_line(fd: std::os::fd::RawFd, request: KvmIrqLevel) -> io::Result<()> {
+    // SAFETY: `request` is the fixed eight-byte `struct kvm_irq_level` and remains readable for
+    // the duration of the VM ioctl.
     let result = unsafe { libc::ioctl(fd, KVM_IRQ_LINE, &request) };
     if result == -1 {
         Err(io::Error::last_os_error())
