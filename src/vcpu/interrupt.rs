@@ -145,15 +145,11 @@ fn configure_interrupt_tables(sregs: &mut sys::KvmSregs, layout: &LongModeInterr
 
 fn configure_legacy_pic_extint_state(state: &mut sys::KvmLapicState) {
     let spiv = read_lapic_register(state, APIC_SPIV_OFFSET);
-    write_lapic_register(
-        state,
-        APIC_SPIV_OFFSET,
-        spiv | APIC_SPIV_SOFTWARE_ENABLE,
-    );
+    write_lapic_register(state, APIC_SPIV_OFFSET, spiv | APIC_SPIV_SOFTWARE_ENABLE);
 
     let lint0 = read_lapic_register(state, APIC_LVT0_OFFSET);
-    let lint0 = (lint0 & !(APIC_LVT_MASKED | APIC_LVT_DELIVERY_MODE_MASK))
-        | APIC_LVT_DELIVERY_MODE_EXTINT;
+    let lint0 =
+        (lint0 & !(APIC_LVT_MASKED | APIC_LVT_DELIVERY_MODE_MASK)) | APIC_LVT_DELIVERY_MODE_EXTINT;
     write_lapic_register(state, APIC_LVT0_OFFSET, lint0);
 }
 
