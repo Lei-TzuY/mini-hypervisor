@@ -243,9 +243,9 @@ impl LongModeInterruptLayout {
                 .iter()
                 .any(|existing| existing.vector() == vector)
             {
-                return Err(LongModeInterruptConfigurationError::DuplicateInterruptVector {
-                    vector,
-                });
+                return Err(
+                    LongModeInterruptConfigurationError::DuplicateInterruptVector { vector },
+                );
             }
             if handler.get() >= LONG_MODE_IDENTITY_MAP_SIZE {
                 return Err(
