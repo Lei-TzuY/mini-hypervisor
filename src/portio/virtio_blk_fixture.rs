@@ -431,7 +431,8 @@ fn validate_mmio_sequence(exits: &[MmioExit]) -> Result<(), Error> {
     if exits.len() != expected.len() {
         return Err(verification_error(format!(
             "expected {} virtio-blk MMIO exits, got {}",
-            expected.len()
+            expected.len(),
+            exits.len()
         )));
     }
     for (index, (exit, (offset, direction, length, payload))) in
