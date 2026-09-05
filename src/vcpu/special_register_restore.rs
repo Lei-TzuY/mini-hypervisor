@@ -218,12 +218,7 @@ mod tests {
     }
 
     fn long_mode_layout() -> LongModeBootLayout {
-        LongModeBootLayout::new(
-            memory_region(),
-            GuestPhysAddr::new(0x1_0000),
-            0x1f_f000,
-        )
-        .unwrap()
+        LongModeBootLayout::new(memory_region(), GuestPhysAddr::new(0x1_0000), 0x1f_f000).unwrap()
     }
 
     #[test]
