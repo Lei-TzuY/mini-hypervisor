@@ -1,6 +1,5 @@
 use mini_hypervisor::portio::two_vcpu_targeted_msi_fixture::{
-    run_two_vcpu_targeted_msi_guest, FIRST_PROOF, SECOND_PROOF, TARGET_MSI_ADDRESS,
-    TARGET_MSI_DATA,
+    run_two_vcpu_targeted_msi_guest, FIRST_PROOF, SECOND_PROOF, TARGET_MSI_ADDRESS, TARGET_MSI_DATA,
 };
 use std::process::ExitCode;
 
