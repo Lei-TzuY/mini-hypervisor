@@ -53,10 +53,37 @@ const LONG_MODE_INTERRUPT_HANDLER_BYTES: [u8; 6] = [
     0x48, 0xcf, // iretq
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LongModeInterruptGate {
+    vector: u8,
+    handler: GuestPhysAddr,
+}
+
+impl LongModeInterruptGate {
+    #[must_use]
+    pub const fn new(vector: u8, handler: GuestPhysAddr) -> Self {
+        Self { vector, handler }
+    }
+
+    #[must_use]
+    pub const fn vector(self) -> u8 {
+        self.vector
+    }
+
+    #[must_use]
+    pub const fn handler(self) -> GuestPhysAddr {
+        self.handler
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LongModeInterruptConfigurationError {
     Boot(LongModeConfigurationError),
+    NoInterruptGates,
     VectorReservedForExceptions {
+        vector: u8,
+    },
+    DuplicateInterruptVector {
         vector: u8,
     },
     EntryOverlapsInterruptTables {
@@ -83,9 +110,14 @@ impl fmt::Display for LongModeInterruptConfigurationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Boot(error) => error.fmt(f),
+            Self::NoInterruptGates => write!(f, "long-mode interrupt layout requires at least one IDT gate"),
             Self::VectorReservedForExceptions { vector } => write!(
                 f,
                 "interrupt vector {vector:#x} is reserved by the x86 exception-vector range"
+            ),
+            Self::DuplicateInterruptVector { vector } => write!(
+                f,
+                "interrupt vector {vector:#x} is installed more than once"
             ),
             Self::EntryOverlapsInterruptTables { entry } => write!(
                 f,
@@ -138,8 +170,7 @@ impl From<LongModeConfigurationError> for LongModeInterruptConfigurationError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LongModeInterruptLayout {
     boot: LongModeBootLayout,
-    vector: u8,
-    handler: GuestPhysAddr,
+    gates: Vec<LongModeInterruptGate>,
     idt_limit: u16,
 }
 
@@ -151,32 +182,28 @@ impl LongModeInterruptLayout {
         vector: u8,
         handler: GuestPhysAddr,
     ) -> Result<Self, LongModeInterruptConfigurationError> {
-        let boot = LongModeBootLayout::new(memory, entry, stack_pointer)?;
+        Self::with_gates(
+            memory,
+            entry,
+            stack_pointer,
+            vec![LongModeInterruptGate::new(vector, handler)],
+        )
+    }
 
-        if vector < X86_EXCEPTION_VECTOR_COUNT {
-            return Err(
-                LongModeInterruptConfigurationError::VectorReservedForExceptions { vector },
-            );
+    pub fn with_gates(
+        memory: GuestMemoryRegion,
+        entry: GuestPhysAddr,
+        stack_pointer: u64,
+        gates: Vec<LongModeInterruptGate>,
+    ) -> Result<Self, LongModeInterruptConfigurationError> {
+        let boot = LongModeBootLayout::new(memory, entry, stack_pointer)?;
+        if gates.is_empty() {
+            return Err(LongModeInterruptConfigurationError::NoInterruptGates);
         }
         if is_interrupt_table_address(entry.get()) {
             return Err(
                 LongModeInterruptConfigurationError::EntryOverlapsInterruptTables {
                     entry: entry.get(),
-                },
-            );
-        }
-        if handler.get() >= LONG_MODE_IDENTITY_MAP_SIZE {
-            return Err(
-                LongModeInterruptConfigurationError::HandlerOutsideIdentityMap {
-                    handler: handler.get(),
-                    mapped_size: LONG_MODE_IDENTITY_MAP_SIZE,
-                },
-            );
-        }
-        if is_reserved_table_address(handler.get()) {
-            return Err(
-                LongModeInterruptConfigurationError::HandlerOverlapsReservedTables {
-                    handler: handler.get(),
                 },
             );
         }
@@ -203,7 +230,42 @@ impl LongModeInterruptLayout {
             );
         }
 
-        let idt_limit = u16::from(vector)
+        let mut max_vector = 0_u8;
+        for (index, gate) in gates.iter().copied().enumerate() {
+            let vector = gate.vector();
+            let handler = gate.handler();
+            if vector < X86_EXCEPTION_VECTOR_COUNT {
+                return Err(
+                    LongModeInterruptConfigurationError::VectorReservedForExceptions { vector },
+                );
+            }
+            if gates[..index]
+                .iter()
+                .any(|existing| existing.vector() == vector)
+            {
+                return Err(LongModeInterruptConfigurationError::DuplicateInterruptVector {
+                    vector,
+                });
+            }
+            if handler.get() >= LONG_MODE_IDENTITY_MAP_SIZE {
+                return Err(
+                    LongModeInterruptConfigurationError::HandlerOutsideIdentityMap {
+                        handler: handler.get(),
+                        mapped_size: LONG_MODE_IDENTITY_MAP_SIZE,
+                    },
+                );
+            }
+            if is_reserved_table_address(handler.get()) {
+                return Err(
+                    LongModeInterruptConfigurationError::HandlerOverlapsReservedTables {
+                        handler: handler.get(),
+                    },
+                );
+            }
+            max_vector = max_vector.max(vector);
+        }
+
+        let idt_limit = u16::from(max_vector)
             .checked_add(1)
             .and_then(|entries| entries.checked_mul(X86_INTERRUPT_GATE_SIZE as u16))
             .and_then(|bytes| bytes.checked_sub(1))
@@ -211,8 +273,7 @@ impl LongModeInterruptLayout {
 
         Ok(Self {
             boot,
-            vector,
-            handler,
+            gates,
             idt_limit,
         })
     }
@@ -223,13 +284,18 @@ impl LongModeInterruptLayout {
     }
 
     #[must_use]
-    pub const fn vector(&self) -> u8 {
-        self.vector
+    pub fn vector(&self) -> u8 {
+        self.gates[0].vector()
     }
 
     #[must_use]
-    pub const fn handler(&self) -> GuestPhysAddr {
-        self.handler
+    pub fn handler(&self) -> GuestPhysAddr {
+        self.gates[0].handler()
+    }
+
+    #[must_use]
+    pub fn gates(&self) -> &[LongModeInterruptGate] {
+        &self.gates
     }
 
     #[must_use]
@@ -261,10 +327,13 @@ impl LongModeInterruptLayout {
         memory.write(LONG_MODE_INTERRUPT_IDT_ADDR, &zero_page)?;
         memory.write(LONG_MODE_INTERRUPT_GDT_ADDR, &GDT_BYTES)?;
 
-        let gate_address = GuestPhysAddr::new(
-            LONG_MODE_INTERRUPT_IDT_ADDR.get() + u64::from(self.vector) * X86_INTERRUPT_GATE_SIZE,
-        );
-        memory.write(gate_address, &encode_interrupt_gate(self.handler.get()))?;
+        for gate in &self.gates {
+            let gate_address = GuestPhysAddr::new(
+                LONG_MODE_INTERRUPT_IDT_ADDR.get()
+                    + u64::from(gate.vector()) * X86_INTERRUPT_GATE_SIZE,
+            );
+            memory.write(gate_address, &encode_interrupt_gate(gate.handler().get()))?;
+        }
         Ok(())
     }
 }
@@ -441,6 +510,69 @@ mod tests {
             ]
         );
         assert_eq!(layout.idt_limit(), 0x40f);
+        assert_eq!(
+            layout.gates(),
+            &[LongModeInterruptGate::new(
+                LONG_MODE_INTERRUPT_VECTOR,
+                LONG_MODE_INTERRUPT_HANDLER
+            )]
+        );
+    }
+
+    #[test]
+    fn installs_multiple_interrupt_gates_and_expands_idt_limit() {
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let second_handler = GuestPhysAddr::new(0x1_2000);
+        let gates = vec![
+            LongModeInterruptGate::new(0x40, LONG_MODE_INTERRUPT_HANDLER),
+            LongModeInterruptGate::new(0x41, second_handler),
+        ];
+        let layout = LongModeInterruptLayout::with_gates(
+            memory.region(),
+            LONG_MODE_INTERRUPT_GUEST_ENTRY,
+            LONG_MODE_INTERRUPT_STACK_POINTER,
+            gates.clone(),
+        )
+        .unwrap();
+        layout.install_tables(&mut memory).unwrap();
+
+        for gate in &gates {
+            let address = GuestPhysAddr::new(
+                LONG_MODE_INTERRUPT_IDT_ADDR.get()
+                    + u64::from(gate.vector()) * X86_INTERRUPT_GATE_SIZE,
+            );
+            let mut encoded = [0_u8; 16];
+            memory.read(address, &mut encoded).unwrap();
+            assert_eq!(encoded, encode_interrupt_gate(gate.handler().get()));
+        }
+        assert_eq!(layout.gates(), gates.as_slice());
+        assert_eq!(layout.idt_limit(), 0x41f);
+    }
+
+    #[test]
+    fn rejects_empty_and_duplicate_interrupt_gate_sets() {
+        assert!(matches!(
+            LongModeInterruptLayout::with_gates(
+                memory_region(),
+                LONG_MODE_INTERRUPT_GUEST_ENTRY,
+                LONG_MODE_INTERRUPT_STACK_POINTER,
+                vec![]
+            ),
+            Err(LongModeInterruptConfigurationError::NoInterruptGates)
+        ));
+        assert!(matches!(
+            LongModeInterruptLayout::with_gates(
+                memory_region(),
+                LONG_MODE_INTERRUPT_GUEST_ENTRY,
+                LONG_MODE_INTERRUPT_STACK_POINTER,
+                vec![
+                    LongModeInterruptGate::new(0x40, LONG_MODE_INTERRUPT_HANDLER),
+                    LongModeInterruptGate::new(0x40, GuestPhysAddr::new(0x1_2000)),
+                ]
+            ),
+            Err(LongModeInterruptConfigurationError::DuplicateInterruptVector { vector: 0x40 })
+        ));
     }
 
     #[test]
