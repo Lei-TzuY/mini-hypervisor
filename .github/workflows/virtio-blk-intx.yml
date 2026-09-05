@@ -1,0 +1,54 @@
+name: Strict KVM virtio-blk INTx
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  virtio-blk-intx:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM virtio-blk INTx completion proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin virtio-blk-intx-completion)"
+          printf '%s\n' "$output"
+          grep -F 'virtio-blk INTx GSI: 0' <<<"$output"
+          grep -F 'virtio-blk INTx vector: 0x40' <<<"$output"
+          grep -F 'virtio-blk INTx assert events: 1' <<<"$output"
+          grep -F 'virtio-blk INTx deassert events: 1' <<<"$output"
+          grep -F 'virtio-blk INTx driver features: 0x100000000' <<<"$output"
+          grep -F 'virtio-blk INTx queue enabled: true' <<<"$output"
+          grep -F 'virtio-blk INTx completion: 0/513/0' <<<"$output"
+          grep -F 'virtio-blk INTx used: 1/0/513' <<<"$output"
+          grep -F 'virtio-blk INTx request status: 0' <<<"$output"
+          grep -F 'virtio-blk INTx data bytes: 512' <<<"$output"
+          grep -F 'virtio-blk INTx data boundary: first=[66, 76, 75, 45, 83, 69, 67, 84, 79, 82, 45, 48, 48, 48, 48, 33] last=[66, 76, 75, 69, 78, 68, 33, 33]' <<<"$output"
+          grep -F 'virtio-blk INTx port-I/O exits: 21' <<<"$output"
+          grep -F 'virtio-blk INTx MMIO exits: 22' <<<"$output"
+          grep -F 'virtio-blk INTx proof: [80, 66, 78, 73, 65, 82, 68]' <<<"$output"
+          spiv_line="$(grep -F 'virtio-blk INTx LAPIC SPIV:' <<<"$output")"
+          spiv_hex="${spiv_line##*: }"
+          [[ "$spiv_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          spiv=$((spiv_hex))
+          (( (spiv & 0x100) == 0x100 ))
+          lint0_line="$(grep -F 'virtio-blk INTx LAPIC LINT0:' <<<"$output")"
+          lint0_hex="${lint0_line##*: }"
+          [[ "$lint0_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          lint0=$((lint0_hex))
+          (( (lint0 & 0x700) == 0x700 ))
+          (( (lint0 & 0x10000) == 0 ))
+          completion="$(grep -F 'virtio-blk INTx completion rflags:' <<<"$output")"
+          completion_rflags_hex="${completion##*: }"
+          [[ "$completion_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          completion_rflags=$((completion_rflags_hex))
+          (( (completion_rflags & 0x2) == 0x2 ))
+          (( (completion_rflags & 0x200) == 0x200 ))
