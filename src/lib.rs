@@ -7,6 +7,8 @@ pub mod kvm;
 pub mod loader;
 pub mod long_mode;
 pub mod memory;
+pub mod mmio;
+pub mod mmio_fixture;
 pub mod model;
 pub mod portio;
 pub mod state_snapshot;
