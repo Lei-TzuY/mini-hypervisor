@@ -1,6 +1,10 @@
+#[path = "pci.rs"]
+pub mod pci;
+pub mod pci_fixture;
+
 use crate::error::{Error, PortIoError};
-use crate::pci::{PciConfigMechanism1, PciConfigService};
 use crate::vcpu::{PortIoDirection, PortIoExit};
+use pci::{PciConfigMechanism1, PciConfigService};
 
 pub const DEBUG_PORT: u16 = 0x00e9;
 
@@ -134,7 +138,7 @@ impl DebugPort {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pci::{SyntheticPciFunction, PCI_CONFIG_ADDRESS_PORT, PCI_CONFIG_DATA_PORT};
+    use self::pci::{SyntheticPciFunction, PCI_CONFIG_ADDRESS_PORT, PCI_CONFIG_DATA_PORT};
 
     fn output(port: u16, size: u8, count: u32, bytes: &[u8]) -> PortIoExit {
         PortIoExit::new(PortIoDirection::Out, size, port, count, bytes.to_vec())
@@ -167,7 +171,7 @@ mod tests {
         let mut bus = PortIoBus::with_debug_port_and_pci_config(PciConfigMechanism1::new(
             SyntheticPciFunction::new(0x1000_0000),
         ));
-        let selector = crate::pci::config_selector(0x00).to_le_bytes();
+        let selector = pci::config_selector(0x00).to_le_bytes();
 
         assert_eq!(
             bus.dispatch(&output(PCI_CONFIG_ADDRESS_PORT, 4, 1, &selector))
@@ -177,8 +181,8 @@ mod tests {
         assert_eq!(
             bus.dispatch(&input(PCI_CONFIG_DATA_PORT, 4, 1)).unwrap(),
             PortIoService::Input(
-                ((u32::from(crate::pci::SYNTHETIC_PCI_DEVICE_ID) << 16)
-                    | u32::from(crate::pci::SYNTHETIC_PCI_VENDOR_ID))
+                ((u32::from(pci::SYNTHETIC_PCI_DEVICE_ID) << 16)
+                    | u32::from(pci::SYNTHETIC_PCI_VENDOR_ID))
                 .to_le_bytes()
                 .to_vec()
             )
