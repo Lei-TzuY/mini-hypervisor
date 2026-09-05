@@ -726,8 +726,14 @@ mod tests {
             ))
         );
         assert_eq!(bus.take_device_event_record(), None);
-        assert_eq!(bus.writes_at(first), Some(&[b'W', LEVEL_INTERRUPT_ACK_VALUE][..]));
-        assert_eq!(bus.writes_at(second), Some(&[b'W', LEVEL_INTERRUPT_ACK_VALUE][..]));
+        assert_eq!(
+            bus.writes_at(first),
+            Some(&[b'W', LEVEL_INTERRUPT_ACK_VALUE][..])
+        );
+        assert_eq!(
+            bus.writes_at(second),
+            Some(&[b'W', LEVEL_INTERRUPT_ACK_VALUE][..])
+        );
     }
 
     #[test]
