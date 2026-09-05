@@ -10,8 +10,11 @@ fn main() -> ExitCode {
             println!("irqchip LAPIC SPIV: {:#x}", result.lapic_spiv());
             println!("irqchip LAPIC LINT0: {:#x}", result.lapic_lint0());
             println!("irqchip armed rflags: {:#x}", result.armed_rflags());
+            println!(
+                "irqchip completion rflags: {:#x}",
+                result.completion_rflags()
+            );
             println!("irqchip proof: {:?}", result.proof());
-            println!("{}", result.report());
             ExitCode::SUCCESS
         }
         Err(error) => {
