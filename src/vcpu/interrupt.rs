@@ -111,17 +111,11 @@ impl Vcpu {
     }
 
     fn set_interrupt_window_request(&mut self, requested: bool) {
-        // SAFETY: `KvmRunMapping::map` accepts only a mapping large enough for every required
-        // `kvm_run` prefix, which necessarily includes `KvmRunHeader` at offset zero. This method
-        // has exclusive access to the vCPU and therefore to the writable shared mapping.
         let header = unsafe { &mut *self.run.ptr.as_ptr().cast::<sys::KvmRunHeader>() };
         set_interrupt_window_request(header, requested);
     }
 
     fn interrupt_window_flags(&self) -> (bool, bool) {
-        // SAFETY: the mapped `kvm_run` region is at least `KvmRunHeader` bytes and KVM places the
-        // header at offset zero. The returned booleans are copied immediately; no shared pointer
-        // escapes the vCPU boundary.
         let header = unsafe { &*self.run.ptr.as_ptr().cast::<sys::KvmRunHeader>() };
         (
             header.ready_for_interrupt_injection != 0,
@@ -344,3 +338,5 @@ mod tests {
         assert_eq!(KVM_EXIT_IRQ_WINDOW_OPEN, 7);
     }
 }
+
+include!("mp_state.rs");
