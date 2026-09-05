@@ -344,3 +344,5 @@ mod tests {
         assert_eq!(KVM_EXIT_IRQ_WINDOW_OPEN, 7);
     }
 }
+
+include!("mp_state.rs");

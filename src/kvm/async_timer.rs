@@ -387,3 +387,4 @@ mod async_timer_tests {
 }
 
 include!("irqfd_timer.rs");
+include!("mp_state.rs");
