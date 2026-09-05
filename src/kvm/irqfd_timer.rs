@@ -110,15 +110,15 @@ struct IrqfdTimerRegistration {
 }
 
 impl IrqfdTimerRegistration {
-    fn assign(vm: &Vm, gsi: u32) -> io::Result<Self> {
+    fn assign_with_signal(vm: &Vm, gsi: u32) -> io::Result<(Self, EventFd)> {
+        // Complete every fallible userspace-fd preparation step before registering anything in
+        // KVM. Once KVM_IRQFD succeeds, the caller can enter the shared cleanup path knowing no
+        // later signal-handle duplication can strand a live irqfd registration.
         let eventfd = EventFd::new()?;
+        let signal = eventfd.duplicate()?;
         let request = KvmIrqfd::assign(eventfd.raw_u32()?, gsi);
         set_irqfd(vm.fd.as_raw_fd(), &request)?;
-        Ok(Self { eventfd, gsi })
-    }
-
-    fn duplicate_signal_handle(&self) -> io::Result<EventFd> {
-        self.eventfd.duplicate()
+        Ok((Self { eventfd, gsi }, signal))
     }
 
     fn deassign(&self, vm: &Vm) -> io::Result<()> {
@@ -145,15 +145,13 @@ fn prepare_irqfd_async_timer_delivery(
 ) -> Result<PreparedAsyncTimerDelivery, Error> {
     require_irqfd_capability(backend)?;
 
-    // Establish a known inactive level before assigning the edge-triggered irqfd route. The
-    // KVM_IRQFD ioctl itself then validates the eventfd/GSI registration synchronously before the
-    // guest is permitted to enter the potentially blocking sti;hlt handoff.
+    // Establish a known inactive level before assigning the edge-triggered irqfd route. All local
+    // eventfd creation and duplication is completed before KVM_IRQFD changes kernel state, and the
+    // successful registration then remains owned by the shared explicit deassignment cleanup path.
     vm.set_gsi_level(KvmBackend::IRQFD_TIMER_GSI, false)?;
-    let registration = IrqfdTimerRegistration::assign(vm, KvmBackend::IRQFD_TIMER_GSI)
-        .map_err(|source| async_timer_vm_error("assign async timer KVM_IRQFD", source))?;
-    let signal = registration
-        .duplicate_signal_handle()
-        .map_err(|source| async_timer_vm_error("duplicate async timer eventfd signal handle", source))?;
+    let (registration, signal) =
+        IrqfdTimerRegistration::assign_with_signal(vm, KvmBackend::IRQFD_TIMER_GSI)
+            .map_err(|source| async_timer_vm_error("assign async timer KVM_IRQFD", source))?;
 
     let timer_worker = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(
