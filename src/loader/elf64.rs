@@ -32,14 +32,9 @@ const PROOF_STACK_POINTER: u64 = 0x1f_f000;
 const PROOF_EXIT_BUDGET: u32 = 5;
 const PROOF_BYTES: &[u8; 4] = b"LM64";
 const PROOF_CODE: [u8; 36] = [
-    0x48, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x4c, 0x4d, 0x36, 0x34,
-    0x48, 0xc1, 0xe8, 0x20,
-    0xba, 0xe9, 0x00, 0x00, 0x00,
-    0xee,
-    0x48, 0xc1, 0xe8, 0x08, 0xee,
-    0x48, 0xc1, 0xe8, 0x08, 0xee,
-    0x48, 0xc1, 0xe8, 0x08, 0xee,
-    0xf4,
+    0x48, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x4c, 0x4d, 0x36, 0x34, 0x48, 0xc1, 0xe8, 0x20, 0xba, 0xe9,
+    0x00, 0x00, 0x00, 0xee, 0x48, 0xc1, 0xe8, 0x08, 0xee, 0x48, 0xc1, 0xe8, 0x08, 0xee, 0x48, 0xc1,
+    0xe8, 0x08, 0xee, 0xf4,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -467,9 +462,8 @@ impl<'a> Elf64GuestImage<'a> {
 
             if segment.memory_size > segment.file_size {
                 let zero_length = segment.memory_size - segment.file_size;
-                let zero_address = GuestPhysAddr::new(
-                    segment.physical_address.get() + segment.file_size as u64,
-                );
+                let zero_address =
+                    GuestPhysAddr::new(segment.physical_address.get() + segment.file_size as u64);
                 memory.write(zero_address, &vec![0_u8; zero_length])?;
             }
         }
@@ -637,30 +631,29 @@ fn parse_load_segment(
         });
     }
 
-    let file_offset = usize::try_from(file_offset_u64).map_err(|_| {
-        Elf64Error::SegmentFileRangeOutOfBounds {
+    let file_offset =
+        usize::try_from(file_offset_u64).map_err(|_| Elf64Error::SegmentFileRangeOutOfBounds {
             index,
             offset: file_offset_u64,
             file_size: file_size_u64,
             file_length: bytes.len(),
-        }
-    })?;
-    let file_size = usize::try_from(file_size_u64).map_err(|_| {
-        Elf64Error::SegmentFileRangeOutOfBounds {
+        })?;
+    let file_size =
+        usize::try_from(file_size_u64).map_err(|_| Elf64Error::SegmentFileRangeOutOfBounds {
             index,
             offset: file_offset_u64,
             file_size: file_size_u64,
             file_length: bytes.len(),
-        }
-    })?;
-    let file_end = file_offset.checked_add(file_size).ok_or(
-        Elf64Error::SegmentFileRangeOutOfBounds {
-            index,
-            offset: file_offset_u64,
-            file_size: file_size_u64,
-            file_length: bytes.len(),
-        },
-    )?;
+        })?;
+    let file_end =
+        file_offset
+            .checked_add(file_size)
+            .ok_or(Elf64Error::SegmentFileRangeOutOfBounds {
+                index,
+                offset: file_offset_u64,
+                file_size: file_size_u64,
+                file_length: bytes.len(),
+            })?;
     if file_end > bytes.len() {
         return Err(Elf64Error::SegmentFileRangeOutOfBounds {
             index,
@@ -790,7 +783,10 @@ fn build_page_mappings(
     segments: &[Elf64LoadSegment],
 ) -> Result<Vec<LongModePageMapping>, Elf64Error> {
     let mut mappings: Vec<LongModePageMapping> = Vec::new();
-    for segment in segments.iter().filter(|segment| segment.uses_alias_window()) {
+    for segment in segments
+        .iter()
+        .filter(|segment| segment.uses_alias_window())
+    {
         let virtual_start = align_down_page(segment.virtual_address);
         let physical_start = align_down_page(segment.physical_address.get());
         let virtual_end = align_up_page(segment.virtual_address + segment.memory_size as u64);
@@ -984,10 +980,7 @@ mod tests {
             GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let dirty = vec![0xaa; PROOF_MEMORY_SIZE as usize];
         memory
-            .write(
-                GuestPhysAddr::new(PROOF_SEGMENT_PHYSICAL_ADDRESS),
-                &dirty,
-            )
+            .write(GuestPhysAddr::new(PROOF_SEGMENT_PHYSICAL_ADDRESS), &dirty)
             .unwrap();
 
         image.load(&mut memory).unwrap();
@@ -1076,7 +1069,11 @@ mod tests {
         ));
 
         let mut bytes = alias_fixture();
-        write_u64(&mut bytes, ph + 16, LONG_MODE_IDENTITY_MAP_SIZE + LONG_MODE_PAGE_SIZE);
+        write_u64(
+            &mut bytes,
+            ph + 16,
+            LONG_MODE_IDENTITY_MAP_SIZE + LONG_MODE_PAGE_SIZE,
+        );
         write_u64(
             &mut bytes,
             24,
@@ -1092,7 +1089,11 @@ mod tests {
     fn rejects_identity_segment_with_nonidentity_physical_address() {
         let ph = ELF64_HEADER_SIZE;
         let mut bytes = identity_fixture();
-        write_u64(&mut bytes, ph + 24, PROOF_SEGMENT_PHYSICAL_ADDRESS + LONG_MODE_PAGE_SIZE);
+        write_u64(
+            &mut bytes,
+            ph + 24,
+            PROOF_SEGMENT_PHYSICAL_ADDRESS + LONG_MODE_PAGE_SIZE,
+        );
         assert!(matches!(
             Elf64GuestImage::parse(&bytes),
             Err(Elf64Error::IdentitySegmentAddressMismatch { .. })
