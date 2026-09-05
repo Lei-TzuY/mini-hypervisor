@@ -4,6 +4,9 @@ use mini_hypervisor::loader::elf64::{
     expected_proof as expected_elf64_proof, proof_terminal_rip as elf64_terminal_rip,
     run_elf64_guest,
 };
+use mini_hypervisor::mmio_fixture::{
+    run_mmio_guest, MMIO_GUEST_PROOF, MMIO_GUEST_TERMINAL_RIP, MMIO_GUEST_WRITE_VALUE,
+};
 use mini_hypervisor::vcpu::VcpuExit;
 use mini_hypervisor::{
     run_cpuid_guest, run_debug_port_guest, run_hlt_guest, run_long_mode_guest,
@@ -134,9 +137,29 @@ fn run() -> Result<ExitCode, mini_hypervisor::error::Error> {
                 Ok(ExitCode::FAILURE)
             }
         }
+        Some("run-mmio") => {
+            let result = run_mmio_guest(VmConfig::default())?;
+            let report = result.report();
+            println!("mmio writes: {:?}", result.writes());
+            println!("mmio proof: {:?}", result.proof());
+            println!("{report}");
+
+            if mmio_proof_is_valid(
+                result.proof(),
+                result.writes(),
+                report.exit(),
+                report.rip(),
+                report.rflags(),
+            ) {
+                Ok(ExitCode::SUCCESS)
+            } else {
+                eprintln!("MMIO deterministic execution proof contract failed");
+                Ok(ExitCode::FAILURE)
+            }
+        }
         Some(other) => {
             eprintln!(
-                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port|run-long-mode|run-elf64]"
+                "usage: mini-hypervisor [probe|lifecycle|state-roundtrip|run-cpuid|run-hlt|run-debug-port|run-long-mode|run-elf64|run-mmio]"
             );
             eprintln!("unknown command: {other}");
             Ok(ExitCode::from(2))
@@ -178,6 +201,24 @@ fn elf64_proof_is_valid(proof: &[u8], exit: VcpuExit, rip: u64, rflags: u64) -> 
         elf64_terminal_rip(),
         rflags,
     )
+}
+
+fn mmio_proof_is_valid(
+    proof: &[u8],
+    writes: &[u8],
+    exit: VcpuExit,
+    rip: u64,
+    rflags: u64,
+) -> bool {
+    writes == [MMIO_GUEST_WRITE_VALUE]
+        && terminal_proof_is_valid(
+            proof,
+            MMIO_GUEST_PROOF,
+            exit,
+            rip,
+            MMIO_GUEST_TERMINAL_RIP,
+            rflags,
+        )
 }
 
 #[cfg(test)]
@@ -273,6 +314,52 @@ mod tests {
             expected_elf64_proof(),
             VcpuExit::Hlt,
             elf64_terminal_rip(),
+            0,
+        ));
+    }
+
+    #[test]
+    fn mmio_cli_proof_requires_write_readback_output_hlt_rip_and_reserved_rflags_bit() {
+        assert!(mmio_proof_is_valid(
+            MMIO_GUEST_PROOF,
+            &[MMIO_GUEST_WRITE_VALUE],
+            VcpuExit::Hlt,
+            MMIO_GUEST_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!mmio_proof_is_valid(
+            b"?MIO",
+            &[MMIO_GUEST_WRITE_VALUE],
+            VcpuExit::Hlt,
+            MMIO_GUEST_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!mmio_proof_is_valid(
+            MMIO_GUEST_PROOF,
+            b"?",
+            VcpuExit::Hlt,
+            MMIO_GUEST_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!mmio_proof_is_valid(
+            MMIO_GUEST_PROOF,
+            &[MMIO_GUEST_WRITE_VALUE],
+            VcpuExit::Shutdown,
+            MMIO_GUEST_TERMINAL_RIP,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!mmio_proof_is_valid(
+            MMIO_GUEST_PROOF,
+            &[MMIO_GUEST_WRITE_VALUE],
+            VcpuExit::Hlt,
+            MMIO_GUEST_TERMINAL_RIP - 1,
+            X86_RFLAGS_RESERVED_BIT,
+        ));
+        assert!(!mmio_proof_is_valid(
+            MMIO_GUEST_PROOF,
+            &[MMIO_GUEST_WRITE_VALUE],
+            VcpuExit::Hlt,
+            MMIO_GUEST_TERMINAL_RIP,
             0,
         ));
     }
