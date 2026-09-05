@@ -55,13 +55,7 @@ pub fn run_vcpu_until_stopped_with_mmio(
     mmio: &mut MmioBus,
     exit_budget: u32,
 ) -> Result<VmExecutionResult, Error> {
-    run_vcpu_until_stopped_with_mmio_observer(
-        vcpu,
-        port_io,
-        mmio,
-        exit_budget,
-        |_, _| Ok(()),
-    )
+    run_vcpu_until_stopped_with_mmio_observer(vcpu, port_io, mmio, exit_budget, |_, _| Ok(()))
 }
 
 pub fn run_vcpu_until_stopped_with_mmio_observer<F>(
@@ -415,7 +409,7 @@ mod tests {
                 rip: 0x1234,
                 rflags: 0x2,
                 exit_reasons,
-            }) if exit_reasons == [sys::KVM_EXIT_IO, 0xfeed_beef]
+            }) if exit_reasons == [sys::KVM_EXIT_IO, unknown_reason]
         ));
     }
 
