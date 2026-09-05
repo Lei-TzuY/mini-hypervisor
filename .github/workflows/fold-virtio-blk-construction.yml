@@ -19,40 +19,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "e3bcc013a882cd4ce73f91f1bf18f8a31278c1f1"
+          test "$(git rev-parse HEAD^)" = "87d5e870b03ca206ed5a28c9eddd6fbd961e7558"
 
           python3 - <<'PY'
           from pathlib import Path
 
-          replacements = {
-              Path("src/pci/virtio_blk.rs"): [
-                  (
-                      'mod write_readback {\n    use super::*;\n    include!("virtio_blk_write_readback.rs");\n}\n',
-                      'mod virtio_blk_write_readback;\n',
-                  ),
-                  (
-                      'pub use write_readback::VIRTIO_BLK_T_OUT;\n',
-                      'pub use virtio_blk_write_readback::VIRTIO_BLK_T_OUT;\n',
-                  ),
-              ],
-              Path("src/portio/virtio_blk_fixture.rs"): [
-                  (
-                      'mod write_readback {\n    use super::*;\n    include!("virtio_blk_write_readback_fixture.rs");\n}\n',
-                      'mod virtio_blk_write_readback_fixture;\n',
-                  ),
-                  (
-                      'pub use write_readback::{\n',
-                      'pub use virtio_blk_write_readback_fixture::{\n',
-                  ),
-              ],
+          parent_replacements = {
+              Path("src/pci/virtio_blk.rs"): (
+                  'mod write_readback {\n    use super::*;\n    include!("virtio_blk_write_readback.rs");\n}\n',
+                  '#[path = "virtio_blk_write_readback.rs"]\nmod write_readback;\n',
+              ),
+              Path("src/portio/virtio_blk_fixture.rs"): (
+                  'mod write_readback {\n    use super::*;\n    include!("virtio_blk_write_readback_fixture.rs");\n}\n',
+                  '#[path = "virtio_blk_write_readback_fixture.rs"]\nmod write_readback;\n',
+              ),
           }
-          for path, edits in replacements.items():
+          for path, (old, new) in parent_replacements.items():
               text = path.read_text()
-              for old, new in edits:
-                  if text.count(old) != 1:
-                      raise SystemExit(f"expected exactly one construction fragment in {path}: {old!r}")
-                  text = text.replace(old, new, 1)
-              path.write_text(text)
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected exactly one construction wrapper in {path}")
+              path.write_text(text.replace(old, new, 1))
 
           for path in [
               Path("src/pci/virtio_blk_write_readback.rs"),
