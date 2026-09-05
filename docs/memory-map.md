@@ -6,15 +6,19 @@ The current VM model supports exactly one RAM region plus a fixed high x86 KVM-r
 
 | Range | Owner | Purpose |
 | --- | --- | --- |
-| `0x0000_0000..0x0020_0000` | RAM slot 0 | 2 MiB guest RAM and low long-mode identity-mapped backing extent used by long-mode, ELF, and long-mode-MMIO fixtures |
+| `0x0000_0000..0x0020_0000` | RAM slot 0 | 2 MiB guest RAM and low long-mode identity-mapped backing extent used by long-mode, ELF, long-mode-MMIO, and direct-interrupt fixtures |
 | `0x0000_0000..0x0000_1000` | real-mode MMIO fixture RAM slot 0 | dedicated 4 KiB RAM layout; mutually exclusive with the 2 MiB layouts above |
 | GPA `0x0000_2000` | real-mode MMIO byte device in the 4 KiB fixture only | intentionally outside that fixture's registered RAM so KVM exits to userspace for one-byte read/write access |
 | `0x0000_1000..0x0000_2000` | long-mode bootstrap | PML4 page |
 | `0x0000_2000..0x0000_3000` | long-mode bootstrap | PDPT page |
 | `0x0000_3000..0x0000_4000` | long-mode bootstrap | PD page |
 | `0x0000_4000..0x0000_5000` | long-mode bootstrap | bounded alias 4 KiB page table |
+| `0x0000_5000..0x0000_6000` | direct-interrupt fixture only | VMM-installed GDT page |
+| `0x0000_6000..0x0000_7000` | direct-interrupt fixture only | VMM-installed IDT page containing vector `0x40` gate |
 | `0x0001_0000..0x0001_0024` | flat guest bytes inside RAM | deterministic 36-byte identity-mapped x86-64 long-mode proof fixture |
 | `0x0001_0000..0x0001_001e` | flat guest bytes inside RAM | deterministic 30-byte x86-64 virtual-MMIO proof fixture |
+| `0x0001_0000..0x0001_0007` | direct-interrupt fixture main code | `STI; NOP;` resumed `M` proof and HLT |
+| `0x0001_1000..0x0001_1006` | direct-interrupt fixture handler | vector `0x40` handler emitting `I` then `IRETQ` |
 | `0x0001_0000..0x0001_0180` | ELF64 physical backing inside RAM | deterministic bounded ELF64 fixture; file-backed prefix plus zeroed BSS tail |
 | VA `0x0040_0000..0x0060_0000` | bounded alias window | fixed 512-page virtual window shared by validated RAM-backed ELF aliases and the bounded virtual-MMIO fixture |
 | VA `0x0040_0100` | ELF64 virtual entry | deterministic non-identity ELF64 fixture entry point |
@@ -30,6 +34,8 @@ The current VM model supports exactly one RAM region plus a fixed high x86 KVM-r
 | `0xfeff_d000..0xff00_0000` | KVM x86 reserved | three-page KVM TSS region |
 
 The fixture rows are not simultaneous KVM memory slots. Each public fixture constructs fresh guest memory and installs only the layout it needs. This distinction is essential for GPA `0x2000`: in long-mode layouts it is RAM containing the PDPT page; in debug-port input/CPUID fixtures it is RAM used for guest result bytes; only the dedicated 4 KiB real-mode MMIO fixture leaves it unbacked. Likewise GPA `0x10000000` is not a second RAM slot: the long-mode virtual-MMIO layout explicitly requires it to remain outside the configured slot-0 RAM and maps one guest virtual page to it so KVM reports accesses as `KVM_EXIT_MMIO`.
+
+The direct-interrupt fixture adds descriptor-table ownership without changing the base long-mode page-table layout. The ordinary long-mode/ELF/MMIO bootstrap still reserves page-table RAM only through `0x5000`; `LongModeInterruptLayout` extends its own reserved-table footprint through `0x7000` so its GDT and IDT cannot collide with entry code, handler code, or the bounded interrupt stack frame.
 
 ## Real-mode MMIO fixture contract
 
@@ -79,9 +85,11 @@ GPA 0x1000_0000..0x1000_1000   unbacked device page
 
 The device GPA is 4 KiB aligned and the public layout constructor rejects any RAM region whose exclusive end extends beyond `0x10000000`, because that would turn the fixed device address into normal slot-0 RAM. The current deterministic fixture uses 2 MiB RAM, so the device page is far outside registered memory. The guest code and stack remain in the low identity mapping; only the data access at VA `0x500000` uses the device PTE.
 
-The physical bootstrap page-table extent remains `0x1000..0x5000`. `LongModeBootLayout::new` retains the identity-only entry contract. `LongModeBootLayout::with_page_mappings` accepts an entry in the fixed alias window only when its 4 KiB virtual page is present in the validated RAM-backed mapping set. `LongModeMmioBootLayout` does not change those rules and does not use the device VA as an execution entry. The stack remains non-zero and inside the low identity map. The deterministic long-mode, ELF64, and virtual-MMIO fixtures use RSP `0x1ff000`.
+The physical bootstrap page-table extent remains `0x1000..0x5000`. `LongModeBootLayout::new` retains the identity-only entry contract. `LongModeBootLayout::with_page_mappings` accepts an entry in the fixed alias window only when its 4 KiB virtual page is present in the validated RAM-backed mapping set. `LongModeMmioBootLayout` does not change those rules and does not use the device VA as an execution entry. The stack remains non-zero and inside the low identity map. The deterministic long-mode, ELF64, virtual-MMIO, and direct-interrupt fixtures use RSP `0x1ff000`.
 
-This is still not a general guest virtual-memory manager. There is no caller-defined virtual window, page-table allocator, dynamic hierarchy growth, per-page executable/write permission model, NX policy, arbitrary virtual-MMIO mapping, or page-fault recovery path.
+The direct-interrupt fixture uses the same identity mapping for main code, handler code, descriptor tables, and stack. It does not create another virtual mapping. Its GDT at GPA/VA `0x5000` contains only the null, ring-0 64-bit code, and ring-0 data descriptors required by the fixture. Its IDT at GPA/VA `0x6000` is zero except for the 16-byte vector `0x40` gate at `0x6400`, which targets identity-mapped handler RIP `0x11000` with selector `0x8`. The VMM installs these tables before KVM execution; they are not arbitrary guest-supplied descriptor-table contents.
+
+This is still not a general guest virtual-memory or descriptor-table manager. There is no caller-defined virtual window, page-table allocator, dynamic hierarchy growth, per-page executable/write permission model, NX policy, arbitrary virtual-MMIO mapping, arbitrary GDT/IDT layout, or page-fault recovery path.
 
 ## Address semantics
 
@@ -110,7 +118,7 @@ A zero-length access at the exclusive end is valid.
 
 After successful registration, `Vm` owns the `GuestMemory`. `Vm::drop` first submits a zero-sized slot-0 `KVM_SET_USER_MEMORY_REGION` request to remove the registration. Only after confirmed removal is normal mapping destruction allowed. If slot removal fails, the mapping is intentionally leaked rather than leaving a still-live KVM memory slot pointing at unmapped userspace memory.
 
-Guest-facing reads/writes, ELF64 segment materialization, and long-mode page-table installation calculate and validate a guest-memory offset before performing any host pointer arithmetic or copy. Virtual ELF addresses are never treated as host pointers or guest-memory offsets. Guest physical addresses are never treated directly as host pointers. MMIO device accesses are not routed through `GuestMemory`: KVM reports either the real-mode fixture's unbacked GPA `0x2000` or the long-mode fixture's translated unbacked GPA `0x10000000` through the same typed MMIO exit path.
+Guest-facing reads/writes, ELF64 segment materialization, long-mode page-table installation, and direct-interrupt GDT/IDT installation calculate and validate guest-memory offsets before performing any host pointer arithmetic or copy. Virtual ELF addresses are never treated as host pointers or guest-memory offsets. Guest physical addresses are never treated directly as host pointers. MMIO device accesses are not routed through `GuestMemory`: KVM reports either the real-mode fixture's unbacked GPA `0x2000` or the long-mode fixture's translated unbacked GPA `0x10000000` through the same typed MMIO exit path.
 
 ## Guest image placement
 
@@ -124,10 +132,12 @@ The flat long-mode fixture is loaded at GPA/VA `0x10000`, outside the reserved b
 
 The long-mode virtual-MMIO fixture also loads executable bytes identity-mapped at GPA/VA `0x10000`. Its 30-byte 64-bit guest materializes VA `0x500000` in RBX, writes `W` through that virtual address, reads configured byte `R` back through the same mapping, emits `R64M` through port `0xe9`, and reaches HLT at RIP `0x1001e`. KVM reports both memory exits at translated GPA `0x10000000`, proving that the page-table mapping and userspace MMIO path compose.
 
+The direct-interrupt fixture loads its seven-byte main path at GPA/VA `0x10000` and six-byte handler at GPA/VA `0x11000`. Vector `0x40` is queued before the first `KVM_RUN` while IF is initially clear. Main executes `STI` and one shadow `NOP`; delivery then transfers through the installed IDT gate to the handler, which emits `I` and executes `IRETQ`. The resumed main path emits `M` and halts at RIP `0x10007`, so proof `IM` demonstrates handler entry and architectural return rather than merely observing an injected request.
+
 `Elf64GuestImage` validates virtual and physical `PT_LOAD` semantics separately. A low virtual range in the identity window requires `p_vaddr == p_paddr`. A non-identity range must fit completely inside `0x400000..0x600000`, keep the same 4 KiB byte offset between `p_vaddr` and `p_paddr`, and use physical backing wholly inside the low 2 MiB RAM outside `0x1000..0x5000`. Load segments may not overlap in either virtual or physical address space. File bytes and BSS zeroing target only validated physical backing, while the vCPU entry is the validated virtual ELF entry.
 
 The deterministic ELF fixture has one executable `PT_LOAD` with virtual base `0x400000`, physical base `0x10000`, virtual entry `0x400100`, and memory size `0x180`. Its validated mapping plan installs the first alias PTE from virtual page `0x400000` to physical page `0x10000`; execution emits `LM64` and reaches terminal HLT at virtual RIP `0x400124`.
 
 ## Scope limit
 
-This document does not define multiple RAM slots, dirty logging, memory hotplug, shared mappings, file-backed guest RAM, a reusable huge-page allocator, arbitrary virtual windows, dynamic page-table allocation, per-page permission policy, caller-defined virtual-MMIO mappings, MMIO range/device registration, PCI layout, ELF relocations or load bias, `ET_DYN`/PIE, dynamic linking, Linux boot structures, or explicit reusable VM shutdown APIs. The integrated virtual-MMIO composition is exactly one fixed device PTE and one fixed byte device; broader mapping or routing semantics require separately selected milestones.
+This document does not define multiple RAM slots, dirty logging, memory hotplug, shared mappings, file-backed guest RAM, a reusable huge-page allocator, arbitrary virtual windows, dynamic page-table allocation, per-page permission policy, caller-defined virtual-MMIO mappings, MMIO range/device registration, arbitrary descriptor-table layouts, PIC/APIC/IOAPIC state, IRQ routing, MSI/MSI-X, PCI layout, ELF relocations or load bias, `ET_DYN`/PIE, dynamic linking, Linux boot structures, or explicit reusable VM shutdown APIs. The integrated virtual-MMIO composition remains exactly one fixed device PTE and one fixed byte device; the direct-interrupt milestone adds one fixed vector/GDT/IDT proof without implying a general interrupt-controller architecture.
