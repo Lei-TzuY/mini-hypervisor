@@ -13,6 +13,7 @@ use crate::memory::{GuestMemory, GuestMemoryRegion, GuestPhysAddr};
 use crate::portio::PortIoBus;
 use crate::vcpu::{MmioExit, PortIoExit, VcpuId};
 use crate::vmexit::VmExitReport;
+use std::fmt;
 
 pub const LONG_MODE_MMIO_VIRTUAL_PAGE: u64 = 0x50_0000;
 pub const LONG_MODE_MMIO_DEVICE_GPA: u64 = 0x1000_0000;
@@ -41,6 +42,45 @@ const LONG_MODE_MMIO_GUEST_BYTES: [u8; 30] = [
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LongModeMmioConfigurationError {
+    Boot(LongModeConfigurationError),
+    DevicePageBackedByRam {
+        device_page: u64,
+        ram_end: u64,
+    },
+}
+
+impl fmt::Display for LongModeMmioConfigurationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Boot(error) => error.fmt(f),
+            Self::DevicePageBackedByRam {
+                device_page,
+                ram_end,
+            } => write!(
+                f,
+                "long-mode MMIO device page {device_page:#x} must remain outside registered RAM ending at {ram_end:#x}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for LongModeMmioConfigurationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Boot(error) => Some(error),
+            Self::DevicePageBackedByRam { .. } => None,
+        }
+    }
+}
+
+impl From<LongModeConfigurationError> for LongModeMmioConfigurationError {
+    fn from(error: LongModeConfigurationError) -> Self {
+        Self::Boot(error)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LongModeMmioBootLayout {
     boot: LongModeBootLayout,
 }
@@ -50,11 +90,16 @@ impl LongModeMmioBootLayout {
         memory: GuestMemoryRegion,
         entry: GuestPhysAddr,
         stack_pointer: u64,
-    ) -> Result<Self, LongModeConfigurationError> {
+    ) -> Result<Self, LongModeMmioConfigurationError> {
         let boot = LongModeBootLayout::new(memory, entry, stack_pointer)?;
+        if LONG_MODE_MMIO_DEVICE_GPA < memory.end().get() {
+            return Err(LongModeMmioConfigurationError::DevicePageBackedByRam {
+                device_page: LONG_MODE_MMIO_DEVICE_GPA,
+                ram_end: memory.end().get(),
+            });
+        }
         debug_assert_eq!(LONG_MODE_MMIO_VIRTUAL_PAGE % LONG_MODE_PAGE_SIZE, 0);
         debug_assert_eq!(LONG_MODE_MMIO_DEVICE_GPA % LONG_MODE_PAGE_SIZE, 0);
-        debug_assert!(LONG_MODE_MMIO_DEVICE_GPA >= memory.end().get());
         Ok(Self { boot })
     }
 
@@ -218,6 +263,26 @@ mod tests {
             ),
             LONG_MODE_MMIO_DEVICE_GPA | PAGE_TABLE_ENTRY_FLAGS
         );
+    }
+
+    #[test]
+    fn rejects_layout_when_fixed_device_page_would_be_backed_by_ram() {
+        let memory = GuestMemoryRegion::new(
+            GuestPhysAddr::new(0),
+            LONG_MODE_MMIO_DEVICE_GPA + LONG_MODE_PAGE_SIZE,
+        )
+        .unwrap();
+        assert!(matches!(
+            LongModeMmioBootLayout::new(
+                memory,
+                LONG_MODE_MMIO_GUEST_ENTRY,
+                LONG_MODE_MMIO_STACK_POINTER
+            ),
+            Err(LongModeMmioConfigurationError::DevicePageBackedByRam {
+                device_page: LONG_MODE_MMIO_DEVICE_GPA,
+                ..
+            })
+        ));
     }
 
     #[test]
