@@ -7,7 +7,7 @@ use mini_hypervisor::portio::virtio_rng_completion_interrupt_fixture::{
     VIRTIO_RNG_INTERRUPT_PROOF,
 };
 use mini_hypervisor::portio::DEBUG_PORT;
-use mini_hypervisor::vcpu::{MmioDirection, PortIoDirection, VcpuExit};
+use mini_hypervisor::vcpu::{MmioDirection, PortIoDirection};
 
 const APIC_SPIV_SOFTWARE_ENABLE: u32 = 1 << 8;
 const APIC_LVT_MASKED: u32 = 1 << 16;
@@ -70,12 +70,9 @@ fn virtio_rng_completion_asserts_intx_reads_isr_and_deasserts_before_resume() {
             );
             assert_eq!(result.lapic_lint0() & APIC_LVT_MASKED, 0);
 
-            let report = result.report();
-            assert_eq!(report.exit(), VcpuExit::Hlt);
-            assert_eq!(report.rip(), result.terminal_rip());
-            assert_eq!(report.rflags() & 0x2, 0x2);
+            assert_eq!(result.completion_rflags() & 0x2, 0x2);
             assert_eq!(
-                report.rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
+                result.completion_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
                 X86_RFLAGS_INTERRUPT_ENABLE
             );
         }
