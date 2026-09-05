@@ -160,8 +160,8 @@ fn unhandled(io: &PortIoExit) -> PortIoError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use self::virtio::{VIRTIO_PCI_VENDOR_ID, VIRTIO_RNG_PCI_DEVICE_ID};
+    use super::*;
 
     const BAR0: u32 = 0x1000_0000;
 
@@ -214,9 +214,18 @@ mod tests {
         );
         assert_eq!(read_config(&mut config, 0x10), BAR0);
         assert_eq!(read_config(&mut config, 0x34) & 0xff, 0x40);
-        assert_eq!(read_config(&mut config, 0x40).to_le_bytes(), [0x09, 0x50, 16, 1]);
-        assert_eq!(read_config(&mut config, 0x50).to_le_bytes(), [0x09, 0x64, 20, 2]);
-        assert_eq!(read_config(&mut config, 0x64).to_le_bytes(), [0x09, 0x00, 16, 3]);
+        assert_eq!(
+            read_config(&mut config, 0x40).to_le_bytes(),
+            [0x09, 0x50, 16, 1]
+        );
+        assert_eq!(
+            read_config(&mut config, 0x50).to_le_bytes(),
+            [0x09, 0x64, 20, 2]
+        );
+        assert_eq!(
+            read_config(&mut config, 0x64).to_le_bytes(),
+            [0x09, 0x00, 16, 3]
+        );
     }
 
     #[test]

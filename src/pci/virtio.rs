@@ -259,7 +259,9 @@ impl VirtioRngPciFunction {
         match offset {
             0x00 => (u32::from(VIRTIO_RNG_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID),
             0x04 => u32::from(PCI_STATUS_CAPABILITIES_LIST) << 16,
-            0x08 => (u32::from(VIRTIO_RNG_PCI_CLASS_CODE) << 24) | u32::from(VIRTIO_RNG_PCI_REVISION),
+            0x08 => {
+                (u32::from(VIRTIO_RNG_PCI_CLASS_CODE) << 24) | u32::from(VIRTIO_RNG_PCI_REVISION)
+            }
             0x0c => 0,
             0x10 => self.bar0,
             0x2c => (0x0044_u32 << 16) | u32::from(VIRTIO_PCI_VENDOR_ID),
@@ -368,9 +370,13 @@ impl VirtioRngDevice {
             (COMMON_QUEUE_DESC, 4) => (self.queue_desc as u32).to_le_bytes().to_vec(),
             (COMMON_QUEUE_DESC_HIGH, 4) => ((self.queue_desc >> 32) as u32).to_le_bytes().to_vec(),
             (COMMON_QUEUE_DRIVER, 4) => (self.queue_driver as u32).to_le_bytes().to_vec(),
-            (COMMON_QUEUE_DRIVER_HIGH, 4) => ((self.queue_driver >> 32) as u32).to_le_bytes().to_vec(),
+            (COMMON_QUEUE_DRIVER_HIGH, 4) => {
+                ((self.queue_driver >> 32) as u32).to_le_bytes().to_vec()
+            }
             (COMMON_QUEUE_DEVICE, 4) => (self.queue_device as u32).to_le_bytes().to_vec(),
-            (COMMON_QUEUE_DEVICE_HIGH, 4) => ((self.queue_device >> 32) as u32).to_le_bytes().to_vec(),
+            (COMMON_QUEUE_DEVICE_HIGH, 4) => {
+                ((self.queue_device >> 32) as u32).to_le_bytes().to_vec()
+            }
             (VIRTIO_ISR_OFFSET, 1) => vec![0],
             _ => {
                 return Err(VirtioRngError::UnsupportedRegisterAccess {
@@ -504,10 +510,7 @@ impl VirtioRngDevice {
             .into());
         }
 
-        memory.write(
-            GuestPhysAddr::new(buffer_address),
-            VIRTIO_RNG_TEST_PAYLOAD,
-        )?;
+        memory.write(GuestPhysAddr::new(buffer_address), VIRTIO_RNG_TEST_PAYLOAD)?;
         let used_slot = self.last_used_idx % self.queue_size;
         let used_element = checked_add(self.queue_device, 4_u64 + 8_u64 * u64::from(used_slot))?;
         let mut element = [0_u8; 8];
@@ -696,20 +699,26 @@ impl VirtioRngDevice {
 }
 
 fn read_u16(offset: u64, payload: &[u8]) -> Result<u16, VirtioRngError> {
-    let bytes: [u8; 2] = payload.try_into().map_err(|_| VirtioRngError::InvalidRegisterPayload {
-        offset,
-        expected: 2,
-        actual: payload.len(),
-    })?;
+    let bytes: [u8; 2] =
+        payload
+            .try_into()
+            .map_err(|_| VirtioRngError::InvalidRegisterPayload {
+                offset,
+                expected: 2,
+                actual: payload.len(),
+            })?;
     Ok(u16::from_le_bytes(bytes))
 }
 
 fn read_u32(offset: u64, payload: &[u8]) -> Result<u32, VirtioRngError> {
-    let bytes: [u8; 4] = payload.try_into().map_err(|_| VirtioRngError::InvalidRegisterPayload {
-        offset,
-        expected: 4,
-        actual: payload.len(),
-    })?;
+    let bytes: [u8; 4] =
+        payload
+            .try_into()
+            .map_err(|_| VirtioRngError::InvalidRegisterPayload {
+                offset,
+                expected: 4,
+                actual: payload.len(),
+            })?;
     Ok(u32::from_le_bytes(bytes))
 }
 
@@ -751,7 +760,9 @@ mod tests {
     }
 
     fn negotiate_and_enable(device: &mut VirtioRngDevice) {
-        device.write(COMMON_DEVICE_STATUS, &[VIRTIO_STATUS_ACKNOWLEDGE]).unwrap();
+        device
+            .write(COMMON_DEVICE_STATUS, &[VIRTIO_STATUS_ACKNOWLEDGE])
+            .unwrap();
         device
             .write(
                 COMMON_DEVICE_STATUS,
@@ -795,7 +806,10 @@ mod tests {
             (u32::from(VIRTIO_RNG_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID)
         );
         assert_eq!(function.read_dword(0x10), BAR0 as u32);
-        assert_eq!(function.read_dword(0x34) & 0xff, u32::from(VIRTIO_CAP_COMMON));
+        assert_eq!(
+            function.read_dword(0x34) & 0xff,
+            u32::from(VIRTIO_CAP_COMMON)
+        );
         assert_eq!(function.read_dword(0x40).to_le_bytes(), [0x09, 0x50, 16, 1]);
         assert_eq!(function.read_dword(0x50).to_le_bytes(), [0x09, 0x64, 20, 2]);
         assert_eq!(function.read_dword(0x64).to_le_bytes(), [0x09, 0x00, 16, 3]);
@@ -806,11 +820,19 @@ mod tests {
         let mut device = VirtioRngDevice::new(BAR0);
         write_u32(&mut device, COMMON_DEVICE_FEATURE_SELECT, 1);
         assert_eq!(
-            u32::from_le_bytes(device.read(COMMON_DEVICE_FEATURE, 4).unwrap().try_into().unwrap()),
+            u32::from_le_bytes(
+                device
+                    .read(COMMON_DEVICE_FEATURE, 4)
+                    .unwrap()
+                    .try_into()
+                    .unwrap()
+            ),
             1
         );
 
-        device.write(COMMON_DEVICE_STATUS, &[VIRTIO_STATUS_ACKNOWLEDGE]).unwrap();
+        device
+            .write(COMMON_DEVICE_STATUS, &[VIRTIO_STATUS_ACKNOWLEDGE])
+            .unwrap();
         device
             .write(
                 COMMON_DEVICE_STATUS,
@@ -855,10 +877,14 @@ mod tests {
         assert_eq!(completion.length(), 8);
 
         let mut payload = [0_u8; 8];
-        memory.read(GuestPhysAddr::new(BUFFER), &mut payload).unwrap();
+        memory
+            .read(GuestPhysAddr::new(BUFFER), &mut payload)
+            .unwrap();
         assert_eq!(&payload, VIRTIO_RNG_TEST_PAYLOAD);
         let mut used = [0_u8; 10];
-        memory.read(GuestPhysAddr::new(USED + 2), &mut used).unwrap();
+        memory
+            .read(GuestPhysAddr::new(USED + 2), &mut used)
+            .unwrap();
         assert_eq!(u16::from_le_bytes(used[0..2].try_into().unwrap()), 1);
         assert_eq!(u32::from_le_bytes(used[2..6].try_into().unwrap()), 0);
         assert_eq!(u32::from_le_bytes(used[6..10].try_into().unwrap()), 8);
