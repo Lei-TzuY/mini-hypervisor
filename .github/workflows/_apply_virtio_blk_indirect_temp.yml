@@ -1,4 +1,4 @@
-name: Temporary virtio-blk indirect fixture runner
+name: Temporary virtio-blk indirect fixture repair
 
 on:
   push:
@@ -18,20 +18,85 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Apply indirect fixture refactor
+      - name: Apply exact topology-specific exit-budget repair
         run: |
-          python3 scripts/_add_virtio_blk_indirect_fixture.py
-          python3 scripts/_fix_virtio_blk_indirect_fixture_tests.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/portio/virtio_blk_write_readback_fixture.rs")
+          text = path.read_text()
+
+          old = "const VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET: u32 = 44;\n"
+          new = (
+              "const VIRTIO_BLK_DIRECT_EXIT_BUDGET: u32 = 44;\n"
+              "const VIRTIO_BLK_INDIRECT_EXIT_BUDGET: u32 = 49;\n"
+          )
+          if old in text:
+              text = text.replace(old, new, 1)
+          else:
+              assert new in text, "exit budget constants are neither old nor repaired"
+
+          old = '''    const fn expected_driver_features(self) -> u64 {
+              match self {
+                  Self::Direct => VIRTIO_F_VERSION_1,
+                  Self::Indirect => VIRTIO_F_VERSION_1 | VIRTIO_RING_F_INDIRECT_DESC,
+              }
+          }
+          '''
+          new = old + '''
+              const fn expected_exit_budget(self) -> u32 {
+                  match self {
+                      Self::Direct => VIRTIO_BLK_DIRECT_EXIT_BUDGET,
+                      Self::Indirect => VIRTIO_BLK_INDIRECT_EXIT_BUDGET,
+                  }
+              }
+          '''
+          if "const fn expected_exit_budget" not in text:
+              assert text.count(old) == 1, "driver-feature method changed unexpectedly"
+              text = text.replace(old, new, 1)
+
+          old = "        VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET,\n"
+          new = "        topology.expected_exit_budget(),\n"
+          if old in text:
+              text = text.replace(old, new, 1)
+          else:
+              assert new in text, "execution budget callsite changed unexpectedly"
+
+          old = '''    #[test]
+              fn exit_budget_matches_config_mmio_proof_and_hlt() {
+                  assert_eq!(VIRTIO_BLK_WRITE_READBACK_EXIT_BUDGET, 14 + 22 + 7 + 1);
+              }
+          '''
+          new = '''    #[test]
+              fn exit_budget_matches_topology_specific_config_mmio_proof_and_hlt() {
+                  assert_eq!(
+                      DescriptorTopology::Direct.expected_exit_budget(),
+                      14 + 22 + 7 + 1
+                  );
+                  assert_eq!(
+                      DescriptorTopology::Indirect.expected_exit_budget(),
+                      14 + 26 + 8 + 1
+                  );
+              }
+          '''
+          if "fn exit_budget_matches_topology_specific_config_mmio_proof_and_hlt" not in text:
+              assert text.count(old) == 1, "exit-budget regression changed unexpectedly"
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
       - name: Format and verify
         run: |
           cargo fmt --all
           git diff --check
           cargo check --all-targets --all-features
-      - name: Commit permanent milestone source
+      - name: Commit permanent milestone source if changed
         run: |
           git config user.name 'LeiZ'
           git config user.email '52287354+Lei-TzuY@users.noreply.github.com'
-          git add src/portio/virtio_blk_write_readback_fixture.rs src/portio/virtio_blk_fixture.rs src/bin/virtio-blk-indirect.rs tests/virtio_blk_indirect_guest.rs
-          git diff --cached --quiet && exit 1
-          git commit -m 'Execute virtio-blk indirect descriptor requests'
+          git add src/portio/virtio_blk_write_readback_fixture.rs
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'Fix indirect guest exit budget accounting'
           git push origin HEAD:milestone/virtio-blk-indirect-descriptors
