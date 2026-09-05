@@ -1,6 +1,7 @@
 use crate::error::PortIoError;
 use crate::vcpu::{PortIoDirection, PortIoExit};
 
+#[path = "pci/virtio.rs"]
 pub mod virtio;
 
 use virtio::VirtioRngPciFunction;
