@@ -6,6 +6,28 @@ use std::io;
 use std::os::fd::AsRawFd;
 
 const KVM_EXIT_IRQ_WINDOW_OPEN: u32 = 7;
+const APIC_SPIV_OFFSET: usize = 0x0f0;
+const APIC_LVT0_OFFSET: usize = 0x350;
+const APIC_SPIV_SOFTWARE_ENABLE: u32 = 1 << 8;
+const APIC_LVT_MASKED: u32 = 1 << 16;
+const APIC_LVT_DELIVERY_MODE_MASK: u32 = 0x700;
+const APIC_LVT_DELIVERY_MODE_EXTINT: u32 = 0x700;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LegacyPicExtIntState {
+    spiv: u32,
+    lint0: u32,
+}
+
+impl LegacyPicExtIntState {
+    pub(crate) const fn spiv(self) -> u32 {
+        self.spiv
+    }
+
+    pub(crate) const fn lint0(self) -> u32 {
+        self.lint0
+    }
+}
 
 impl Vcpu {
     pub fn initialize_long_mode_interrupts(
@@ -19,6 +41,33 @@ impl Vcpu {
         configure_interrupt_tables(&mut sregs, layout);
         sys::set_sregs(self.fd.as_raw_fd(), &sregs)
             .map_err(|source| vcpu_operation(self.id, "KVM_SET_SREGS", source))
+    }
+
+    pub(crate) fn configure_legacy_pic_extint(&self) -> Result<LegacyPicExtIntState, Error> {
+        let mut lapic = sys::get_lapic(self.fd.as_raw_fd())
+            .map_err(|source| vcpu_operation(self.id, "KVM_GET_LAPIC", source))?;
+        configure_legacy_pic_extint_state(&mut lapic);
+        sys::set_lapic(self.fd.as_raw_fd(), &lapic)
+            .map_err(|source| vcpu_operation(self.id, "KVM_SET_LAPIC", source))?;
+
+        let observed = sys::get_lapic(self.fd.as_raw_fd())
+            .map_err(|source| vcpu_operation(self.id, "KVM_GET_LAPIC readback", source))?;
+        let state = legacy_pic_extint_state(&observed);
+        if !legacy_pic_extint_ready(state) {
+            return Err(vcpu_operation(
+                self.id,
+                "KVM_SET_LAPIC readback verification",
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "expected software-enabled LAPIC with unmasked LINT0 ExtINT; got SPIV {:#x}, LINT0 {:#x}",
+                        state.spiv, state.lint0
+                    ),
+                ),
+            ));
+        }
+
+        Ok(state)
     }
 
     pub(crate) fn wait_for_interrupt_window(&mut self) -> Result<(u64, u64), Error> {
@@ -94,6 +143,44 @@ fn configure_interrupt_tables(sregs: &mut sys::KvmSregs, layout: &LongModeInterr
     };
 }
 
+fn configure_legacy_pic_extint_state(state: &mut sys::KvmLapicState) {
+    let spiv = read_lapic_register(state, APIC_SPIV_OFFSET);
+    write_lapic_register(
+        state,
+        APIC_SPIV_OFFSET,
+        spiv | APIC_SPIV_SOFTWARE_ENABLE,
+    );
+
+    let lint0 = read_lapic_register(state, APIC_LVT0_OFFSET);
+    let lint0 = (lint0 & !(APIC_LVT_MASKED | APIC_LVT_DELIVERY_MODE_MASK))
+        | APIC_LVT_DELIVERY_MODE_EXTINT;
+    write_lapic_register(state, APIC_LVT0_OFFSET, lint0);
+}
+
+fn legacy_pic_extint_state(state: &sys::KvmLapicState) -> LegacyPicExtIntState {
+    LegacyPicExtIntState {
+        spiv: read_lapic_register(state, APIC_SPIV_OFFSET),
+        lint0: read_lapic_register(state, APIC_LVT0_OFFSET),
+    }
+}
+
+const fn legacy_pic_extint_ready(state: LegacyPicExtIntState) -> bool {
+    state.spiv & APIC_SPIV_SOFTWARE_ENABLE == APIC_SPIV_SOFTWARE_ENABLE
+        && state.lint0 & APIC_LVT_DELIVERY_MODE_MASK == APIC_LVT_DELIVERY_MODE_EXTINT
+        && state.lint0 & APIC_LVT_MASKED == 0
+}
+
+fn read_lapic_register(state: &sys::KvmLapicState, offset: usize) -> u32 {
+    let bytes: [u8; 4] = state.regs[offset..offset + 4]
+        .try_into()
+        .expect("fixed LAPIC register offset remains inside the 0x400-byte state");
+    u32::from_le_bytes(bytes)
+}
+
+fn write_lapic_register(state: &mut sys::KvmLapicState, offset: usize, value: u32) {
+    state.regs[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
 fn set_interrupt_window_request(header: &mut sys::KvmRunHeader, requested: bool) {
     header.request_interrupt_window = u8::from(requested);
 }
@@ -101,6 +188,11 @@ fn set_interrupt_window_request(header: &mut sys::KvmRunHeader, requested: bool)
 const fn interrupt_window_ready(ready_for_interrupt_injection: bool, if_flag: bool) -> bool {
     ready_for_interrupt_injection && if_flag
 }
+
+const _: () = {
+    assert!(APIC_SPIV_OFFSET + 4 <= sys::KVM_APIC_REG_SIZE);
+    assert!(APIC_LVT0_OFFSET + 4 <= sys::KVM_APIC_REG_SIZE);
+};
 
 #[cfg(test)]
 mod tests {
@@ -151,6 +243,61 @@ mod tests {
         assert_eq!(sregs.idt.limit, 0x40f);
         assert_eq!(sregs.idt.padding, [0; 3]);
         assert_eq!(sregs.cr0, 0x1234);
+    }
+
+    #[test]
+    fn legacy_pic_extint_configuration_mutates_only_spiv_and_lint0() {
+        let mut state = sys::KvmLapicState {
+            regs: [0x5a; sys::KVM_APIC_REG_SIZE],
+        };
+        write_lapic_register(&mut state, APIC_SPIV_OFFSET, 0x1234_0055);
+        write_lapic_register(&mut state, APIC_LVT0_OFFSET, 0xabcd_f2aa);
+        let before = state.clone();
+
+        configure_legacy_pic_extint_state(&mut state);
+
+        assert_eq!(
+            read_lapic_register(&state, APIC_SPIV_OFFSET),
+            0x1234_0055 | APIC_SPIV_SOFTWARE_ENABLE
+        );
+        assert_eq!(
+            read_lapic_register(&state, APIC_LVT0_OFFSET),
+            (0xabcd_f2aa & !(APIC_LVT_MASKED | APIC_LVT_DELIVERY_MODE_MASK))
+                | APIC_LVT_DELIVERY_MODE_EXTINT
+        );
+        assert_eq!(
+            &state.regs[..APIC_SPIV_OFFSET],
+            &before.regs[..APIC_SPIV_OFFSET]
+        );
+        assert_eq!(
+            &state.regs[APIC_SPIV_OFFSET + 4..APIC_LVT0_OFFSET],
+            &before.regs[APIC_SPIV_OFFSET + 4..APIC_LVT0_OFFSET]
+        );
+        assert_eq!(
+            &state.regs[APIC_LVT0_OFFSET + 4..],
+            &before.regs[APIC_LVT0_OFFSET + 4..]
+        );
+    }
+
+    #[test]
+    fn legacy_pic_extint_readback_requires_enabled_apic_extint_and_unmasked_lint0() {
+        let mut state = sys::KvmLapicState::default();
+        configure_legacy_pic_extint_state(&mut state);
+        let configured = legacy_pic_extint_state(&state);
+        assert!(legacy_pic_extint_ready(configured));
+
+        assert!(!legacy_pic_extint_ready(LegacyPicExtIntState {
+            spiv: configured.spiv & !APIC_SPIV_SOFTWARE_ENABLE,
+            ..configured
+        }));
+        assert!(!legacy_pic_extint_ready(LegacyPicExtIntState {
+            lint0: configured.lint0 | APIC_LVT_MASKED,
+            ..configured
+        }));
+        assert!(!legacy_pic_extint_ready(LegacyPicExtIntState {
+            lint0: configured.lint0 & !APIC_LVT_DELIVERY_MODE_MASK,
+            ..configured
+        }));
     }
 
     #[test]
