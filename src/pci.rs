@@ -421,7 +421,10 @@ mod tests {
             u32::from(u16::from_le_bytes([PCI_CAP_ID_MSI, 0])) | (u32::from(PCI_MSI_ENABLE) << 16),
         );
 
-        assert_eq!(read_config(&mut config, VIRTIO_MSI_ADDRESS_OFFSET), 0xfee0_0000);
+        assert_eq!(
+            read_config(&mut config, VIRTIO_MSI_ADDRESS_OFFSET),
+            0xfee0_0000
+        );
         assert_eq!(read_config(&mut config, VIRTIO_MSI_DATA_OFFSET), 0x50);
         assert_eq!(
             config.virtio_rng_msi_message(),
