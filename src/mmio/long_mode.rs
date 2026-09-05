@@ -44,10 +44,7 @@ const LONG_MODE_MMIO_GUEST_BYTES: [u8; 30] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LongModeMmioConfigurationError {
     Boot(LongModeConfigurationError),
-    DevicePageBackedByRam {
-        device_page: u64,
-        ram_end: u64,
-    },
+    DevicePageBackedByRam { device_page: u64, ram_end: u64 },
 }
 
 impl fmt::Display for LongModeMmioConfigurationError {
@@ -180,12 +177,9 @@ pub fn run_long_mode_mmio_guest(config: VmConfig) -> Result<LongModeMmioGuestRes
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm()?;
     let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE)?;
-    let layout = LongModeMmioBootLayout::new(
-        memory.region(),
-        image.entry(),
-        LONG_MODE_MMIO_STACK_POINTER,
-    )
-    .expect("fixed long-mode virtual-MMIO fixture layout remains valid");
+    let layout =
+        LongModeMmioBootLayout::new(memory.region(), image.entry(), LONG_MODE_MMIO_STACK_POINTER)
+            .expect("fixed long-mode virtual-MMIO fixture layout remains valid");
     layout.install_page_tables(&mut memory)?;
     image.load(&mut memory)?;
     vm.register_guest_memory(memory)?;
@@ -194,7 +188,8 @@ pub fn run_long_mode_mmio_guest(config: VmConfig) -> Result<LongModeMmioGuestRes
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
     vcpu.initialize_long_mode(layout.boot_layout())?;
     let mut port_io = PortIoBus::with_debug_port();
-    let mut mmio = MmioBus::with_byte_device_at(LONG_MODE_MMIO_DEVICE_GPA, LONG_MODE_MMIO_READ_VALUE);
+    let mut mmio =
+        MmioBus::with_byte_device_at(LONG_MODE_MMIO_DEVICE_GPA, LONG_MODE_MMIO_READ_VALUE);
     let execution = run_vcpu_until_stopped_with_mmio(
         &mut vcpu,
         &mut port_io,
@@ -237,7 +232,8 @@ mod tests {
 
     #[test]
     fn long_mode_virtual_mmio_mapping_is_unbacked_and_installed_exactly() {
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let layout = LongModeMmioBootLayout::new(
             memory.region(),
             LONG_MODE_MMIO_GUEST_ENTRY,
@@ -298,9 +294,9 @@ mod tests {
         assert_eq!(
             LONG_MODE_MMIO_GUEST_BYTES,
             [
-                0x48, 0xbb, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc6, 0x03, b'W',
-                0x8a, 0x03, 0xe6, 0xe9, 0xb0, b'6', 0xe6, 0xe9, 0xb0, b'4', 0xe6, 0xe9, 0xb0,
-                b'M', 0xe6, 0xe9, 0xf4,
+                0x48, 0xbb, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc6, 0x03, b'W', 0x8a,
+                0x03, 0xe6, 0xe9, 0xb0, b'6', 0xe6, 0xe9, 0xb0, b'4', 0xe6, 0xe9, 0xb0, b'M', 0xe6,
+                0xe9, 0xf4,
             ]
         );
     }
