@@ -1,0 +1,39 @@
+name: Strict KVM virtio-blk multi-sector
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  virtio-blk-multi-sector:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM virtio-blk multi-sector proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin virtio-blk-multi-sector)"
+          printf '%s\n' "$output"
+          grep -F 'virtio-blk multi-sector range: sector=1 length=1024 capacity=4' <<<"$output"
+          grep -F 'virtio-blk multi-sector write completion: 0/1/1' <<<"$output"
+          grep -F 'virtio-blk multi-sector readback completion: 0/1025/1' <<<"$output"
+          grep -F 'virtio-blk multi-sector used: 2/0/1/0/1025' <<<"$output"
+          grep -F 'virtio-blk multi-sector request status: 0' <<<"$output"
+          grep -F 'virtio-blk multi-sector untouched: sector0=true sector3=true' <<<"$output"
+          grep -F 'virtio-blk multi-sector backing signatures: first=[66, 76, 75, 45, 77, 85, 76, 84, 73, 45, 48, 48, 48, 49, 33, 33] cross=[69, 78, 68, 49, 66, 69, 71, 50, 45, 67, 82, 79, 83, 83, 33, 33] last=[77, 85, 76, 84, 69, 78, 68, 33]' <<<"$output"
+          grep -F 'virtio-blk multi-sector readback signatures: first=[66, 76, 75, 45, 77, 85, 76, 84, 73, 45, 48, 48, 48, 49, 33, 33] cross=[69, 78, 68, 49, 66, 69, 71, 50, 45, 67, 82, 79, 83, 83, 33, 33] last=[77, 85, 76, 84, 69, 78, 68, 33]' <<<"$output"
+          grep -F 'virtio-blk multi-sector proof: [80, 66, 87, 79, 78, 82, 68]' <<<"$output"
+          grep -F 'virtio-blk multi-sector port-I/O exits: 21' <<<"$output"
+          grep -F 'virtio-blk multi-sector MMIO exits: 22' <<<"$output"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))

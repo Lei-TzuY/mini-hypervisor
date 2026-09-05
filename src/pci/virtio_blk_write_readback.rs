@@ -4,8 +4,10 @@ pub const VIRTIO_BLK_T_OUT: u32 = 1;
 
 impl VirtioBlkDevice {
     #[must_use]
-    pub const fn sector0(&self) -> &[u8; VIRTIO_BLK_SECTOR_SIZE] {
-        &self.sector0
+    pub fn sector0(&self) -> &[u8; VIRTIO_BLK_SECTOR_SIZE] {
+        self.backing[..VIRTIO_BLK_SECTOR_SIZE]
+            .try_into()
+            .expect("sector0 range has fixed sector size")
     }
 
     pub fn process_notified_queue_atomic(
@@ -66,13 +68,7 @@ impl VirtioBlkDevice {
         if reserved != 0 {
             return Err(VirtioBlkError::InvalidRequestReserved { reserved }.into());
         }
-        if sector >= VIRTIO_BLK_CAPACITY_SECTORS {
-            return Err(VirtioBlkError::SectorOutOfRange {
-                sector,
-                capacity: VIRTIO_BLK_CAPACITY_SECTORS,
-            }
-            .into());
-        }
+        let backing_range = self.request_backing_range(sector, data.length)?;
 
         let expected_data_flags = if request_type == VIRTIO_BLK_T_IN {
             VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE
@@ -80,7 +76,6 @@ impl VirtioBlkDevice {
             VIRTQ_DESC_F_NEXT
         };
         self.require_flags(data_index, data.flags, expected_data_flags)?;
-        self.require_length(data_index, data.length, VIRTIO_BLK_SECTOR_SIZE as u32)?;
 
         let used_idx_address = checked_add(self.queue_device, 2)?;
         let used_idx = read_guest_u16(memory, used_idx_address)?;
@@ -98,22 +93,24 @@ impl VirtioBlkDevice {
         // mutating guest output, the backing sector, queue indices, notify state, or ISR state. The
         // private anonymous RAM mapping is stable for the duration of this call, so successful
         // preflight reads prove the subsequent writes fit the same registered region.
-        let mut outgoing_sector = None;
+        let mut outgoing_data = None;
         if request_type == VIRTIO_BLK_T_OUT {
-            let mut bytes = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
+            let mut bytes = vec![0_u8; data.length as usize];
             memory.read(GuestPhysAddr::new(data.address), &mut bytes)?;
-            outgoing_sector = Some(bytes);
+            outgoing_data = Some(bytes);
         } else {
-            preflight_guest_output(memory, data.address, VIRTIO_BLK_SECTOR_SIZE)?;
+            preflight_guest_output(memory, data.address, data.length as usize)?;
         }
         preflight_guest_output(memory, status.address, 1)?;
         preflight_guest_output(memory, used_element, 8)?;
         preflight_guest_output(memory, used_idx_address, 2)?;
 
         let written = if request_type == VIRTIO_BLK_T_IN {
-            let sector_bytes = self.sector0;
-            memory.write(GuestPhysAddr::new(data.address), &sector_bytes)?;
-            (VIRTIO_BLK_SECTOR_SIZE + 1) as u32
+            memory.write(
+                GuestPhysAddr::new(data.address),
+                &self.backing[backing_range.clone()],
+            )?;
+            data.length + 1
         } else {
             1
         };
@@ -128,8 +125,8 @@ impl VirtioBlkDevice {
             &next_used.to_le_bytes(),
         )?;
 
-        if let Some(bytes) = outgoing_sector {
-            self.sector0 = bytes;
+        if let Some(bytes) = outgoing_data {
+            self.backing[backing_range].copy_from_slice(&bytes);
         }
         self.last_avail_idx = avail_idx;
         self.last_used_idx = next_used;
