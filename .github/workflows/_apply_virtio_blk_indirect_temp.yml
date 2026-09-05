@@ -19,7 +19,9 @@ jobs:
         with:
           components: rustfmt
       - name: Apply indirect fixture refactor
-        run: python3 scripts/_add_virtio_blk_indirect_fixture.py
+        run: |
+          python3 scripts/_add_virtio_blk_indirect_fixture.py
+          python3 scripts/_fix_virtio_blk_indirect_fixture_tests.py
       - name: Format and verify
         run: |
           cargo fmt --all
