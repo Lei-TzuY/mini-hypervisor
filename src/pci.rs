@@ -42,7 +42,9 @@ impl SyntheticPciFunction {
         match offset {
             0x00 => (u32::from(SYNTHETIC_PCI_DEVICE_ID) << 16) | u32::from(SYNTHETIC_PCI_VENDOR_ID),
             0x04 => 0,
-            0x08 => (u32::from(SYNTHETIC_PCI_CLASS_CODE) << 24) | u32::from(SYNTHETIC_PCI_REVISION),
+            0x08 => {
+                (u32::from(SYNTHETIC_PCI_CLASS_CODE) << 24) | u32::from(SYNTHETIC_PCI_REVISION)
+            }
             0x0c => 0,
             0x10 => self.bar0,
             _ => 0,
@@ -84,9 +86,9 @@ impl PciConfigMechanism1 {
             (PCI_CONFIG_ADDRESS_PORT, PortIoDirection::In) => {
                 Ok(PciConfigService::Input(self.address.to_le_bytes()))
             }
-            (PCI_CONFIG_DATA_PORT, PortIoDirection::In) => {
-                Ok(PciConfigService::Input(self.read_selected_dword().to_le_bytes()))
-            }
+            (PCI_CONFIG_DATA_PORT, PortIoDirection::In) => Ok(PciConfigService::Input(
+                self.read_selected_dword().to_le_bytes(),
+            )),
             (PCI_CONFIG_DATA_PORT, PortIoDirection::Out) => Err(unhandled(io)),
             _ => Err(unhandled(io)),
         }
@@ -115,10 +117,10 @@ impl PciConfigMechanism1 {
 #[must_use]
 pub const fn config_selector(offset: u8) -> u32 {
     PCI_CONFIG_ENABLE
-        | (u32::from(SYNTHETIC_PCI_BUS) << 16)
-        | (u32::from(SYNTHETIC_PCI_DEVICE) << 11)
-        | (u32::from(SYNTHETIC_PCI_FUNCTION) << 8)
-        | (u32::from(offset) & PCI_CONFIG_REGISTER_MASK)
+        | ((SYNTHETIC_PCI_BUS as u32) << 16)
+        | ((SYNTHETIC_PCI_DEVICE as u32) << 11)
+        | ((SYNTHETIC_PCI_FUNCTION as u32) << 8)
+        | ((offset as u32) & PCI_CONFIG_REGISTER_MASK)
 }
 
 fn unhandled(io: &PortIoExit) -> PortIoError {
