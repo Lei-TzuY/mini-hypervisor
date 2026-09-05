@@ -2,9 +2,7 @@ use crate::error::{Error, VmExitError};
 use crate::mmio::MmioBus;
 use crate::portio::PortIoBus;
 use crate::vcpu::{MmioExit, PortIoExit, Vcpu, VcpuExit, VcpuId};
-use crate::vmexit::{
-    dispatch_vcpu_exit, VmExitContinuation, VmExitDisposition, VmExitReport,
-};
+use crate::vmexit::{dispatch_vcpu_exit, VmExitContinuation, VmExitDisposition, VmExitReport};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VmExecutionResult {
@@ -370,10 +368,7 @@ mod tests {
         let mut exit_reasons = Vec::new();
         record_completed_exit(&mut budget, &mut exit_reasons, VcpuExit::Mmio.reason());
         record_completed_exit(&mut budget, &mut exit_reasons, sys::KVM_EXIT_HLT);
-        assert_eq!(
-            exit_reasons,
-            [VcpuExit::Mmio.reason(), sys::KVM_EXIT_HLT]
-        );
+        assert_eq!(exit_reasons, [VcpuExit::Mmio.reason(), sys::KVM_EXIT_HLT]);
     }
 
     #[test]
