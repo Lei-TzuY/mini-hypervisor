@@ -1,6 +1,8 @@
+mod virtio_blk_backing;
 #[path = "virtio_blk_write_readback.rs"]
 mod write_readback;
 
+pub use virtio_blk_backing::{VIRTIO_BLK_BACKING_SIZE, VIRTIO_BLK_CAPACITY_SECTORS};
 pub use write_readback::VIRTIO_BLK_T_OUT;
 
 use super::virtio::{
@@ -21,7 +23,6 @@ pub const VIRTIO_BLK_PCI_REVISION: u8 = 1;
 pub const VIRTIO_BLK_PCI_CLASS_CODE: u8 = 0x01;
 pub const VIRTIO_BLK_BAR_SIZE: u32 = 0x1000;
 pub const VIRTIO_BLK_QUEUE_INDEX: u16 = 0;
-pub const VIRTIO_BLK_CAPACITY_SECTORS: u64 = 1;
 pub const VIRTIO_BLK_SECTOR_SIZE: usize = 512;
 pub const VIRTIO_BLK_CONFIG_OFFSET: u64 = 0x300;
 pub const VIRTIO_BLK_CONFIG_LENGTH: u32 = 8;
@@ -125,6 +126,15 @@ pub enum VirtioBlkError {
         sector: u64,
         capacity: u64,
     },
+    InvalidDataLength {
+        length: u32,
+        sector_size: u32,
+    },
+    RequestRangeOutOfRange {
+        sector: u64,
+        data_length: u32,
+        capacity: u64,
+    },
     AddressOverflow {
         base: u64,
         offset: u64,
@@ -210,6 +220,21 @@ impl fmt::Display for VirtioBlkError {
             Self::SectorOutOfRange { sector, capacity } => write!(
                 f,
                 "virtio-blk sector {sector} is outside capacity {capacity} sectors"
+            ),
+            Self::InvalidDataLength {
+                length,
+                sector_size,
+            } => write!(
+                f,
+                "virtio-blk data length {length} is not a non-zero multiple of sector size {sector_size}"
+            ),
+            Self::RequestRangeOutOfRange {
+                sector,
+                data_length,
+                capacity,
+            } => write!(
+                f,
+                "virtio-blk request at sector {sector} with {data_length} data bytes exceeds capacity {capacity} sectors"
             ),
             Self::AddressOverflow { base, offset } => write!(
                 f,
@@ -358,7 +383,7 @@ pub struct VirtioBlkDevice {
     last_avail_idx: u16,
     last_used_idx: u16,
     isr_status: u8,
-    sector0: [u8; VIRTIO_BLK_SECTOR_SIZE],
+    backing: [u8; VIRTIO_BLK_BACKING_SIZE],
 }
 
 impl VirtioBlkDevice {
@@ -380,7 +405,7 @@ impl VirtioBlkDevice {
             last_avail_idx: 0,
             last_used_idx: 0,
             isr_status: 0,
-            sector0: deterministic_sector(),
+            backing: virtio_blk_backing::deterministic_backing(),
         }
     }
 
@@ -579,13 +604,7 @@ impl VirtioBlkDevice {
         if reserved != 0 {
             return Err(VirtioBlkError::InvalidRequestReserved { reserved }.into());
         }
-        if sector >= VIRTIO_BLK_CAPACITY_SECTORS {
-            return Err(VirtioBlkError::SectorOutOfRange {
-                sector,
-                capacity: VIRTIO_BLK_CAPACITY_SECTORS,
-            }
-            .into());
-        }
+        let backing_range = self.request_backing_range(sector, data.length)?;
 
         let used_idx = read_guest_u16(memory, checked_add(self.queue_device, 2)?)?;
         if used_idx != self.last_used_idx {
@@ -596,9 +615,12 @@ impl VirtioBlkDevice {
             .into());
         }
 
-        memory.write(GuestPhysAddr::new(data.address), &self.sector0)?;
+        memory.write(
+            GuestPhysAddr::new(data.address),
+            &self.backing[backing_range],
+        )?;
         memory.write(GuestPhysAddr::new(status.address), &[VIRTIO_BLK_S_OK])?;
-        let written = (VIRTIO_BLK_SECTOR_SIZE + 1) as u32;
+        let written = data.length + 1;
         let used_slot = self.last_used_idx % self.queue_size;
         let used_element = checked_add(self.queue_device, 4 + 8 * u64::from(used_slot))?;
         let mut element = [0_u8; 8];
@@ -929,11 +951,11 @@ mod tests {
     }
 
     #[test]
-    fn capacity_register_is_one_sector_and_sector_payload_is_stable() {
+    fn capacity_register_matches_bounded_backing_and_sector0_payload_is_stable() {
         let mut device = VirtioBlkDevice::new(BAR);
         assert_eq!(
             device.read(VIRTIO_BLK_CONFIG_OFFSET, 8).unwrap(),
-            1_u64.to_le_bytes()
+            VIRTIO_BLK_CAPACITY_SECTORS.to_le_bytes()
         );
         let sector = deterministic_sector();
         assert_eq!(&sector[..16], b"BLK-SECTOR-0000!");

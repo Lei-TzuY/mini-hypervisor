@@ -41,20 +41,20 @@ impl VirtioBlkDevice {
             });
         }
 
-        let start = sector
-            .checked_mul(VIRTIO_BLK_SECTOR_SIZE as u64)
-            .ok_or(VirtioBlkError::RequestRangeOutOfRange {
+        let start = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE as u64).ok_or(
+            VirtioBlkError::RequestRangeOutOfRange {
                 sector,
                 data_length,
                 capacity: VIRTIO_BLK_CAPACITY_SECTORS,
-            })?;
-        let end = start
-            .checked_add(u64::from(data_length))
-            .ok_or(VirtioBlkError::RequestRangeOutOfRange {
+            },
+        )?;
+        let end = start.checked_add(u64::from(data_length)).ok_or(
+            VirtioBlkError::RequestRangeOutOfRange {
                 sector,
                 data_length,
                 capacity: VIRTIO_BLK_CAPACITY_SECTORS,
-            })?;
+            },
+        )?;
         if end > VIRTIO_BLK_BACKING_SIZE as u64 {
             return Err(VirtioBlkError::RequestRangeOutOfRange {
                 sector,
