@@ -99,12 +99,7 @@ impl ByteMmioDevice {
 mod tests {
     use super::*;
 
-    fn exit_at(
-        address: u64,
-        direction: MmioDirection,
-        length: u32,
-        write_data: &[u8],
-    ) -> MmioExit {
+    fn exit_at(address: u64, direction: MmioDirection, length: u32, write_data: &[u8]) -> MmioExit {
         MmioExit::new_for_test(address, direction, length, write_data.to_vec())
     }
 
@@ -141,12 +136,7 @@ mod tests {
             MmioService::Read(vec![b'R'])
         );
         assert!(matches!(
-            bus.dispatch(&exit_at(
-                BYTE_DEVICE_ADDRESS,
-                MmioDirection::Read,
-                1,
-                &[]
-            )),
+            bus.dispatch(&exit_at(BYTE_DEVICE_ADDRESS, MmioDirection::Read, 1, &[])),
             Err(Error::Mmio(MmioError::UnhandledAddress {
                 address: BYTE_DEVICE_ADDRESS,
                 ..
