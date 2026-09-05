@@ -23,22 +23,35 @@ pub const FIRST_TERMINAL_RIP: u64 = FIRST_ENTRY.get() + FIRST_GUEST_BYTES.len() 
 pub const SECOND_TERMINAL_RIP: u64 = SECOND_ENTRY.get() + 12;
 
 const FIRST_GUEST_BYTES: [u8; 10] = [
-    0xb0, SHARED_MARKER_VALUE, // mov al, 'A'
-    0xa2, 0x00, 0x30, // mov [0x3000], al
-    0xb0, b'0', // mov al, '0'
-    0xe6, 0xe9, // out 0xe9, al
+    0xb0,
+    SHARED_MARKER_VALUE, // mov al, 'A'
+    0xa2,
+    0x00,
+    0x30, // mov [0x3000], al
+    0xb0,
+    b'0', // mov al, '0'
+    0xe6,
+    0xe9, // out 0xe9, al
     0xf4, // hlt
 ];
 
 const SECOND_GUEST_BYTES: [u8; 17] = [
-    0xa0, 0x00, 0x30, // mov al, [0x3000]
-    0x3c, SHARED_MARKER_VALUE, // cmp al, 'A'
-    0x75, 0x05, // jne failure
-    0xb0, b'1', // mov al, '1'
-    0xe6, 0xe9, // out 0xe9, al
+    0xa0,
+    0x00,
+    0x30, // mov al, [0x3000]
+    0x3c,
+    SHARED_MARKER_VALUE, // cmp al, 'A'
+    0x75,
+    0x05, // jne failure
+    0xb0,
+    b'1', // mov al, '1'
+    0xe6,
+    0xe9, // out 0xe9, al
     0xf4, // hlt
-    0xb0, b'F', // failure: mov al, 'F'
-    0xe6, 0xe9, // out 0xe9, al
+    0xb0,
+    b'F', // failure: mov al, 'F'
+    0xe6,
+    0xe9, // out 0xe9, al
     0xf4, // hlt
 ];
 
@@ -109,11 +122,8 @@ pub fn run_two_vcpu_guest() -> Result<TwoVcpuGuestResult, Error> {
     second_vcpu.initialize_real_mode(second_image.entry())?;
 
     let mut first_port_io = PortIoBus::with_debug_port();
-    let first_execution = run_vcpu_until_stopped(
-        &mut first_vcpu,
-        &mut first_port_io,
-        EXIT_BUDGET_PER_VCPU,
-    )?;
+    let first_execution =
+        run_vcpu_until_stopped(&mut first_vcpu, &mut first_port_io, EXIT_BUDGET_PER_VCPU)?;
     let first_proof = first_port_io.debug_output().unwrap_or(&[]).to_vec();
 
     let mut marker = [0_u8; 1];
@@ -122,11 +132,8 @@ pub fn run_two_vcpu_guest() -> Result<TwoVcpuGuestResult, Error> {
         .read(SHARED_MARKER, &mut marker)?;
 
     let mut second_port_io = PortIoBus::with_debug_port();
-    let second_execution = run_vcpu_until_stopped(
-        &mut second_vcpu,
-        &mut second_port_io,
-        EXIT_BUDGET_PER_VCPU,
-    )?;
+    let second_execution =
+        run_vcpu_until_stopped(&mut second_vcpu, &mut second_port_io, EXIT_BUDGET_PER_VCPU)?;
     let second_proof = second_port_io.debug_output().unwrap_or(&[]).to_vec();
 
     Ok(TwoVcpuGuestResult {
