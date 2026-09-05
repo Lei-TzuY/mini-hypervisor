@@ -1,8 +1,7 @@
 use super::pci::virtio::{
-    VirtioRngPciFunction, VirtioRngQueueCompletion, VIRTIO_F_VERSION_1,
-    VIRTIO_PCI_VENDOR_ID, VIRTIO_RNG_PCI_DEVICE_ID, VIRTIO_RNG_TEST_PAYLOAD,
-    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
-    VIRTIO_STATUS_FEATURES_OK,
+    VirtioRngPciFunction, VirtioRngQueueCompletion, VIRTIO_F_VERSION_1, VIRTIO_PCI_VENDOR_ID,
+    VIRTIO_RNG_PCI_DEVICE_ID, VIRTIO_RNG_TEST_PAYLOAD, VIRTIO_STATUS_ACKNOWLEDGE,
+    VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
 use super::pci::{
     config_selector, PciConfigMechanism1, PCI_CONFIG_ADDRESS_PORT, PCI_CONFIG_DATA_PORT,
@@ -145,9 +144,8 @@ pub fn run_virtio_rng_pci_guest(config: VmConfig) -> Result<VirtioRngPciGuestRes
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
     vcpu.initialize_long_mode(layout.boot_layout())?;
 
-    let pci = PciConfigMechanism1::with_virtio_rng(VirtioRngPciFunction::new(
-        VIRTIO_RNG_BAR0_GPA as u32,
-    ));
+    let pci =
+        PciConfigMechanism1::with_virtio_rng(VirtioRngPciFunction::new(VIRTIO_RNG_BAR0_GPA as u32));
     let mut port_io = PortIoBus::with_debug_port_and_pci_config(pci);
     let mut mmio = MmioBus::empty();
     mmio.register_virtio_rng_device_at(VIRTIO_RNG_BAR0_GPA)
@@ -164,7 +162,9 @@ pub fn run_virtio_rng_pci_guest(config: VmConfig) -> Result<VirtioRngPciGuestRes
                 return Ok(());
             }
             if queue_completion.is_some() {
-                return Err(verification_error("duplicate virtio-rng notify completion barrier"));
+                return Err(verification_error(
+                    "duplicate virtio-rng notify completion barrier",
+                ));
             }
             let event = mmio.take_device_event_record().ok_or_else(|| {
                 verification_error("notify barrier arrived without a pending virtio queue event")
@@ -186,8 +186,12 @@ pub fn run_virtio_rng_pci_guest(config: VmConfig) -> Result<VirtioRngPciGuestRes
                 .ok_or_else(|| verification_error("virtio-rng VM lost registered guest memory"))?;
             let completion = mmio
                 .process_virtio_rng_notification(VIRTIO_RNG_BAR0_GPA, memory)
-                .map_err(|error| verification_error(format!("virtio-rng queue processing failed: {error}")))?
-                .ok_or_else(|| verification_error("virtio-rng BAR disappeared before queue processing"))?;
+                .map_err(|error| {
+                    verification_error(format!("virtio-rng queue processing failed: {error}"))
+                })?
+                .ok_or_else(|| {
+                    verification_error("virtio-rng BAR disappeared before queue processing")
+                })?;
             queue_completion = Some(completion);
             Ok(())
         },
@@ -209,7 +213,9 @@ pub fn run_virtio_rng_pci_guest(config: VmConfig) -> Result<VirtioRngPciGuestRes
         .ok_or_else(|| verification_error("virtio-rng status unavailable after execution"))?;
     let driver_features = mmio
         .virtio_rng_driver_features_at(VIRTIO_RNG_BAR0_GPA)
-        .ok_or_else(|| verification_error("virtio-rng driver features unavailable after execution"))?;
+        .ok_or_else(|| {
+            verification_error("virtio-rng driver features unavailable after execution")
+        })?;
     let queue_enabled = mmio
         .virtio_rng_queue_enabled_at(VIRTIO_RNG_BAR0_GPA)
         .ok_or_else(|| verification_error("virtio-rng queue state unavailable after execution"))?;
@@ -346,12 +352,32 @@ fn validate_mmio_sequence(exits: &[MmioExit]) -> Result<(), Error> {
             &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK],
         ),
         (0x16, MmioDirection::Write, 2, &0_u16.to_le_bytes()),
-        (0x18, MmioDirection::Write, 2, &VIRTIO_QUEUE_SIZE.to_le_bytes()),
-        (0x20, MmioDirection::Write, 4, &(VIRTIO_RNG_DESCRIPTOR_GPA as u32).to_le_bytes()),
+        (
+            0x18,
+            MmioDirection::Write,
+            2,
+            &VIRTIO_QUEUE_SIZE.to_le_bytes(),
+        ),
+        (
+            0x20,
+            MmioDirection::Write,
+            4,
+            &(VIRTIO_RNG_DESCRIPTOR_GPA as u32).to_le_bytes(),
+        ),
         (0x24, MmioDirection::Write, 4, &0_u32.to_le_bytes()),
-        (0x28, MmioDirection::Write, 4, &(VIRTIO_RNG_AVAIL_GPA as u32).to_le_bytes()),
+        (
+            0x28,
+            MmioDirection::Write,
+            4,
+            &(VIRTIO_RNG_AVAIL_GPA as u32).to_le_bytes(),
+        ),
         (0x2c, MmioDirection::Write, 4, &0_u32.to_le_bytes()),
-        (0x30, MmioDirection::Write, 4, &(VIRTIO_RNG_USED_GPA as u32).to_le_bytes()),
+        (
+            0x30,
+            MmioDirection::Write,
+            4,
+            &(VIRTIO_RNG_USED_GPA as u32).to_le_bytes(),
+        ),
         (0x34, MmioDirection::Write, 4, &0_u32.to_le_bytes()),
         (0x1c, MmioDirection::Write, 2, &1_u16.to_le_bytes()),
         (
@@ -417,7 +443,10 @@ fn build_guest() -> Vec<u8> {
     let mut code = Vec::new();
 
     emit_pci_read(&mut code, 0x00);
-    emit_cmp_eax(&mut code, (u32::from(VIRTIO_RNG_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID));
+    emit_cmp_eax(
+        &mut code,
+        (u32::from(VIRTIO_RNG_PCI_DEVICE_ID) << 16) | u32::from(VIRTIO_PCI_VENDOR_ID),
+    );
     emit_pci_read(&mut code, 0x34);
     emit_cmp_eax(&mut code, 0x40);
     emit_pci_read(&mut code, 0x40);
@@ -575,7 +604,10 @@ mod tests {
         assert!(bytes.windows(4).any(|window| window == b"\xb0V\xe6\xe9"));
         assert!(bytes.windows(4).any(|window| window == b"\xb0N\xe6\xe9"));
         assert!(bytes.windows(4).any(|window| window == b"\xb0R\xe6\xe9"));
-        assert_eq!(u64::from_le_bytes(*VIRTIO_RNG_TEST_PAYLOAD), 0x2141_5441_4447_4e52);
+        assert_eq!(
+            u64::from_le_bytes(*VIRTIO_RNG_TEST_PAYLOAD),
+            0x2141_5441_4447_4e52
+        );
     }
 
     #[test]
