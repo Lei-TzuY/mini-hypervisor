@@ -602,13 +602,13 @@ impl VirtioRngDevice {
                 return Ok(());
             }
         }
-        if requested & VIRTIO_STATUS_DRIVER_OK != 0 {
-            if requested & VIRTIO_STATUS_FEATURES_OK == 0 || !self.queue_enabled {
-                return Err(VirtioRngError::InvalidDeviceStatus {
-                    current: self.status,
-                    requested,
-                });
-            }
+        if requested & VIRTIO_STATUS_DRIVER_OK != 0
+            && (requested & VIRTIO_STATUS_FEATURES_OK == 0 || !self.queue_enabled)
+        {
+            return Err(VirtioRngError::InvalidDeviceStatus {
+                current: self.status,
+                requested,
+            });
         }
         self.status = requested;
         Ok(())
