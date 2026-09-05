@@ -17,6 +17,7 @@ pub const KVM_GET_REGS: libc::c_ulong = 0x8090_AE81;
 pub const KVM_SET_REGS: libc::c_ulong = 0x4090_AE82;
 pub const KVM_GET_SREGS: libc::c_ulong = 0x8138_AE83;
 pub const KVM_SET_SREGS: libc::c_ulong = 0x4138_AE84;
+pub const KVM_INTERRUPT: libc::c_ulong = 0x4004_AE86;
 pub const KVM_GET_MSRS: libc::c_ulong = 0xC008_AE88;
 pub const KVM_SET_MSRS: libc::c_ulong = 0x4008_AE89;
 pub const KVM_SET_CPUID2: libc::c_ulong = 0x4008_AE90;
@@ -131,6 +132,19 @@ pub struct KvmSregs {
     pub efer: u64,
     pub apic_base: u64,
     pub interrupt_bitmap: [u64; 4],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KvmInterrupt {
+    pub irq: u32,
+}
+
+impl KvmInterrupt {
+    #[must_use]
+    pub const fn new(irq: u32) -> Self {
+        Self { irq }
+    }
 }
 
 #[repr(C)]
@@ -413,6 +427,13 @@ pub fn set_sregs(fd: RawFd, sregs: &KvmSregs) -> io::Result<()> {
     cvt_ioctl(result).map(|_| ())
 }
 
+pub fn inject_interrupt(fd: RawFd, interrupt: &KvmInterrupt) -> io::Result<()> {
+    // SAFETY: `interrupt` is the fixed four-byte x86 `struct kvm_interrupt` and remains readable
+    // for the duration of the vCPU ioctl.
+    let result = unsafe { libc::ioctl(fd, KVM_INTERRUPT, interrupt) };
+    cvt_ioctl(result).map(|_| ())
+}
+
 pub fn run_vcpu(fd: RawFd) -> io::Result<()> {
     ioctl_noarg(fd, KVM_RUN).map(|_| ())
 }
@@ -451,6 +472,13 @@ mod tests {
         assert_eq!(KVM_SET_REGS, 0x4090_AE82);
         assert_eq!(KVM_GET_SREGS, 0x8138_AE83);
         assert_eq!(KVM_SET_SREGS, 0x4138_AE84);
+    }
+
+    #[test]
+    fn interrupt_structure_and_ioctl_match_x86_64_kvm_uapi() {
+        assert_eq!(std::mem::size_of::<KvmInterrupt>(), 4);
+        assert_eq!(KVM_INTERRUPT, 0x4004_AE86);
+        assert_eq!(KvmInterrupt::new(0x40), KvmInterrupt { irq: 0x40 });
     }
 
     #[test]

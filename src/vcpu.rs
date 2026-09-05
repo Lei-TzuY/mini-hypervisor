@@ -18,6 +18,7 @@ pub use special_register_snapshot::{
     VcpuSpecialRegisterField, VcpuSpecialRegisterMismatch, VcpuSpecialRegisterSnapshot,
     VcpuSpecialRegisterSnapshotComparison,
 };
+mod interrupt;
 mod special_register_restore;
 
 mod msr_readback;
