@@ -37,21 +37,69 @@ const MMIO_LEVEL_INTERRUPT_FAILURE_BYTE: u8 = b'F';
 // at D because in-kernel LAPIC HLT is not a portable userspace-exit contract.
 const MMIO_LEVEL_INTERRUPT_GUEST_BYTES: [u8; 65] = [
     0xfa, // cli
-    0xb0, 0x11, 0xe6, 0x20, 0xe6, 0xa0, // ICW1: initialize master and slave PICs
-    0xb0, 0x40, 0xe6, 0x21, // ICW2: master IRQ0..7 -> vectors 0x40..0x47
-    0xb0, 0x48, 0xe6, 0xa1, // ICW2: slave IRQ8..15 -> vectors 0x48..0x4f
-    0xb0, 0x04, 0xe6, 0x21, // ICW3: master has slave on IRQ2
-    0xb0, 0x02, 0xe6, 0xa1, // ICW3: slave cascade identity 2
-    0xb0, 0x01, 0xe6, 0x21, 0xe6, 0xa1, // ICW4: 8086 mode on both PICs
-    0xb0, 0xfe, 0xe6, 0x21, // OCW1: unmask only master IRQ0
-    0xb0, 0xff, 0xe6, 0xa1, // OCW1: mask every slave IRQ
+    0xb0,
+    0x11,
+    0xe6,
+    0x20,
+    0xe6,
+    0xa0, // ICW1: initialize master and slave PICs
+    0xb0,
+    0x40,
+    0xe6,
+    0x21, // ICW2: master IRQ0..7 -> vectors 0x40..0x47
+    0xb0,
+    0x48,
+    0xe6,
+    0xa1, // ICW2: slave IRQ8..15 -> vectors 0x48..0x4f
+    0xb0,
+    0x04,
+    0xe6,
+    0x21, // ICW3: master has slave on IRQ2
+    0xb0,
+    0x02,
+    0xe6,
+    0xa1, // ICW3: slave cascade identity 2
+    0xb0,
+    0x01,
+    0xe6,
+    0x21,
+    0xe6,
+    0xa1, // ICW4: 8086 mode on both PICs
+    0xb0,
+    0xfe,
+    0xe6,
+    0x21, // OCW1: unmask only master IRQ0
+    0xb0,
+    0xff,
+    0xe6,
+    0xa1, // OCW1: mask every slave IRQ
     0xfb, // sti
     0x90, // nop -- complete STI's one-instruction interrupt shadow
-    0x48, 0xbb, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs $0x500000, %rbx
-    0xc6, 0x03, MMIO_LEVEL_INTERRUPT_COMMAND_VALUE, // command register write
-    0xb0, MMIO_LEVEL_INTERRUPT_ARMED_BYTE, 0xe6, 0xe9, // command completion barrier
-    0xb0, MMIO_LEVEL_INTERRUPT_RESUMED_BYTE, 0xe6, 0xe9, // resumed main after IRETQ
-    0xb0, MMIO_LEVEL_INTERRUPT_DONE_BYTE, 0xe6, 0xe9, // completion barrier
+    0x48,
+    0xbb,
+    0x00,
+    0x00,
+    0x50,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00, // movabs $0x500000, %rbx
+    0xc6,
+    0x03,
+    MMIO_LEVEL_INTERRUPT_COMMAND_VALUE, // command register write
+    0xb0,
+    MMIO_LEVEL_INTERRUPT_ARMED_BYTE,
+    0xe6,
+    0xe9, // command completion barrier
+    0xb0,
+    MMIO_LEVEL_INTERRUPT_RESUMED_BYTE,
+    0xe6,
+    0xe9, // resumed main after IRETQ
+    0xb0,
+    MMIO_LEVEL_INTERRUPT_DONE_BYTE,
+    0xe6,
+    0xe9, // completion barrier
     0xf4, // safety fallback
 ];
 
@@ -60,16 +108,39 @@ const MMIO_LEVEL_INTERRUPT_GUEST_BYTES: [u8; 65] = [
 // sends PIC EOI and returns. If STATUS is not 1, F is emitted instead of S and userspace fails the
 // exact proof before re-entering the fallback HLT.
 const MMIO_LEVEL_INTERRUPT_HANDLER_BYTES: [u8; 34] = [
-    0xb0, MMIO_LEVEL_INTERRUPT_HANDLER_BYTE, 0xe6, 0xe9, // I
-    0x8a, 0x43, 0x01, // mov 1(%rbx), %al -- STATUS read
-    0x3c, LEVEL_INTERRUPT_STATUS_PENDING, // cmp $1, %al
-    0x75, 0x12, // jne failure output at offset 29
-    0xb0, MMIO_LEVEL_INTERRUPT_STATUS_BYTE, 0xe6, 0xe9, // S
-    0xc6, 0x43, 0x02, MMIO_LEVEL_INTERRUPT_ACK_VALUE, // ACK write
-    0xb0, MMIO_LEVEL_INTERRUPT_ACK_COMMITTED_BYTE, 0xe6, 0xe9, // C
-    0xb0, 0x20, 0xe6, 0x20, // non-specific EOI to master PIC
-    0x48, 0xcf, // iretq
-    0xb0, MMIO_LEVEL_INTERRUPT_FAILURE_BYTE, 0xe6, 0xe9, // F
+    0xb0,
+    MMIO_LEVEL_INTERRUPT_HANDLER_BYTE,
+    0xe6,
+    0xe9, // I
+    0x8a,
+    0x43,
+    0x01, // mov 1(%rbx), %al -- STATUS read
+    0x3c,
+    LEVEL_INTERRUPT_STATUS_PENDING, // cmp $1, %al
+    0x75,
+    0x12, // jne failure output at offset 29
+    0xb0,
+    MMIO_LEVEL_INTERRUPT_STATUS_BYTE,
+    0xe6,
+    0xe9, // S
+    0xc6,
+    0x43,
+    0x02,
+    MMIO_LEVEL_INTERRUPT_ACK_VALUE, // ACK write
+    0xb0,
+    MMIO_LEVEL_INTERRUPT_ACK_COMMITTED_BYTE,
+    0xe6,
+    0xe9, // C
+    0xb0,
+    0x20,
+    0xe6,
+    0x20, // non-specific EOI to master PIC
+    0x48,
+    0xcf, // iretq
+    0xb0,
+    MMIO_LEVEL_INTERRUPT_FAILURE_BYTE,
+    0xe6,
+    0xe9, // F
     0xf4, // safety fallback; exact proof fails on F before another re-entry
 ];
 
@@ -335,7 +406,11 @@ pub fn run_long_mode_mmio_level_interrupt_guest(
         resumed_io,
         completion_io,
     ];
-    if writes.as_slice() != [MMIO_LEVEL_INTERRUPT_COMMAND_VALUE, MMIO_LEVEL_INTERRUPT_ACK_VALUE]
+    if writes.as_slice()
+        != [
+            MMIO_LEVEL_INTERRUPT_COMMAND_VALUE,
+            MMIO_LEVEL_INTERRUPT_ACK_VALUE,
+        ]
         || proof.as_slice() != MMIO_LEVEL_INTERRUPT_PROOF
         || io_exits.len() != MMIO_LEVEL_INTERRUPT_PROOF.len()
     {
@@ -343,7 +418,10 @@ pub fn run_long_mode_mmio_level_interrupt_guest(
             "MMIO level interrupt execution proof",
             format!(
                 "expected writes {:?} and proof {:?}; got writes {:?} and proof {:?}",
-                [MMIO_LEVEL_INTERRUPT_COMMAND_VALUE, MMIO_LEVEL_INTERRUPT_ACK_VALUE],
+                [
+                    MMIO_LEVEL_INTERRUPT_COMMAND_VALUE,
+                    MMIO_LEVEL_INTERRUPT_ACK_VALUE
+                ],
                 MMIO_LEVEL_INTERRUPT_PROOF,
                 writes,
                 proof
