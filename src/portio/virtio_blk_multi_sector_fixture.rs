@@ -22,8 +22,8 @@ use crate::portio::pci::{
     config_selector, PciConfigMechanism1, PCI_CONFIG_ADDRESS_PORT, PCI_CONFIG_DATA_PORT,
 };
 use crate::portio::virtio_blk_fixture::{
-    VIRTIO_BLK_AVAIL_GPA, VIRTIO_BLK_BAR0_GPA, VIRTIO_BLK_DATA_GPA,
-    VIRTIO_BLK_DESCRIPTOR_GPA, VIRTIO_BLK_HEADER_GPA, VIRTIO_BLK_USED_GPA,
+    VIRTIO_BLK_AVAIL_GPA, VIRTIO_BLK_BAR0_GPA, VIRTIO_BLK_DATA_GPA, VIRTIO_BLK_DESCRIPTOR_GPA,
+    VIRTIO_BLK_HEADER_GPA, VIRTIO_BLK_USED_GPA,
 };
 use crate::portio::{PortIoBus, DEBUG_PORT};
 use crate::vcpu::{MmioDirection, MmioExit, PortIoDirection, PortIoExit, VcpuExit, VcpuId};
@@ -297,9 +297,9 @@ pub fn run_virtio_blk_multi_sector_guest(
     .to_vec();
     let sector0_after = backing_range(&mmio, 0, VIRTIO_BLK_SECTOR_SIZE as u32)?.to_vec();
     let sector3_after = backing_range(&mmio, 3, VIRTIO_BLK_SECTOR_SIZE as u32)?.to_vec();
-    let memory = vm
-        .guest_memory()
-        .ok_or_else(|| verification_error("multi-sector VM lost guest memory before verification"))?;
+    let memory = vm.guest_memory().ok_or_else(|| {
+        verification_error("multi-sector VM lost guest memory before verification")
+    })?;
     let used_idx = read_u16(memory, VIRTIO_BLK_USED_GPA + 2)?;
     let first_used_id = read_u32(memory, VIRTIO_BLK_USED_GPA + 4)?;
     let first_used_len = read_u32(memory, VIRTIO_BLK_USED_GPA + 8)?;
@@ -467,7 +467,12 @@ fn validate_mmio_sequence(exits: &[MmioExit]) -> Result<(), Error> {
             &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK],
         ),
         (0x16, MmioDirection::Write, 2, &0_u16.to_le_bytes()),
-        (0x18, MmioDirection::Write, 2, &VIRTIO_QUEUE_SIZE.to_le_bytes()),
+        (
+            0x18,
+            MmioDirection::Write,
+            2,
+            &VIRTIO_QUEUE_SIZE.to_le_bytes(),
+        ),
         (
             0x20,
             MmioDirection::Write,
@@ -816,8 +821,10 @@ mod tests {
     fn guest_uses_two_sector_descriptor_non_overlapping_status_and_terminal_hlt() {
         let bytes = build_multi_sector_guest();
         assert_eq!(bytes.last(), Some(&0xf4));
-        assert!(VIRTIO_BLK_DATA_GPA + u64::from(VIRTIO_BLK_MULTI_SECTOR_DATA_LEN)
-            <= VIRTIO_BLK_MULTI_SECTOR_STATUS_GPA);
+        assert!(
+            VIRTIO_BLK_DATA_GPA + u64::from(VIRTIO_BLK_MULTI_SECTOR_DATA_LEN)
+                <= VIRTIO_BLK_MULTI_SECTOR_STATUS_GPA
+        );
         for marker in *VIRTIO_BLK_MULTI_SECTOR_PROOF {
             assert!(bytes
                 .windows(4)
