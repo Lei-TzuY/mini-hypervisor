@@ -1,5 +1,6 @@
 use crate::error::{Error, MmioError};
 use crate::vcpu::{MmioDirection, MmioExit};
+use std::fmt;
 
 pub mod interrupt;
 pub mod level_interrupt;
@@ -24,6 +25,42 @@ pub enum MmioDeviceEvent {
     InterruptLineDeassertRequested,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MmioRegistrationError {
+    AddressRangeOverflow {
+        address: u64,
+        size: u64,
+    },
+    AddressRangeOverlap {
+        address: u64,
+        size: u64,
+        existing_address: u64,
+        existing_size: u64,
+    },
+}
+
+impl fmt::Display for MmioRegistrationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AddressRangeOverflow { address, size } => write!(
+                f,
+                "MMIO device range {address:#x}+{size:#x} overflows the guest physical address space"
+            ),
+            Self::AddressRangeOverlap {
+                address,
+                size,
+                existing_address,
+                existing_size,
+            } => write!(
+                f,
+                "MMIO device range {address:#x}+{size:#x} overlaps registered range {existing_address:#x}+{existing_size:#x}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MmioRegistrationError {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ByteMmioDeviceMode {
     Plain,
@@ -33,13 +70,15 @@ enum ByteMmioDeviceMode {
 
 #[derive(Debug, Default)]
 pub struct MmioBus {
-    byte_device: Option<ByteMmioDevice>,
+    byte_devices: Vec<ByteMmioDevice>,
 }
 
 impl MmioBus {
     #[must_use]
     pub const fn empty() -> Self {
-        Self { byte_device: None }
+        Self {
+            byte_devices: Vec::new(),
+        }
     }
 
     #[must_use]
@@ -50,42 +89,56 @@ impl MmioBus {
     #[must_use]
     pub fn with_byte_device_at(address: u64, read_value: u8) -> Self {
         Self {
-            byte_device: Some(ByteMmioDevice::new(
+            byte_devices: vec![ByteMmioDevice::new(
                 address,
                 read_value,
                 ByteMmioDeviceMode::Plain,
-            )),
+            )],
         }
     }
 
     #[must_use]
     pub fn with_interrupting_byte_device_at(address: u64, read_value: u8) -> Self {
         Self {
-            byte_device: Some(ByteMmioDevice::new(
+            byte_devices: vec![ByteMmioDevice::new(
                 address,
                 read_value,
                 ByteMmioDeviceMode::EdgeInterrupt,
-            )),
+            )],
         }
     }
 
     #[must_use]
     pub fn with_level_interrupt_byte_device_at(address: u64) -> Self {
         Self {
-            byte_device: Some(ByteMmioDevice::new(
+            byte_devices: vec![ByteMmioDevice::new(
                 address,
                 0,
                 ByteMmioDeviceMode::LevelInterrupt,
-            )),
+            )],
         }
     }
 
+    pub fn register_byte_device_at(
+        &mut self,
+        address: u64,
+        read_value: u8,
+    ) -> Result<(), MmioRegistrationError> {
+        self.register_device(ByteMmioDevice::new(
+            address,
+            read_value,
+            ByteMmioDeviceMode::Plain,
+        ))
+    }
+
     pub fn dispatch(&mut self, exit: &MmioExit) -> Result<MmioService, Error> {
-        match self.byte_device.as_mut() {
-            Some(device) if device.handles(exit.address()) => {
-                device.handle(exit).map_err(Error::Mmio)
-            }
-            _ => Err(Error::Mmio(MmioError::UnhandledAddress {
+        match self
+            .byte_devices
+            .iter_mut()
+            .find(|device| device.handles(exit.address()))
+        {
+            Some(device) => device.handle(exit).map_err(Error::Mmio),
+            None => Err(Error::Mmio(MmioError::UnhandledAddress {
                 address: exit.address(),
                 direction: exit.direction().raw(),
                 length: exit.length(),
@@ -94,14 +147,54 @@ impl MmioBus {
     }
 
     pub fn take_device_event(&mut self) -> Option<MmioDeviceEvent> {
-        self.byte_device
-            .as_mut()
-            .and_then(ByteMmioDevice::take_event)
+        self.byte_devices
+            .iter_mut()
+            .find_map(ByteMmioDevice::take_event)
     }
 
     #[must_use]
     pub fn writes(&self) -> Option<&[u8]> {
-        self.byte_device.as_ref().map(ByteMmioDevice::writes)
+        if self.byte_devices.len() == 1 {
+            self.byte_devices.first().map(ByteMmioDevice::writes)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn writes_at(&self, address: u64) -> Option<&[u8]> {
+        self.byte_devices
+            .iter()
+            .find(|device| device.address == address)
+            .map(ByteMmioDevice::writes)
+    }
+
+    fn register_device(&mut self, device: ByteMmioDevice) -> Result<(), MmioRegistrationError> {
+        let (address, size) = device.address_range();
+        let end = address
+            .checked_add(size)
+            .ok_or(MmioRegistrationError::AddressRangeOverflow { address, size })?;
+
+        for existing in &self.byte_devices {
+            let (existing_address, existing_size) = existing.address_range();
+            let existing_end = existing_address.checked_add(existing_size).ok_or(
+                MmioRegistrationError::AddressRangeOverflow {
+                    address: existing_address,
+                    size: existing_size,
+                },
+            )?;
+            if address < existing_end && existing_address < end {
+                return Err(MmioRegistrationError::AddressRangeOverlap {
+                    address,
+                    size,
+                    existing_address,
+                    existing_size,
+                });
+            }
+        }
+
+        self.byte_devices.push(device);
+        Ok(())
     }
 }
 
@@ -129,16 +222,18 @@ impl ByteMmioDevice {
         }
     }
 
+    fn address_range(&self) -> (u64, u64) {
+        let size = match self.mode {
+            ByteMmioDeviceMode::Plain | ByteMmioDeviceMode::EdgeInterrupt => 1,
+            ByteMmioDeviceMode::LevelInterrupt => LEVEL_INTERRUPT_ACK_OFFSET + 1,
+        };
+        (self.address, size)
+    }
+
     fn handles(&self, address: u64) -> bool {
-        match self.mode {
-            ByteMmioDeviceMode::Plain | ByteMmioDeviceMode::EdgeInterrupt => {
-                address == self.address
-            }
-            ByteMmioDeviceMode::LevelInterrupt => self
-                .address
-                .checked_add(LEVEL_INTERRUPT_ACK_OFFSET)
-                .is_some_and(|end| (self.address..=end).contains(&address)),
-        }
+        let (base, size) = self.address_range();
+        base.checked_add(size)
+            .is_some_and(|end| (base..end).contains(&address))
     }
 
     fn handle(&mut self, exit: &MmioExit) -> Result<MmioService, MmioError> {
@@ -479,6 +574,80 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn multiple_registered_byte_devices_dispatch_and_keep_state_isolated() {
+        let first = 0x1000_0000;
+        let second = 0x1000_1000;
+        let mut bus = MmioBus::empty();
+        bus.register_byte_device_at(first, b'A').unwrap();
+        bus.register_byte_device_at(second, b'B').unwrap();
+
+        assert_eq!(
+            bus.dispatch(&exit_at(first, MmioDirection::Write, 1, b"X"))
+                .unwrap(),
+            MmioService::Write
+        );
+        assert_eq!(
+            bus.dispatch(&exit_at(second, MmioDirection::Write, 1, b"Y"))
+                .unwrap(),
+            MmioService::Write
+        );
+        assert_eq!(
+            bus.dispatch(&exit_at(first, MmioDirection::Read, 1, &[]))
+                .unwrap(),
+            MmioService::Read(vec![b'A'])
+        );
+        assert_eq!(
+            bus.dispatch(&exit_at(second, MmioDirection::Read, 1, &[]))
+                .unwrap(),
+            MmioService::Read(vec![b'B'])
+        );
+        assert_eq!(bus.writes(), None);
+        assert_eq!(bus.writes_at(first), Some(&b"X"[..]));
+        assert_eq!(bus.writes_at(second), Some(&b"Y"[..]));
+    }
+
+    #[test]
+    fn registration_rejects_overlapping_device_ranges_without_mutation() {
+        let base = 0x1000_0000;
+        let mut bus = MmioBus::with_level_interrupt_byte_device_at(base);
+        assert_eq!(
+            bus.register_byte_device_at(base + LEVEL_INTERRUPT_STATUS_OFFSET, b'X'),
+            Err(MmioRegistrationError::AddressRangeOverlap {
+                address: base + LEVEL_INTERRUPT_STATUS_OFFSET,
+                size: 1,
+                existing_address: base,
+                existing_size: LEVEL_INTERRUPT_ACK_OFFSET + 1,
+            })
+        );
+        assert_eq!(bus.writes_at(base + LEVEL_INTERRUPT_STATUS_OFFSET), None);
+        assert_eq!(
+            bus.dispatch(&exit_at(
+                base + LEVEL_INTERRUPT_STATUS_OFFSET,
+                MmioDirection::Read,
+                1,
+                &[]
+            ))
+            .unwrap(),
+            MmioService::Read(vec![0])
+        );
+    }
+
+    #[test]
+    fn registration_accepts_adjacent_devices_and_rejects_address_overflow() {
+        let mut bus = MmioBus::empty();
+        bus.register_byte_device_at(0x2000, b'A').unwrap();
+        bus.register_byte_device_at(0x2001, b'B').unwrap();
+        assert_eq!(
+            bus.register_byte_device_at(u64::MAX, b'X'),
+            Err(MmioRegistrationError::AddressRangeOverflow {
+                address: u64::MAX,
+                size: 1,
+            })
+        );
+        assert_eq!(bus.writes_at(u64::MAX), None);
     }
 
     #[test]
