@@ -33,7 +33,7 @@ jobs:
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(cargo run --quiet -- run-long-mode)"
+          output="$(cargo run --quiet --bin mini-hypervisor -- run-long-mode)"
           printf '%s\n' "$output"
           grep -F 'long-mode proof: [76, 77, 54, 52]' <<<"$output"
           report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10024, rflags=' <<<"$output")"
@@ -46,7 +46,7 @@ jobs:
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(cargo run --quiet -- run-elf64)"
+          output="$(cargo run --quiet --bin mini-hypervisor -- run-elf64)"
           printf '%s\n' "$output"
           grep -F 'elf64 proof: [76, 77, 54, 52]' <<<"$output"
           report="$(grep -F 'vCPU 0 exit Hlt: rip=0x400124, rflags=' <<<"$output")"
@@ -59,7 +59,7 @@ jobs:
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(cargo run --quiet -- run-mmio)"
+          output="$(cargo run --quiet --bin mini-hypervisor -- run-mmio)"
           printf '%s\n' "$output"
           grep -F 'mmio writes: [87]' <<<"$output"
           grep -F 'mmio proof: [82, 77, 73, 79]' <<<"$output"
@@ -73,7 +73,7 @@ jobs:
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(cargo run --quiet -- run-long-mode-mmio)"
+          output="$(cargo run --quiet --bin mini-hypervisor -- run-long-mode-mmio)"
           printf '%s\n' "$output"
           grep -F 'long-mode mmio writes: [87]' <<<"$output"
           grep -F 'long-mode mmio proof: [82, 54, 52, 77]' <<<"$output"
@@ -87,11 +87,33 @@ jobs:
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(cargo run --quiet -- run-interrupt)"
+          output="$(cargo run --quiet --bin mini-hypervisor -- run-interrupt)"
           printf '%s\n' "$output"
           grep -F 'interrupt vector: 0x40' <<<"$output"
           grep -F 'interrupt proof: [73, 77]' <<<"$output"
           report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10007, rflags=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
+          (( (rflags & 0x200) == 0x200 ))
+      - name: Strict KVM irqchip GSI execution proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(cargo run --quiet --bin irqchip-gsi)"
+          printf '%s\n' "$output"
+          grep -F 'irqchip GSI: 0' <<<"$output"
+          grep -F 'irqchip vector: 0x40' <<<"$output"
+          ready="$(grep -F 'irqchip readiness: rip=0x1002b, rflags=' <<<"$output")"
+          ready_rflags_hex="${ready##*rflags=}"
+          [[ "$ready_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          ready_rflags=$((ready_rflags_hex))
+          (( (ready_rflags & 0x2) == 0x2 ))
+          (( (ready_rflags & 0x200) == 0x200 ))
+          grep -F 'irqchip proof: [82, 73, 77]' <<<"$output"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x10030, rflags=' <<<"$output")"
           rflags_hex="${report##*rflags=}"
           [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
           rflags=$((rflags_hex))
