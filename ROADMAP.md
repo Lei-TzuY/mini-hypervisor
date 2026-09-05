@@ -4,50 +4,56 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` contains the Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 `ET_EXEC` loading/execution, bounded non-identity ELF64 virtual mapping, bounded bidirectional userspace MMIO device execution, bounded long-mode virtual-MMIO composition, bounded direct long-mode interrupt delivery, and one bounded controller-backed GSI0 route through KVM's in-kernel x86 irqchip.
+`main` contains the Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 `ET_EXEC` loading/execution, bounded non-identity ELF64 virtual mapping, bounded bidirectional userspace MMIO device execution, bounded long-mode virtual-MMIO composition, bounded direct long-mode interrupt delivery, one bounded controller-backed GSI0 route through KVM's in-kernel x86 irqchip, and one bounded MMIO-device-generated interrupt path.
 
-The controller-backed path creates the irqchip before vCPU creation, preserves unrelated LAPIC state while configuring BSP SPIV/LINT0 for legacy ExtINT delivery, initializes the guest PIC, pulses GSI0 through `KVM_IRQ_LINE`, enters vector `0x40`, sends PIC EOI, executes `IRETQ`, resumes main code, and terminates userspace observation at an explicit completion barrier rather than relying on `KVM_EXIT_HLT` with an in-kernel LAPIC.
+The integrated MMIO-device interrupt path owns one userspace `InterruptRequested` event per accepted byte write, waits for a later `KVM_RUN` completion barrier before consuming that event, pulses fixed GSI0 through the established PIC/LAPIC path, enters vector `0x40`, sends PIC EOI, executes `IRETQ`, resumes main code, and terminates userspace observation at an explicit completion barrier. Exact merged-main CI proves this path with `AIMD` and retains the earlier long-mode, ELF64, MMIO, virtual-MMIO, direct-interrupt, and irqchip/GSI gates.
 
-Merged-main CI requires real-KVM executable evidence for seven established layers through the currently integrated controller phase: long-mode, ELF64, real-mode MMIO, long-mode virtual-MMIO, direct-vector interrupt delivery, and irqchip/GSI delivery are strict gates; the selected device-generated interrupt slice adds the next independent gate only after its exact candidate is proven.
+Merged-main CI therefore requires seven strict real-KVM executable gates through the one-shot device-event phase. The selected milestone below adds an eighth gate only after exact candidate evidence proves a device-owned level interrupt lifecycle end to end.
 
-## Selected milestone — bounded MMIO device-generated interrupt composition
+## Selected milestone — device-owned MMIO level interrupt lifecycle
 
-This milestone connects the existing userspace MMIO data plane to the integrated controller-backed interrupt plane. One accepted write to the fixed byte-wide virtual MMIO device must create one owned userspace device event; that event is consumed exactly once and is the sole authority for pulsing the established fixed GSI0 route.
+This milestone promotes the one-shot edge-style device event into a stateful device/register lifecycle. A command write makes the device pending and authorizes one GSI-level assertion request; the interrupt handler must observe pending status through MMIO, acknowledge the device through a separate MMIO register, and only after a later completion barrier may userspace consume one deassert request and lower the GSI line before PIC EOI/`IRETQ` completes.
 
 Acceptance contract:
 
-- preserve all existing long-mode, ELF64, MMIO, virtual-MMIO, direct-interrupt, irqchip/GSI, CPU-policy, snapshot, diagnostic, and strict real-KVM contracts;
-- extend the existing byte device with an explicit interrupting mode rather than changing ordinary MMIO device behavior globally;
-- publish `InterruptRequested` only after a valid one-byte write is accepted by the interrupting device; reads, unknown addresses, unsupported widths, and malformed write payloads must not create an interrupt event;
-- own the event in userspace device state until consumed; one successful write yields at most one consumable event, a second consume returns `None`, and a later valid write may create a new event;
-- compose the existing virtual-MMIO page-table mapping with the existing fixed GDT/IDT interrupt layout without duplicating either subsystem or allowing one table installation to overwrite the other;
-- create the in-kernel irqchip before the vCPU, retain the established PIC remap/unmask contract, and require semantic LAPIC SPIV/LINT0 readback before executable proof continues;
-- require the first userspace-visible device exit to be an exact one-byte MMIO write of `W` to translated device GPA `0x10000000`;
-- do **not** interpret `KVM_GET_REGS` taken directly from the in-flight `KVM_EXIT_MMIO` as completed architectural state and do not pulse GSI while that MMIO operation is still pending;
-- after servicing the write and creating the pending device event, re-enter KVM until the guest emits `A`; observing this barrier proves the preceding MMIO operation was completed on a later `KVM_RUN` before interrupt delivery is armed;
-- only after the `A` barrier, require architectural RFLAGS bit 1 plus IF, consume exactly one `InterruptRequested` event, verify a second consume is empty, and then pulse fixed GSI0 as level 1 followed by level 0;
-- after the pulse, require the next proof byte to be handler byte `I`; seeing resumed-main output first is failure rather than delayed-success tolerance;
-- the handler must send non-specific EOI to the master PIC and execute `IRETQ`; resumed main must emit `M`, followed by `D` as the userspace completion barrier;
-- exact host-visible proof is therefore one MMIO write `W`, exactly one consumed device event, GSI0/vector `0x40`, LAPIC ExtINT readback, and debug proof `AIMD` with IF set at the armed and completion observations;
+- preserve every existing long-mode, ELF64, MMIO, virtual-MMIO, direct-interrupt, irqchip/GSI, one-shot MMIO-device interrupt, CPU-policy, snapshot, diagnostic, and strict real-KVM contract;
+- retain ordinary and one-shot interrupting byte-device semantics unchanged; add an explicit level-interrupt register mode rather than changing the existing device globally;
+- expose three byte-wide registers at the established translated device GPA: COMMAND at offset `0`, STATUS at offset `1`, and ACK at offset `2`;
+- a valid COMMAND write records the command and makes the device pending; invalid address/direction/width/payload accesses are hard failures and publish no line transition request;
+- pending device state authorizes at most one consumable `InterruptLineAssertRequested` transition until ACK; repeated commands while already pending may update the write trace but must not create duplicate line assertions;
+- STATUS is read-only and returns exactly `1` while pending and `0` after ACK; the interrupt handler, not userspace alone, must consume the STATUS response and prove it observed `1`;
+- ACK is write-only; a valid ACK clears pending state and authorizes at most one consumable `InterruptLineDeassertRequested` transition while the host-side line mirror remains asserted;
+- expose explicit `Vm::set_gsi_level(gsi, asserted)` through the existing `KVM_IRQ_LINE` boundary, and retain `pulse_gsi_edge` as composition of assert then deassert rather than duplicating IRQ UAPI code;
+- require the first userspace-visible device exit to be exact one-byte COMMAND write `W` to GPA `0x10000000`;
+- do **not** treat a serviceable `KVM_EXIT_MMIO` as completed architectural state: after COMMAND, re-enter KVM until debug byte `A` before consuming the assert request or driving GSI high;
+- at `A`, require architectural RFLAGS bit 1 plus IF, consume exactly one assert request, verify a second consume is empty, then set fixed GSI0 high;
+- require handler entry byte `I` before any resumed-main proof;
+- require the handler STATUS access to be an exact one-byte read from GPA `0x10000001`; userspace must provide byte `1`, then re-enter KVM and require debug byte `S`, proving guest code actually compared and accepted STATUS=1 rather than merely preparing a userspace response;
+- require the handler ACK access to be an exact one-byte write of `1` to GPA `0x10000002`;
+- ACK remains in-flight at its `KVM_EXIT_MMIO`; userspace must re-enter KVM until debug byte `C` before consuming the deassert request or setting GSI low;
+- only after `C`, consume exactly one deassert request, verify a second consume is empty, and set fixed GSI0 low; lowering the line directly at the ACK exit is forbidden;
+- after the line is low, the handler sends non-specific EOI to the master PIC and executes `IRETQ`; resumed main emits `M`, followed by `D` as the userspace completion barrier;
+- exact host-visible proof is therefore COMMAND/ACK writes `[W, 1]`, one assert request, one deassert request, fixed GSI0/vector `0x40`, semantic LAPIC ExtINT readback, and debug proof `AISCMD` with IF set at armed and completion observations;
+- the failure path for a guest-observed STATUS other than `1` emits `F`, which is a hard proof failure rather than tolerated alternative behavior;
 - do not require the safety-fallback HLT as terminal evidence because the integrated in-kernel LAPIC path does not promise a userspace HLT exit;
-- stable CI must retain all six previously integrated strict real-KVM proofs and add an independent MMIO-device-interrupt gate. KVM-aware integration must also assert MMIO direction/address/length/payload, exact debug-port metadata, one-shot event count, LAPIC state, and RFLAGS contract;
-- any capability, irqchip creation, LAPIC read/write/readback, MMIO decode/service, event ownership, GSI assert/deassert, handler-order, proof, or architectural-state failure remains a hard failure and must not be skipped, retried into success, or weakened into a best-effort claim.
+- stable CI must retain all seven integrated strict real-KVM gates and add an independent MMIO level-interrupt lifecycle gate; KVM-aware integration must independently validate COMMAND/STATUS/ACK MMIO metadata, line-transition counts, writes, LAPIC state, IF, and each proof byte;
+- capability, irqchip, LAPIC, MMIO decode/service/response, event ownership, GSI-level transition, handler ordering, proof, or architectural-state failures remain hard failures and must not be retried, swallowed, skipped, or converted to best-effort success.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- a general device-event queue, interrupt coalescing policy, multiple pending events, or reusable interrupt scheduler;
-- caller-defined `KVM_SET_GSI_ROUTING` tables, arbitrary GSIs, IOAPIC redirection ownership, MSI/MSI-X, or PCI interrupt delivery;
+- a general event queue, arbitrary interrupt priorities, multiple independently pending causes, or a reusable interrupt scheduler;
+- caller-defined GSI routing tables, arbitrary GSIs, IOAPIC redirection ownership, MSI/MSI-X, or PCI interrupt delivery;
 - PIT, HPET, LAPIC timer, TSC-deadline timer, periodic scheduling, or timer-driven interrupts;
 - x2APIC exposure, SMP, cross-vCPU routing, or multiple vCPUs;
 - irqfd/ioeventfd/eventfd acceleration;
-- a general MMIO range/device registry, register bank, virtio transport, DMA, or IOMMU model;
+- a general multi-device MMIO registry, virtio transport, DMA, IOMMU, or bus enumeration model;
 - multiple RAM slots, memory hotplug, whole-VM snapshots, migration, or resumable execution;
 - arbitrary caller-supplied GDT/IDT/page-table layouts or guest-controlled descriptor-table construction.
 
 ## Promotion rule
 
-After MMIO device-generated interrupt composition is integrated and exact merged-`main` CI is green, seal the one-shot device-event-to-controller path and perform another architecture/integration audit. Do not farm additional byte values, fixed GSI numbers, or duplicate proof fixtures.
+After the MMIO level interrupt lifecycle is integrated and exact merged-`main` CI is green, seal the fixed byte-register/GSI0 lifecycle. Do not farm more register values, ACK encodings, or duplicate fixed-GSI fixtures.
 
-The next phase should promote architecture depth rather than repeat this path: prefer a coherent reusable device/register model or a stronger interrupt-routing/device abstraction only when it has a second real consumer and an executable cross-layer proof. General routing, timers, irqfd acceleration, PCI/virtio, SMP, or migration remain separate milestones and must earn their own implementation plus evidence.
+The next architecture audit should promote into a genuinely reusable frontier with a real second consumer. Highest-value candidates include a multi-device MMIO dispatch/registration layer that can host two independent executable devices, explicit programmable interrupt routing beyond fixed GSI0, or a timer/device source that exercises the same interrupt lifecycle without guest command polling. PCI/virtio, SMP, irqfd acceleration, migration, and broader machine models remain separate milestones and must earn implementation plus executable evidence.
