@@ -31,6 +31,17 @@ const ASYNC_TIMER_HANDLER_BYTES: [u8; 10] = [
     0x48, 0xcf, // iretq
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncTimerDelivery {
+    DirectIrqLine,
+    Irqfd,
+}
+
+struct PreparedAsyncTimerDelivery {
+    timer_worker: std::thread::JoinHandle<io::Result<()>>,
+    irqfd_registration: Option<IrqfdTimerRegistration>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AsyncTimerInterruptGuestResult {
     gsi: u32,
@@ -93,174 +104,203 @@ impl KvmBackend {
     pub fn run_async_timer_interrupt_guest(
         config: VmConfig,
     ) -> Result<AsyncTimerInterruptGuestResult, Error> {
-        let guest = FlatGuestImage::new(
-            LONG_MODE_INTERRUPT_GUEST_ENTRY,
-            LONG_MODE_INTERRUPT_GUEST_ENTRY,
-            &ASYNC_TIMER_GUEST_BYTES,
-        )?;
-        let handler = FlatGuestImage::new(
-            LONG_MODE_INTERRUPT_HANDLER,
-            LONG_MODE_INTERRUPT_HANDLER,
-            &ASYNC_TIMER_HANDLER_BYTES,
-        )?;
-
-        let backend = Self::open()?;
-        let mut vm = backend.create_vm_with_irqchip()?;
-        let mut memory =
-            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE)?;
-        let layout = LongModeInterruptLayout::new(
-            memory.region(),
-            guest.entry(),
-            LONG_MODE_INTERRUPT_STACK_POINTER,
-            Self::ASYNC_TIMER_VECTOR,
-            handler.entry(),
-        )
-        .expect("fixed deterministic async-timer fixture layout remains valid");
-        layout.install_tables(&mut memory)?;
-        guest.load(&mut memory)?;
-        handler.load(&mut memory)?;
-        vm.register_guest_memory(memory)?;
-
-        debug_assert_eq!(config.vcpu_count(), 1);
-        let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
-        vcpu.initialize_long_mode_interrupts(&layout)?;
-        let lapic = vcpu.configure_legacy_pic_extint()?;
-        let mut port_io = PortIoBus::with_debug_port();
-
-        let readiness_io = run_expected_debug_output(
-            &mut vcpu,
-            &mut port_io,
-            ASYNC_TIMER_READY_BYTE,
-            "async timer readiness output",
-        )?;
-        let armed_io = run_expected_debug_output(
-            &mut vcpu,
-            &mut port_io,
-            ASYNC_TIMER_ARMED_BYTE,
-            "async timer armed barrier",
-        )?;
-        let armed = vcpu.registers()?;
-        require_interrupt_disabled_flags("async timer armed barrier state", armed.rflags)?;
-
-        let timer_irq = vm
-            .duplicate_irq_line_handle()
-            .map_err(|source| async_timer_vm_error("duplicate async timer IRQ-line handle", source))?;
-        let watchdog_irq = vm
-            .duplicate_irq_line_handle()
-            .map_err(|source| async_timer_vm_error("duplicate async timer watchdog IRQ-line handle", source))?;
-
-        // Validate both duplicate descriptors before the guest is allowed to enter HLT. This makes
-        // descriptor/setup failures synchronous instead of turning them into an indefinitely blocked
-        // KVM_RUN. Deasserting an already-low line is architecturally inert.
-        timer_irq
-            .set_gsi_level(Self::ASYNC_TIMER_GSI, false)
-            .map_err(|source| async_timer_vm_error("preflight async timer IRQ-line handle", source))?;
-        watchdog_irq
-            .set_gsi_level(Self::ASYNC_TIMER_GSI, false)
-            .map_err(|source| async_timer_vm_error("preflight async timer watchdog IRQ-line handle", source))?;
-
-        let timer_worker = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(
-                ASYNC_TIMER_DELAY_MILLIS,
-            ));
-            timer_irq.pulse_gsi_edge(KvmBackend::ASYNC_TIMER_GSI)
-        });
-
-        let (watchdog_cancel_tx, watchdog_cancel_rx) = std::sync::mpsc::channel::<()>();
-        let watchdog_worker = std::thread::spawn(move || -> io::Result<bool> {
-            match watchdog_cancel_rx.recv_timeout(std::time::Duration::from_secs(
-                ASYNC_TIMER_WATCHDOG_SECONDS,
-            )) {
-                Ok(()) => Ok(false),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    watchdog_irq.pulse_gsi_edge(KvmBackend::ASYNC_TIMER_GSI)?;
-                    Ok(true)
-                }
-            }
-        });
-
-        // The guest has IF clear at A, then executes the indivisible handoff `sti; hlt` on the next
-        // KVM_RUN. x86 STI shadow defers a pending maskable interrupt until after the following HLT
-        // instruction, so correctness does not depend on whether the host timer fires just before or
-        // just after KVM reaches HLT. Either way, reaching T proves the timer edge crossed the PIC
-        // path and woke the HLT handoff before the mainline could emit W.
-        let execution = (|| -> Result<_, Error> {
-            let handler_io = run_expected_debug_output(
-                &mut vcpu,
-                &mut port_io,
-                ASYNC_TIMER_HANDLER_BYTE,
-                "async timer handler output",
-            )?;
-            let woke_io = run_expected_debug_output(
-                &mut vcpu,
-                &mut port_io,
-                ASYNC_TIMER_WOKE_BYTE,
-                "async timer resumed-main output",
-            )?;
-            let completion_io = run_expected_debug_output(
-                &mut vcpu,
-                &mut port_io,
-                ASYNC_TIMER_DONE_BYTE,
-                "async timer completion barrier",
-            )?;
-            let completion = vcpu.registers()?;
-            require_interrupt_enabled_flags("async timer completion state", completion.rflags)?;
-            Ok((handler_io, woke_io, completion_io, completion.rflags))
-        })();
-
-        // Cancel the watchdog on every non-hanging path, then join both workers before interpreting
-        // the guest proof. If the real timer failed or panicked, the watchdog can wake KVM_RUN so CI
-        // terminates, but `watchdog_fired` is a hard failure and can never be accepted as timer proof.
-        let _ = watchdog_cancel_tx.send(());
-        let timer_result = join_async_timer_worker(timer_worker)?;
-        let watchdog_fired = join_async_timer_watchdog(watchdog_worker)?;
-
-        if let Err(source) = timer_result {
-            return Err(async_timer_vm_error("async timer GSI pulse", source));
-        }
-        if watchdog_fired {
-            return Err(verification_error(
-                "async timer watchdog",
-                "watchdog injected a fallback GSI; the one-shot timer wakeup was not independently proven",
-            ));
-        }
-
-        let (handler_io, woke_io, completion_io, completion_rflags) = execution?;
-        let io_exits = vec![
-            readiness_io,
-            armed_io,
-            handler_io,
-            woke_io,
-            completion_io,
-        ];
-        let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
-        if proof.as_slice() != Self::ASYNC_TIMER_PROOF
-            || io_exits.len() != Self::ASYNC_TIMER_PROOF.len()
-        {
-            return Err(verification_error(
-                "async timer interrupt execution proof",
-                format!(
-                    "expected exact proof {:?} across {} byte-wide I/O exits, got proof {:?} across {} exits",
-                    Self::ASYNC_TIMER_PROOF,
-                    Self::ASYNC_TIMER_PROOF.len(),
-                    proof,
-                    io_exits.len()
-                ),
-            ));
-        }
-
-        Ok(AsyncTimerInterruptGuestResult {
-            gsi: Self::ASYNC_TIMER_GSI,
-            vector: Self::ASYNC_TIMER_VECTOR,
-            lapic_spiv: lapic.spiv(),
-            lapic_lint0: lapic.lint0(),
-            armed_rflags: armed.rflags,
-            completion_rflags,
-            io_exits,
-            proof,
-        })
+        run_timer_interrupt_guest(config, AsyncTimerDelivery::DirectIrqLine)
     }
+}
+
+fn run_timer_interrupt_guest(
+    config: VmConfig,
+    delivery: AsyncTimerDelivery,
+) -> Result<AsyncTimerInterruptGuestResult, Error> {
+    let guest = FlatGuestImage::new(
+        LONG_MODE_INTERRUPT_GUEST_ENTRY,
+        LONG_MODE_INTERRUPT_GUEST_ENTRY,
+        &ASYNC_TIMER_GUEST_BYTES,
+    )?;
+    let handler = FlatGuestImage::new(
+        LONG_MODE_INTERRUPT_HANDLER,
+        LONG_MODE_INTERRUPT_HANDLER,
+        &ASYNC_TIMER_HANDLER_BYTES,
+    )?;
+
+    let backend = KvmBackend::open()?;
+    let mut vm = backend.create_vm_with_irqchip()?;
+    let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE)?;
+    let layout = LongModeInterruptLayout::new(
+        memory.region(),
+        guest.entry(),
+        LONG_MODE_INTERRUPT_STACK_POINTER,
+        KvmBackend::ASYNC_TIMER_VECTOR,
+        handler.entry(),
+    )
+    .expect("fixed deterministic async-timer fixture layout remains valid");
+    layout.install_tables(&mut memory)?;
+    guest.load(&mut memory)?;
+    handler.load(&mut memory)?;
+    vm.register_guest_memory(memory)?;
+
+    debug_assert_eq!(config.vcpu_count(), 1);
+    let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
+    vcpu.initialize_long_mode_interrupts(&layout)?;
+    let lapic = vcpu.configure_legacy_pic_extint()?;
+    let mut port_io = PortIoBus::with_debug_port();
+
+    let readiness_io = run_expected_debug_output(
+        &mut vcpu,
+        &mut port_io,
+        ASYNC_TIMER_READY_BYTE,
+        "async timer readiness output",
+    )?;
+    let armed_io = run_expected_debug_output(
+        &mut vcpu,
+        &mut port_io,
+        ASYNC_TIMER_ARMED_BYTE,
+        "async timer armed barrier",
+    )?;
+    let armed = vcpu.registers()?;
+    require_interrupt_disabled_flags("async timer armed barrier state", armed.rflags)?;
+
+    // Preflight the watchdog before selecting a delivery transport. In irqfd mode this guarantees
+    // that a watchdog fd failure occurs before KVM_IRQFD can establish kernel registration state;
+    // once the registration exists, every subsequent non-hanging path reaches explicit deassign.
+    let watchdog_irq = vm
+        .duplicate_irq_line_handle()
+        .map_err(|source| async_timer_vm_error("duplicate async timer watchdog IRQ-line handle", source))?;
+    watchdog_irq
+        .set_gsi_level(KvmBackend::ASYNC_TIMER_GSI, false)
+        .map_err(|source| async_timer_vm_error("preflight async timer watchdog IRQ-line handle", source))?;
+
+    let prepared = match delivery {
+        AsyncTimerDelivery::DirectIrqLine => prepare_direct_async_timer_delivery(&vm)?,
+        AsyncTimerDelivery::Irqfd => prepare_irqfd_async_timer_delivery(&backend, &vm)?,
+    };
+
+    let (watchdog_cancel_tx, watchdog_cancel_rx) = std::sync::mpsc::channel::<()>();
+    let watchdog_worker = std::thread::spawn(move || -> io::Result<bool> {
+        match watchdog_cancel_rx.recv_timeout(std::time::Duration::from_secs(
+            ASYNC_TIMER_WATCHDOG_SECONDS,
+        )) {
+            Ok(()) => Ok(false),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                watchdog_irq.pulse_gsi_edge(KvmBackend::ASYNC_TIMER_GSI)?;
+                Ok(true)
+            }
+        }
+    });
+
+    // The guest has IF clear at A, then executes the indivisible handoff `sti; hlt` on the next
+    // KVM_RUN. x86 STI shadow defers a pending maskable interrupt until after the following HLT
+    // instruction, so correctness does not depend on whether the selected host delivery fires just
+    // before or just after KVM reaches HLT. Reaching T before W proves the interrupt crossed the PIC
+    // path and completed the HLT handoff.
+    let execution = (|| -> Result<_, Error> {
+        let handler_io = run_expected_debug_output(
+            &mut vcpu,
+            &mut port_io,
+            ASYNC_TIMER_HANDLER_BYTE,
+            "async timer handler output",
+        )?;
+        let woke_io = run_expected_debug_output(
+            &mut vcpu,
+            &mut port_io,
+            ASYNC_TIMER_WOKE_BYTE,
+            "async timer resumed-main output",
+        )?;
+        let completion_io = run_expected_debug_output(
+            &mut vcpu,
+            &mut port_io,
+            ASYNC_TIMER_DONE_BYTE,
+            "async timer completion barrier",
+        )?;
+        let completion = vcpu.registers()?;
+        require_interrupt_enabled_flags("async timer completion state", completion.rflags)?;
+        Ok((handler_io, woke_io, completion_io, completion.rflags))
+    })();
+
+    // On every non-hanging path, cancel the watchdog, join both workers, and explicitly remove an
+    // irqfd assignment before interpreting proof results. Cleanup is attempted even when a worker
+    // panicked so the accelerated registration never becomes a silent lifetime leak.
+    let _ = watchdog_cancel_tx.send(());
+    let PreparedAsyncTimerDelivery {
+        timer_worker,
+        irqfd_registration,
+    } = prepared;
+    let timer_join = join_async_timer_worker(timer_worker);
+    let watchdog_join = join_async_timer_watchdog(watchdog_worker);
+    let irqfd_cleanup = irqfd_registration
+        .as_ref()
+        .map_or(Ok(()), |registration| registration.deassign(&vm));
+
+    let timer_result = timer_join?;
+    let watchdog_fired = watchdog_join?;
+    irqfd_cleanup.map_err(|source| async_timer_vm_error("deassign async timer irqfd", source))?;
+
+    if let Err(source) = timer_result {
+        return Err(async_timer_vm_error("async timer delivery", source));
+    }
+    if watchdog_fired {
+        return Err(verification_error(
+            "async timer watchdog",
+            "watchdog injected a fallback GSI; the selected timer delivery was not independently proven",
+        ));
+    }
+
+    let (handler_io, woke_io, completion_io, completion_rflags) = execution?;
+    let io_exits = vec![
+        readiness_io,
+        armed_io,
+        handler_io,
+        woke_io,
+        completion_io,
+    ];
+    let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
+    if proof.as_slice() != KvmBackend::ASYNC_TIMER_PROOF
+        || io_exits.len() != KvmBackend::ASYNC_TIMER_PROOF.len()
+    {
+        return Err(verification_error(
+            "async timer interrupt execution proof",
+            format!(
+                "expected exact proof {:?} across {} byte-wide I/O exits, got proof {:?} across {} exits",
+                KvmBackend::ASYNC_TIMER_PROOF,
+                KvmBackend::ASYNC_TIMER_PROOF.len(),
+                proof,
+                io_exits.len()
+            ),
+        ));
+    }
+
+    Ok(AsyncTimerInterruptGuestResult {
+        gsi: KvmBackend::ASYNC_TIMER_GSI,
+        vector: KvmBackend::ASYNC_TIMER_VECTOR,
+        lapic_spiv: lapic.spiv(),
+        lapic_lint0: lapic.lint0(),
+        armed_rflags: armed.rflags,
+        completion_rflags,
+        io_exits,
+        proof,
+    })
+}
+
+fn prepare_direct_async_timer_delivery(vm: &Vm) -> Result<PreparedAsyncTimerDelivery, Error> {
+    let timer_irq = vm
+        .duplicate_irq_line_handle()
+        .map_err(|source| async_timer_vm_error("duplicate async timer IRQ-line handle", source))?;
+    timer_irq
+        .set_gsi_level(KvmBackend::ASYNC_TIMER_GSI, false)
+        .map_err(|source| async_timer_vm_error("preflight async timer IRQ-line handle", source))?;
+
+    let timer_worker = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(
+            ASYNC_TIMER_DELAY_MILLIS,
+        ));
+        timer_irq.pulse_gsi_edge(KvmBackend::ASYNC_TIMER_GSI)
+    });
+
+    Ok(PreparedAsyncTimerDelivery {
+        timer_worker,
+        irqfd_registration: None,
+    })
 }
 
 fn require_interrupt_disabled_flags(operation: &'static str, rflags: u64) -> Result<(), Error> {
@@ -287,7 +327,7 @@ fn join_async_timer_worker(
     worker.join().map_err(|_| {
         verification_error(
             "join async timer worker",
-            "async timer worker panicked before reporting its GSI result",
+            "async timer worker panicked before reporting its delivery result",
         )
     })
 }
@@ -345,3 +385,5 @@ mod async_timer_tests {
         assert!(require_interrupt_disabled_flags("test", 0x000).is_err());
     }
 }
+
+include!("irqfd_timer.rs");
