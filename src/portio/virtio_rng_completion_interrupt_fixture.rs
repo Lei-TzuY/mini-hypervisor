@@ -10,7 +10,6 @@ use super::pci::{
 use super::{PortIoBus, DEBUG_PORT};
 use crate::config::VmConfig;
 use crate::error::{Error, HostEnvironmentError};
-use crate::execution::run_vcpu_until_stopped_with_mmio_observer;
 use crate::interrupt::{
     LONG_MODE_INTERRUPT_HANDLER, LONG_MODE_INTERRUPT_VECTOR, X86_RFLAGS_INTERRUPT_ENABLE,
 };
@@ -23,8 +22,8 @@ use crate::mmio::long_mode::{
     LONG_MODE_MMIO_DEVICE_GPA, LONG_MODE_MMIO_GUEST_ENTRY, LONG_MODE_MMIO_STACK_POINTER,
 };
 use crate::mmio::{MmioBus, MmioDeviceEvent, MmioDeviceEventRecord};
-use crate::vcpu::{MmioDirection, MmioExit, PortIoDirection, PortIoExit, VcpuExit, VcpuId};
-use crate::vmexit::{VmExitContinuation, VmExitReport};
+use crate::vcpu::{MmioDirection, MmioExit, PortIoDirection, PortIoExit, VcpuId};
+use crate::vmexit::{dispatch_vcpu_exit, VmExitContinuation, VmExitDisposition};
 use std::io;
 
 pub const VIRTIO_RNG_INTERRUPT_BAR0_GPA: u64 = LONG_MODE_MMIO_DEVICE_GPA;
@@ -32,7 +31,7 @@ pub const VIRTIO_RNG_INTERRUPT_DESCRIPTOR_GPA: u64 = 0x0001_8000;
 pub const VIRTIO_RNG_INTERRUPT_AVAIL_GPA: u64 = 0x0001_8100;
 pub const VIRTIO_RNG_INTERRUPT_USED_GPA: u64 = 0x0001_8200;
 pub const VIRTIO_RNG_INTERRUPT_BUFFER_GPA: u64 = 0x0001_8300;
-pub const VIRTIO_RNG_INTERRUPT_PROOF: &[u8; 6] = b"PVNIAR";
+pub const VIRTIO_RNG_INTERRUPT_PROOF: &[u8; 7] = b"PVNIARD";
 
 const VIRTIO_RNG_INTERRUPT_EXIT_BUDGET: u32 = 40;
 const VIRTIO_QUEUE_SIZE: u16 = 1;
@@ -40,6 +39,7 @@ const VIRTIO_QUEUE_INDEX: u16 = 0;
 const NOTIFY_BARRIER: u8 = b'N';
 const ISR_HANDLER_BYTE: u8 = b'I';
 const ISR_ACK_BARRIER: u8 = b'A';
+const COMPLETION_BARRIER: u8 = b'D';
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,8 +61,7 @@ pub struct VirtioRngCompletionInterruptGuestResult {
     lapic_lint0: u32,
     assert_count: u32,
     deassert_count: u32,
-    terminal_rip: u64,
-    report: VmExitReport,
+    completion_rflags: u64,
 }
 
 impl VirtioRngCompletionInterruptGuestResult {
@@ -152,13 +151,8 @@ impl VirtioRngCompletionInterruptGuestResult {
     }
 
     #[must_use]
-    pub const fn terminal_rip(&self) -> u64 {
-        self.terminal_rip
-    }
-
-    #[must_use]
-    pub const fn report(&self) -> VmExitReport {
-        self.report
+    pub const fn completion_rflags(&self) -> u64 {
+        self.completion_rflags
     }
 }
 
@@ -166,8 +160,6 @@ pub fn run_virtio_rng_completion_interrupt_guest(
     config: VmConfig,
 ) -> Result<VirtioRngCompletionInterruptGuestResult, Error> {
     let guest_bytes = build_guest();
-    let terminal_rip = LONG_MODE_MMIO_GUEST_ENTRY.get()
-        + u64::try_from(guest_bytes.len()).expect("fixed guest length fits u64");
     let guest = FlatGuestImage::new(
         LONG_MODE_MMIO_GUEST_ENTRY,
         LONG_MODE_MMIO_GUEST_ENTRY,
@@ -213,66 +205,89 @@ pub fn run_virtio_rng_completion_interrupt_guest(
     let mut line_asserted = false;
     let mut assert_count = 0_u32;
     let mut deassert_count = 0_u32;
+    let mut io_exits = Vec::new();
+    let mut mmio_exits = Vec::new();
+    let mut completed_exits = 0_u32;
 
-    let execution = run_vcpu_until_stopped_with_mmio_observer(
-        &mut vcpu,
-        &mut port_io,
-        &mut mmio,
-        VIRTIO_RNG_INTERRUPT_EXIT_BUDGET,
-        |continuation, mmio| {
-            if is_debug_output(continuation, NOTIFY_BARRIER) {
-                if queue_completion.is_some() || line_asserted {
-                    return Err(verification_error(
-                        "duplicate virtio-rng completion notify barrier",
-                    ));
-                }
-                let event = mmio.take_device_event_record().ok_or_else(|| {
-                    verification_error(
-                        "notify barrier arrived without a pending virtio-rng queue event",
-                    )
-                })?;
-                if event
-                    != MmioDeviceEventRecord::new(
-                        VIRTIO_RNG_INTERRUPT_BAR0_GPA,
-                        MmioDeviceEvent::VirtioQueueNotified {
-                            queue: VIRTIO_QUEUE_INDEX,
-                        },
-                    )
-                {
-                    return Err(verification_error(format!(
-                        "unexpected virtio-rng device event at notify barrier: {event:?}"
-                    )));
-                }
-                let memory = vm.guest_memory_mut().ok_or_else(|| {
-                    verification_error("virtio-rng VM lost registered guest memory")
-                })?;
-                let completion = mmio
-                    .process_virtio_rng_notification(VIRTIO_RNG_INTERRUPT_BAR0_GPA, memory)
-                    .map_err(|error| {
-                        verification_error(format!(
-                            "virtio-rng queue processing failed before interrupt: {error}"
-                        ))
-                    })?
-                    .ok_or_else(|| {
-                        verification_error("virtio-rng BAR disappeared before queue processing")
+    loop {
+        if completed_exits >= VIRTIO_RNG_INTERRUPT_EXIT_BUDGET {
+            return Err(verification_error(format!(
+                "virtio-rng completion exceeded exact exit budget {} before final userspace barrier",
+                VIRTIO_RNG_INTERRUPT_EXIT_BUDGET
+            )));
+        }
+        let exit = vcpu.run_once()?;
+        completed_exits += 1;
+        let disposition = dispatch_vcpu_exit(&mut vcpu, exit, &mut port_io, &mut mmio)?;
+        match disposition {
+            VmExitDisposition::Continue(continuation) => {
+                if is_debug_output(&continuation, NOTIFY_BARRIER) {
+                    if queue_completion.is_some() || line_asserted {
+                        return Err(verification_error(
+                            "duplicate virtio-rng completion notify barrier",
+                        ));
+                    }
+                    let event = mmio.take_device_event_record().ok_or_else(|| {
+                        verification_error(
+                            "notify barrier arrived without a pending virtio-rng queue event",
+                        )
                     })?;
-                vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, true)?;
-                queue_completion = Some(completion);
-                line_asserted = true;
-                assert_count += 1;
-            } else if is_debug_output(continuation, ISR_ACK_BARRIER) {
-                if queue_completion.is_none() || !line_asserted {
-                    return Err(verification_error(
-                        "virtio-rng ISR ACK barrier arrived without an asserted completion line",
-                    ));
+                    if event
+                        != MmioDeviceEventRecord::new(
+                            VIRTIO_RNG_INTERRUPT_BAR0_GPA,
+                            MmioDeviceEvent::VirtioQueueNotified {
+                                queue: VIRTIO_QUEUE_INDEX,
+                            },
+                        )
+                    {
+                        return Err(verification_error(format!(
+                            "unexpected virtio-rng device event at notify barrier: {event:?}"
+                        )));
+                    }
+                    let memory = vm.guest_memory_mut().ok_or_else(|| {
+                        verification_error("virtio-rng VM lost registered guest memory")
+                    })?;
+                    let completion = mmio
+                        .process_virtio_rng_notification(VIRTIO_RNG_INTERRUPT_BAR0_GPA, memory)
+                        .map_err(|error| {
+                            verification_error(format!(
+                                "virtio-rng queue processing failed before interrupt: {error}"
+                            ))
+                        })?
+                        .ok_or_else(|| {
+                            verification_error("virtio-rng BAR disappeared before queue processing")
+                        })?;
+                    vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, true)?;
+                    queue_completion = Some(completion);
+                    line_asserted = true;
+                    assert_count += 1;
+                } else if is_debug_output(&continuation, ISR_ACK_BARRIER) {
+                    if queue_completion.is_none() || !line_asserted {
+                        return Err(verification_error(
+                            "virtio-rng ISR ACK barrier arrived without an asserted completion line",
+                        ));
+                    }
+                    vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, false)?;
+                    line_asserted = false;
+                    deassert_count += 1;
                 }
-                vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, false)?;
-                line_asserted = false;
-                deassert_count += 1;
+
+                let completion_barrier = is_debug_output(&continuation, COMPLETION_BARRIER);
+                match continuation {
+                    VmExitContinuation::PortIo(io) => io_exits.push(io),
+                    VmExitContinuation::Mmio(access) => mmio_exits.push(access),
+                }
+                if completion_barrier {
+                    break;
+                }
             }
-            Ok(())
-        },
-    )?;
+            VmExitDisposition::Stopped(report) => {
+                return Err(verification_error(format!(
+                    "unexpected terminal vCPU exit before virtio-rng completion barrier: {report}"
+                )));
+            }
+        }
+    }
 
     if line_asserted {
         return Err(verification_error(
@@ -289,11 +304,17 @@ pub fn run_virtio_rng_completion_interrupt_guest(
             "virtio-rng completion execution left an extra device event",
         ));
     }
+    if completed_exits != VIRTIO_RNG_INTERRUPT_EXIT_BUDGET {
+        return Err(verification_error(format!(
+            "expected exactly {} completed exits through final userspace barrier, got {completed_exits}",
+            VIRTIO_RNG_INTERRUPT_EXIT_BUDGET
+        )));
+    }
 
     let completion = queue_completion
         .ok_or_else(|| verification_error("virtio-rng queue was never processed after notify"))?;
-    validate_io_sequence(execution.io_exits())?;
-    validate_mmio_sequence(execution.mmio_exits())?;
+    validate_io_sequence(&io_exits)?;
+    validate_mmio_sequence(&mmio_exits)?;
 
     let status = mmio
         .virtio_rng_status_at(VIRTIO_RNG_INTERRUPT_BAR0_GPA)
@@ -320,7 +341,7 @@ pub fn run_virtio_rng_completion_interrupt_guest(
     )?;
 
     let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
-    let report = execution.report();
+    let completion_rflags = vcpu.registers()?.rflags;
     let expected_status = VIRTIO_STATUS_ACKNOWLEDGE
         | VIRTIO_STATUS_DRIVER
         | VIRTIO_STATUS_FEATURES_OK
@@ -342,19 +363,17 @@ pub fn run_virtio_rng_completion_interrupt_guest(
         )));
     }
 
-    if report.exit() != VcpuExit::Hlt
-        || report.rip() != terminal_rip
-        || report.rflags() & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
-        || report.rflags() & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
+    if completion_rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
+        || completion_rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
     {
         return Err(verification_error(format!(
-            "expected virtio-rng completion HLT at RIP {terminal_rip:#x} with architectural bit1 and IF set, got {report}"
+            "expected virtio-rng completion barrier with architectural bit1 and IF set, got RFLAGS {completion_rflags:#x}"
         )));
     }
 
     Ok(VirtioRngCompletionInterruptGuestResult {
-        io_exits: execution.io_exits().to_vec(),
-        mmio_exits: execution.mmio_exits().to_vec(),
+        io_exits,
+        mmio_exits,
         proof,
         completion,
         status,
@@ -370,8 +389,7 @@ pub fn run_virtio_rng_completion_interrupt_guest(
         lapic_lint0: lapic.lint0(),
         assert_count,
         deassert_count,
-        terminal_rip,
-        report,
+        completion_rflags,
     })
 }
 
@@ -389,9 +407,9 @@ fn is_debug_output(continuation: &VmExitContinuation, expected: u8) -> bool {
 
 fn validate_io_sequence(exits: &[PortIoExit]) -> Result<(), Error> {
     let selectors = [0x00, 0x34, 0x40, 0x50, 0x64, 0x10].map(config_selector);
-    if exits.len() != 18 {
+    if exits.len() != 19 {
         return Err(verification_error(format!(
-            "expected 18 userspace port-I/O exits, got {}",
+            "expected 19 userspace port-I/O exits, got {}",
             exits.len()
         )));
     }
@@ -617,6 +635,7 @@ fn build_guest() -> Vec<u8> {
     code.extend_from_slice(&(VIRTIO_ISR_OFFSET as u32).to_le_bytes());
     emit_cmp_al(&mut code, 0);
     emit_debug(&mut code, b'R');
+    emit_debug(&mut code, COMPLETION_BARRIER);
     code.push(0xf4);
     code
 }
@@ -730,10 +749,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fixture_contains_pic_setup_isr_reads_and_terminal_hlt() {
+    fn fixture_contains_pic_setup_isr_reads_and_completion_barrier() {
         let guest = build_guest();
         let handler = build_interrupt_handler();
-        assert_eq!(guest.last(), Some(&0xf4));
+        assert!(guest.ends_with(&[0xb0, b'D', 0xe6, 0xe9, 0xf4]));
         assert!(guest.windows(4).any(|window| window == b"\xb0P\xe6\xe9"));
         assert!(guest.windows(4).any(|window| window == b"\xb0V\xe6\xe9"));
         assert!(guest.windows(4).any(|window| window == b"\xb0N\xe6\xe9"));
