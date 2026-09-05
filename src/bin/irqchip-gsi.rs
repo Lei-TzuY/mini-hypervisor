@@ -1,0 +1,29 @@
+use mini_hypervisor::config::VmConfig;
+use mini_hypervisor::kvm::KvmBackend;
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    match KvmBackend::run_irqchip_gsi_guest(VmConfig::default()) {
+        Ok(result) => {
+            println!("irqchip GSI: {}", result.gsi());
+            println!("irqchip vector: {:#x}", result.vector());
+            println!(
+                "irqchip readiness: rip={:#x}, rflags={:#x}",
+                result.readiness_rip(),
+                result.readiness_rflags()
+            );
+            println!("irqchip proof: {:?}", result.proof());
+            println!("{}", result.report());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            let mut source = std::error::Error::source(&error);
+            while let Some(cause) = source {
+                eprintln!("caused by: {cause}");
+                source = cause.source();
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
