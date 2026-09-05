@@ -44,6 +44,10 @@ KvmBackend
        │       └─ optional checked RAM-backed 4 KiB mappings in fixed alias window
        │   LongModeMmioBootLayout
        │       └─ one explicit device PTE: VA 0x500000 → unbacked GPA 0x10000000
+       │   LongModeInterruptLayout
+       │       ├─ base identity long-mode layout
+       │       ├─ fixed GDT page at GPA 0x5000
+       │       └─ fixed IDT page at GPA 0x6000 with vector 0x40 gate
        └─ vCPU creation
               ├─ KVM_CREATE_VCPU
               ├─ GuestCpuPolicy → KVM_SET_CPUID2
@@ -53,6 +57,8 @@ KvmBackend
              Vcpu
               ├─ explicit real-mode register setup for legacy/MMIO fixtures
               ├─ explicit x86-64 long-mode sregs/regs setup for long-mode/ELF64/virtual-MMIO fixtures
+              ├─ interrupt layout → long-mode setup + exact GDT/IDT sregs
+              ├─ direct vector request → KVM_INTERRUPT
               ├─ KVM_GET_REGS → VcpuRegisterSnapshot
               │    ├─ compare → VcpuRegisterSnapshotComparison (pure)
               │    ├─ verify_register_snapshot → fresh read-only capture
@@ -105,7 +111,7 @@ KvmBackend
                    └─ other unsupported raw reason → VmExitError::Unhandled
 ```
 
-The raw ioctl UAPI details live in `src/kvm/sys.rs`; tested `kvm_run` payload views stay isolated below the vCPU layer. Higher layers call typed Rust methods and do not issue raw `ioctl` operations or inspect raw shared-memory payload layouts directly.
+The raw ioctl UAPI details live in `src/kvm/sys.rs`; tested `kvm_run` payload views stay isolated below the vCPU layer. Higher layers call typed Rust methods and do not issue raw `ioctl` operations or inspect raw shared-memory payload layouts directly. The direct interrupt path adds one fixed `kvm_interrupt { irq: u32 }` request through that same UAPI boundary; the field is treated as an x86 interrupt vector, not as a PIC/APIC pin or routing object.
 
 ## x86 host and CPU capability contract
 
@@ -115,7 +121,7 @@ Separately from that required set, `KvmBackend` queries `KVM_CAP_INTERNAL_ERROR_
 
 After fixed host capability validation, `KvmBackend` performs `KVM_GET_SUPPORTED_CPUID` through a fixed 256-entry `repr(C)` `KvmCpuid2<N>` buffer. The kernel-returned `nent` is not trusted as a Rust slice length: it must be non-zero and no greater than the fixed capacity before the entry prefix is converted into owned `CpuidEntry` values. Reserved KVM padding is absent from the typed representation, and conversion back to KVM UAPI always writes zero padding.
 
-Host discovery and guest policy are separate states. `HostCpuid` preserves the validated KVM-supported function/index/flags/register values exactly; `GuestCpuPolicy::from_host` clones that snapshot and applies the current no-LAPIC policy as a pure transformation. The current interrupt model has no in-kernel LAPIC or IRQ chip, so the guest policy removes x2APIC, TSC-deadline, and `KVM_FEATURE_PV_UNHALT` and synthesizes no additional feature.
+Host discovery and guest policy are separate states. `HostCpuid` preserves the validated KVM-supported function/index/flags/register values exactly; `GuestCpuPolicy::from_host` clones that snapshot and applies the current no-LAPIC policy as a pure transformation. The current interrupt-controller model still has no in-kernel LAPIC or IRQ chip, so the guest policy removes x2APIC, TSC-deadline, and `KVM_FEATURE_PV_UNHALT` and synthesizes no additional feature. The bounded direct-vector path deliberately leaves that policy unchanged: proving `KVM_INTERRUPT` delivery does not establish local-APIC, IOAPIC, timer, interrupt-priority, or IRQ-routing semantics.
 
 `GuestCpuPolicy::compare` is a pure compatibility/diff primitive over two configured policies keyed by `(function,index)`. Reordered entries with identical keys/fields remain an exact match. Every comparison owns both source policies and directional findings. An exact comparison is not a migration-safety decision.
 
@@ -137,7 +143,7 @@ Both variable-length MSR index-list paths use bounded `repr(C)` buffers and vali
 
 Immediately after `KVM_CREATE_VM`, before any vCPU can exist, the backend places the one-page KVM identity-map region at `0xfeff_c000` and the three-page TSS region at `0xfeff_d000`. Together these reserve `0xfeff_c000..0xff00_0000`.
 
-Those KVM-reserved pages are distinct from the guest-created long-mode page tables at low guest physical addresses. Guest RAM registration rejects any region overlapping the high KVM-reserved range.
+Those KVM-reserved pages are distinct from the guest-created long-mode page tables and direct-interrupt descriptor tables at low guest physical addresses. Guest RAM registration rejects any region overlapping the high KVM-reserved range. The direct-interrupt milestone does not call `KVM_CREATE_IRQCHIP`; the VM therefore remains in the existing userspace interrupt-controller mode.
 
 ## Guest memory
 
@@ -151,13 +157,15 @@ The real-mode MMIO proof deliberately registers a fresh 4 KiB slot-0 RAM region 
 
 The long-mode virtual-MMIO proof uses the normal 2 MiB slot-0 RAM layout but maps data VA `0x500000` to fixed GPA `0x10000000`. `LongModeMmioBootLayout` rejects construction if the configured RAM exclusive end extends beyond that GPA, so the translated device page remains unbacked rather than becoming ordinary guest RAM.
 
+The direct-interrupt proof also uses the normal 2 MiB slot-0 RAM layout. `LongModeInterruptLayout` reserves guest-memory GDT and IDT pages at `0x5000` and `0x6000` in addition to the existing page-table extent `0x1000..0x5000`. The exact vector-`0x40` IDT gate is stored at `0x6400`; handler code is identity-mapped at `0x11000`. These pages remain ordinary registered guest RAM owned by the VM, not KVM irqchip state.
+
 See [docs/memory-map.md](docs/memory-map.md).
 
 ## Guest loading
 
 `FlatGuestImage` remains the minimal raw-image path. Construction requires a non-empty byte slice, rejects load-address overflow, and requires the entry point to lie inside the loaded image. Loading goes through `GuestMemory::write`, so a valid flat image description cannot escape the configured RAM region.
 
-The existing HLT, debug-port output, debug-port input, and CPUID fixtures remain reviewed real-mode flat binaries at entry `0x1000`. The real-mode MMIO fixture is also a reviewed flat binary but uses entry `0x100` inside its dedicated 4 KiB RAM region so absolute address `0x2000` remains unbacked. The original long-mode proof and long-mode virtual-MMIO proof remain flat binaries at GPA/VA `0x10000`; both execute code in the preserved identity map, while only the virtual-MMIO fixture performs a data access through the device alias PTE.
+The existing HLT, debug-port output, debug-port input, and CPUID fixtures remain reviewed real-mode flat binaries at entry `0x1000`. The real-mode MMIO fixture is also a reviewed flat binary but uses entry `0x100` inside its dedicated 4 KiB RAM region so absolute address `0x2000` remains unbacked. The original long-mode proof, long-mode virtual-MMIO proof, and direct-interrupt main path remain flat binaries at GPA/VA `0x10000`; the direct-interrupt fixture additionally loads its handler at GPA/VA `0x11000`.
 
 ### Bounded ELF64 executable loading
 
@@ -185,13 +193,17 @@ The layout requires guest RAM to start at GPA `0` and contain at least `0x20_000
 
 `install_page_tables` zeroes all four pages through checked `GuestMemory::write`, then installs the preserved base chain: PML4[0] = `0x2003`, PDPT[0] = `0x3003`, and PD[0] = `0x83`. The PD[0] entry is a present, writable 2 MiB large page, so virtual addresses `0..0x20_0000` identity-map to the same guest physical addresses. Identity-only layouts leave the alias PDE unlinked.
 
-`LongModeBootLayout::with_page_mappings` accepts additional `LongModePageMapping` values only when every virtual page is 4 KiB aligned and inside `0x40_0000..0x60_0000`, every physical page is 4 KiB aligned and wholly inside the low 2 MiB RAM outside `0x1000..0x5000`, and no virtual page is duplicated. When mappings are present, PD[2] points to GPA `0x4000`; each requested alias page selects one PTE index within that fixed 512-entry table and stores the validated RAM physical page plus present/writable flags. Unused PTEs remain zero. An alias-window entry is accepted only if its containing virtual page is mapped. This RAM-backed mapping contract is unchanged by MMIO support.
+`LongModeBootLayout::with_page_mappings` accepts additional `LongModePageMapping` values only when every virtual page is 4 KiB aligned and inside `0x40_0000..0x60_0000`, every physical page is 4 KiB aligned and wholly inside the low 2 MiB RAM outside `0x1000..0x5000`, and no virtual page is duplicated. When mappings are present, PD[2] points to GPA `0x4000`; each requested alias page selects one PTE index within that fixed 512-entry table and stores the validated RAM physical page plus present/writable flags. Unused PTEs remain zero. An alias-window entry is accepted only if its containing virtual page is mapped. This RAM-backed mapping contract is unchanged by MMIO or interrupt support.
 
 `LongModeMmioBootLayout` is a separate composition boundary. It first constructs the identity-only `LongModeBootLayout`, requires fixed device GPA `0x10000000` to remain outside slot-0 RAM, then links PD[2] to the same alias PT and writes exactly PTE index 256 so virtual page `0x500000` maps to the unbacked device page. It does not create a `LongModePageMapping`, does not relax its RAM validation, and does not allow caller-selected device pages or virtual addresses.
 
-`LongModeBootLayout::new` retains the identity-only entry contract. The RAM-backed constructor additionally accepts a mapped alias entry only when the entry's virtual page is present in its validated mapping set. `LongModeMmioBootLayout` keeps executable RIP in the low identity map and uses its device mapping only for data access. All current long-mode fixtures require the stack pointer to remain non-zero inside the low identity map outside bootstrap page-table pages. The flat long-mode and virtual-MMIO proofs use identity entry GPA/VA `0x10000`; the ELF64 proof uses virtual entry `0x400100` backed at GPA `0x10100`; all use RSP `0x1ff000`.
+`LongModeInterruptLayout` is another composition boundary over the identity-only `LongModeBootLayout`. It keeps the same page-table construction and identity mapping, then owns fixed descriptor-table pages at `0x5000` and `0x6000`. The GDT contains a null descriptor plus the ring-0 code/data descriptors matching the established long-mode selectors. The IDT is zeroed except for the vector `0x40` interrupt gate targeting RIP `0x11000` with selector `0x8`. Layout validation rejects exception-reserved vectors, entry/handler collisions with `0x1000..0x7000`, a handler outside the low identity map, and a conservative bounded interrupt stack frame overlapping those reserved pages. It does not accept arbitrary descriptor tables.
+
+`LongModeBootLayout::new` retains the identity-only entry contract. The RAM-backed constructor additionally accepts a mapped alias entry only when the entry's virtual page is present in its validated mapping set. `LongModeMmioBootLayout` keeps executable RIP in the low identity map and uses its device mapping only for data access. `LongModeInterruptLayout` likewise uses identity-mapped main and handler code. All current long-mode fixtures require the stack pointer to remain non-zero inside the low identity map; the interrupt layout additionally validates the bounded frame below that stack pointer. The flat long-mode, virtual-MMIO, and direct-interrupt proofs use identity entry GPA/VA `0x10000`; the ELF64 proof uses virtual entry `0x400100` backed at GPA `0x10100`; all use RSP `0x1ff000`.
 
 `Vcpu::initialize_long_mode` begins from KVM's current special-register state. It preserves unrelated inherited control/EFER bits while requiring `CR0.PE|CR0.PG`, `CR4.PAE`, and `EFER.LME|EFER.LMA`; it writes `CR3 = 0x1000`. CS is a present ring-0 flat 64-bit code segment with selector `0x8`, long bit set, default operand-size bit clear, base zero, and limit `0xffff_ffff`. DS/ES/FS/GS/SS use the fixed present ring-0 data-segment contract with selector `0x10`, base zero, and limit `0xffff_ffff`. The general-register write sets RIP to the validated architectural entry address, RSP to the validated stack pointer, and RFLAGS bit 1 while zero-initializing the remaining general-register fields.
+
+`Vcpu::initialize_long_mode_interrupts` reuses that exact base initialization, then performs one fresh `KVM_GET_SREGS`/`KVM_SET_SREGS` pair to install only the validated GDT and IDT base/limit fields. `Vcpu::inject_interrupt` serializes the requested vector into the fixed `kvm_interrupt` structure and issues `KVM_INTERRUPT`; failures propagate through the existing named `VcpuOperation` error boundary. The path does not call `KVM_CREATE_IRQCHIP`, does not request a pin/line, and does not infer routing semantics.
 
 The deterministic 36-byte flat guest intentionally contains 64-bit-only/64-bit-width instruction encodings (`REX.W` `movabs` and 64-bit shifts). It emits `L`, `M`, `6`, `4` through four byte-wide OUT operations to the existing debug port `0xe9`, then executes HLT. The bounded run therefore completes exactly five exits: four I/O exits followed by HLT. A successful terminal report has RIP `0x10024` and the collected debug output is exactly `LM64`.
 
@@ -199,11 +211,13 @@ The same bootstrap also executes the bounded ELF alias path: the deterministic E
 
 The virtual-MMIO composition fixture keeps instruction fetch identity-mapped at RIP `0x10000`, materializes VA `0x500000` in RBX, writes `W` and reads `R` through that virtual address, and relies on the device PTE to translate both accesses to unbacked GPA `0x10000000`. KVM therefore reports two typed MMIO exits at the translated physical address. After userspace supplies the read byte and re-enters KVM, the guest emits `R64M` through four port exits and halts at RIP `0x1001e`. This proves translation and MMIO execution compose without introducing a general page-table manager or arbitrary virtual-MMIO API.
 
+The direct-interrupt fixture queues vector `0x40` before first `KVM_RUN` while IF is initially clear. The main guest executes `STI` followed by one `NOP`, so delivery cannot occur until the architectural STI shadow completes. The installed interrupt gate transfers control to handler `0x11000`; the handler emits `I`, executes `IRETQ`, and the resumed main path emits `M` before HLT at RIP `0x10007`. The resulting `IM` proof demonstrates vector delivery, handler execution, interrupt return, and resumed guest execution; terminal RFLAGS retains architectural bit 1 and IF.
+
 ## vCPU execution
 
 The legacy real-mode fixtures start from KVM's new-vCPU reset state, normalize CS/DS/ES/FS/GS/SS base/selectors to zero, clear CR0 protected-mode/paging enable bits, then set a zeroed `kvm_regs` with RIP and architectural RFLAGS bit 1. Their CS=0 entry remains deliberately limited to `0xffff`. The real-mode MMIO fixture uses this same initialization contract at RIP `0x100`.
 
-The long-mode, ELF64, and virtual-MMIO fixtures follow the validated long-mode state contract above. They do not transit through a guest-side real-to-protected-to-long-mode boot stub; userspace establishes the architectural long-mode state through KVM sregs/regs before the first `KVM_RUN`.
+The long-mode, ELF64, virtual-MMIO, and direct-interrupt fixtures follow the validated long-mode state contract above. They do not transit through a guest-side real-to-protected-to-long-mode boot stub; userspace establishes the architectural long-mode state through KVM sregs/regs before the first `KVM_RUN`. Only the interrupt fixture additionally installs guest-memory descriptor tables and queues one external vector.
 
 `Vcpu::capture_register_snapshot` performs one existing `KVM_GET_REGS` and copies all 18 x86 general-register fields into an owned `VcpuRegisterSnapshot`. Pure comparison, read-only verification, snapshot-bound restore, and restore-and-verify remain unchanged by the long-mode bootstrap.
 
@@ -225,7 +239,7 @@ Each completed exit is recorded exactly once in an ordered raw reason trace befo
 
 A zero budget fails before any guest run. Budget exhaustion is structured failure, not guest termination. If the final permitted exit was serviceable I/O or MMIO, userspace may have prepared the service response but the VMM does not claim KVM completed the pending operation without another permitted `KVM_RUN`.
 
-The HLT and CPUID fixtures use budget 1. The real-mode debug-port fixtures use budget 2. The flat long-mode and ELF64 proofs use budget 5 and succeed only with the exact sequence of four serviced I/O exits followed by terminal HLT. Both MMIO proof fixtures use budget 7 and prove two serviced MMIO exits followed by four debug-port I/O exits and HLT; extra exits consume the budget and prevent milestone success.
+The HLT and CPUID fixtures use budget 1. The real-mode debug-port fixtures use budget 2. The direct-interrupt fixture uses budget 3 for exactly handler proof I/O, resumed-main proof I/O, and HLT; the injected interrupt itself is not a VM exit and therefore consumes no execution-budget entry. The flat long-mode and ELF64 proofs use budget 5 and succeed only with the exact sequence of four serviced I/O exits followed by terminal HLT. Both MMIO proof fixtures use budget 7 and prove two serviced MMIO exits followed by four debug-port I/O exits and HLT; extra exits consume the budget and prevent milestone success.
 
 ## VM-exit dispatch
 
@@ -233,13 +247,13 @@ The HLT and CPUID fixtures use budget 1. The real-mode debug-port fixtures use b
 
 The dispatcher deliberately does not snapshot registers for an in-flight KVM I/O or MMIO exit because KVM defines the operation as pending until userspace re-enters `KVM_RUN`. Register state used as a completed-operation diagnostic is therefore taken on the later terminal exit.
 
-The deterministic real-mode output fixture reaches HLT at RIP `0x1005`; the input fixture reaches `0x1006`; the CPUID fixture reaches `0x101c`. The real-mode MMIO fixture writes `W`, receives `R`, emits `RMIO`, and reaches HLT at RIP `0x117`. The flat x86-64 proof emits `LM64` across four I/O exits and reaches HLT at RIP `0x10024`; the non-identity ELF64 proof emits the same bytes after production ELF materialization and reaches HLT at virtual RIP `0x400124`; the long-mode virtual-MMIO proof translates VA `0x500000` to device GPA `0x10000000`, writes `W`, receives `R`, emits `R64M`, and reaches HLT at RIP `0x1001e`.
+The deterministic real-mode output fixture reaches HLT at RIP `0x1005`; the input fixture reaches `0x1006`; the CPUID fixture reaches `0x101c`. The real-mode MMIO fixture writes `W`, receives `R`, emits `RMIO`, and reaches HLT at RIP `0x117`. The flat x86-64 proof emits `LM64` across four I/O exits and reaches HLT at RIP `0x10024`; the non-identity ELF64 proof emits the same bytes after production ELF materialization and reaches HLT at virtual RIP `0x400124`; the long-mode virtual-MMIO proof translates VA `0x500000` to device GPA `0x10000000`, writes `W`, receives `R`, emits `R64M`, and reaches HLT at RIP `0x1001e`; the direct-interrupt proof emits `I` from its vector-`0x40` handler, returns with `IRETQ`, emits `M` from resumed main code, and reaches HLT at RIP `0x10007`.
 
 ## Port-I/O bus and debug device
 
 `PortIoBus` remains intentionally minimal. It contains only the exact debug-port device at port `0xe9`; it is not a dynamic device registry or port-range resolver. The device accepts only byte-wide, single-count accesses. OUT appends one copied byte to the output buffer; IN returns one configured owned byte. Unknown ports, wide/multi-count operations, payload mismatches, and response-length mismatches are explicit errors.
 
-The long-mode, ELF64, real-mode MMIO, and virtual-MMIO proof fixtures reuse this exact existing port path for host-visible proof output.
+The long-mode, ELF64, real-mode MMIO, virtual-MMIO, and direct-interrupt proof fixtures reuse this exact existing port path for host-visible proof output.
 
 ## MMIO bus and byte device
 
@@ -251,7 +265,7 @@ The real-mode MMIO fixture registers only `0..0x1000` as RAM, so its access to d
 
 `KvmBackend` owns `/dev/kvm`, validated capability and CPUID/MSR discovery snapshots, and the configured guest CPU policy. `Vm` owns the VM descriptor, guest policy, optional internal-error capability observation, and registered guest RAM. `Vcpu` owns the vCPU descriptor and `KvmRunMapping`. CPU/MSR snapshots, diagnostics, `PortIoExit`, `MmioExit`, `VmExecutionResult`, and fixture result types own copied Rust data rather than pointers into KVM shared memory or guest RAM.
 
-`LongModeBootLayout` owns a validated architectural entry address, low-RAM/stack layout, and owned bounded RAM-backed alias page mappings; it contains no host pointer, mapping borrow, vCPU descriptor, or raw KVM state. `LongModeMmioBootLayout` owns one validated base boot layout and fixed device-mapping semantics; it likewise owns no host pointer or KVM descriptor. Both page-table installation paths mutate guest RAM only through checked `GuestMemory` writes. `LongModeGuestResult` owns its copied I/O exits, proof bytes, and terminal report. `Elf64GuestImage` borrows immutable input bytes while owning validated virtual/physical load-segment metadata and its derived RAM-backed alias mapping plan; `Elf64GuestResult` owns copied I/O exits, proof bytes, and its terminal report. `MmioBus` owns its exact configured address, configured read byte, and captured write bytes; the real-mode and long-mode MMIO fixture results own copied MMIO exits, port exits, device writes, proof bytes, and terminal report.
+`LongModeBootLayout` owns a validated architectural entry address, low-RAM/stack layout, and owned bounded RAM-backed alias page mappings; it contains no host pointer, mapping borrow, vCPU descriptor, or raw KVM state. `LongModeMmioBootLayout` owns one validated base boot layout and fixed device-mapping semantics; `LongModeInterruptLayout` owns one validated base boot layout plus exact vector, handler, and descriptor-table bases/limits. Neither composition layout owns a host pointer or KVM descriptor. Page-table and descriptor-table installation mutate guest RAM only through checked `GuestMemory` writes. `LongModeGuestResult` and direct-interrupt result values own copied proof/output/terminal state. `Elf64GuestImage` borrows immutable input bytes while owning validated virtual/physical load-segment metadata and its derived RAM-backed alias mapping plan; `Elf64GuestResult` owns copied I/O exits, proof bytes, and its terminal report. `MmioBus` owns its exact configured address, configured read byte, and captured write bytes; the real-mode and long-mode MMIO fixture results own copied MMIO exits, port exits, device writes, proof bytes, and terminal report.
 
 Rust ownership is used for normal cleanup; explicit KVM slot removal protects the guest-RAM lifetime boundary when independent vCPU descriptors exist.
 
@@ -259,13 +273,13 @@ Rust ownership is used for normal cleanup; explicit KVM slot removal protects th
 
 Errors remain categorized as host environment, KVM capability, configuration, guest memory, guest image, VM exit, port I/O, and MMIO errors. Pure guest-MSR policy/value/snapshot validation keeps its dedicated typed errors.
 
-Long-mode RAM-backed layout validation is a pure configuration boundary represented by `LongModeConfigurationError`; invalid RAM base/size, identity/alias entry mapping, page-table overlap, stack mapping, malformed alias pages, out-of-window virtual pages, out-of-RAM or bootstrap-overlapping physical pages, or duplicate virtual mappings are rejected before page-table installation or KVM long-mode state configuration. `LongModeMmioConfigurationError` wraps those base boot failures and independently rejects a slot-0 RAM extent that would cover fixed device GPA `0x10000000`; it does not convert that GPA into a RAM mapping. Page-table writes still use the existing `GuestMemory` error boundary. `Vcpu::initialize_long_mode` uses the existing named `KVM_GET_SREGS`, `KVM_SET_SREGS`, and `KVM_SET_REGS` vCPU-operation errors. Runtime proof failure remains an execution/VM-exit failure rather than being converted into successful milestone completion.
+Long-mode RAM-backed layout validation is a pure configuration boundary represented by `LongModeConfigurationError`; invalid RAM base/size, identity/alias entry mapping, page-table overlap, stack mapping, malformed alias pages, out-of-window virtual pages, out-of-RAM or bootstrap-overlapping physical pages, or duplicate virtual mappings are rejected before page-table installation or KVM long-mode state configuration. `LongModeMmioConfigurationError` wraps those base boot failures and independently rejects a slot-0 RAM extent that would cover fixed device GPA `0x10000000`; it does not convert that GPA into a RAM mapping. `LongModeInterruptConfigurationError` likewise wraps base boot failures and adds typed rejection for exception-reserved vectors, entry/handler descriptor-table collisions, handlers outside the low identity map, and a bounded interrupt frame overlapping `0x1000..0x7000`. Page-table/GDT/IDT writes still use the existing `GuestMemory` error boundary. `Vcpu::initialize_long_mode`, `initialize_long_mode_interrupts`, and `inject_interrupt` use named `KVM_GET_SREGS`, `KVM_SET_SREGS`, `KVM_SET_REGS`, and `KVM_INTERRUPT` vCPU-operation errors. Runtime proof failure remains an execution/VM-exit failure rather than being converted into successful milestone completion.
 
 ELF64 format and layout validation uses `Elf64Error` before guest memory is mutated: malformed headers/program-header tables, unsupported class/endianness/type/machine/version, invalid file/virtual/physical ranges, invalid alignment, invalid identity/alias placement, bootstrap overlap, segment overlap, conflicting mapping plans, and an invalid entry are rejected as typed loader errors. Once validated, materialization reuses the existing checked `GuestMemory` error boundary.
 
 MMIO UAPI-validation failures remain `VmExitError` values because they describe an invalid pending KVM exit payload or response mutation request. Device-policy failures are `MmioError` values and preserve address/direction/length metadata. Neither category is swallowed or translated into a successful execution result.
 
-Future interrupt, whole-VM/device-snapshot, and stronger invariant categories will be added only when those responsibilities exist.
+Future irqchip/APIC, whole-VM/device-snapshot, and stronger invariant categories will be added only when those responsibilities exist.
 
 ## Deliberate non-abstractions
 
@@ -277,21 +291,23 @@ The implemented state lifecycle is deliberately vCPU-CPU-state scoped and non-tr
 
 The long-mode mapping is deliberately **not** a generic virtual-memory subsystem. It preserves one fixed 2 MiB identity map and one fixed 2 MiB alias virtual window implemented by a single fixed 4 KiB page-table page. RAM-backed `LongModePageMapping` remains restricted to validated low-RAM physical pages. `LongModeMmioBootLayout` adds exactly one fixed device PTE from VA `0x500000` to unbacked GPA `0x10000000`; it does not add an allocator, arbitrary VA→GPA API, caller-defined device mapping, caller-defined window, page-permission/NX policy surface, or guest-controlled page-table construction path.
 
+The direct interrupt path is deliberately **not** an interrupt-controller subsystem. It installs one fixed VMM-owned GDT/IDT layout and directly queues one vector through `KVM_INTERRUPT` while no in-kernel irqchip exists. There is no PIC/local-APIC/IOAPIC model, IRQ pin or GSI routing, MSI/MSI-X, timer, priority arbitration, interrupt-window scheduler, multiple pending-vector queue, cross-vCPU routing, or device-generated interrupt wiring. Consequently the no-LAPIC CPUID masks remain in force.
+
 The ELF64 loader is deliberately **not** a general ELF runtime. It supports only bounded x86-64 little-endian `ET_EXEC` `PT_LOAD` materialization into low RAM plus identity placement or the fixed alias window. It has no relocations, load bias, `ET_DYN`/PIE, dynamic linker/interpreter, symbol model, section-driven loading, or general VA layout policy.
 
 Typed KVM-unknown, exception, fail-entry, internal-error, and system-event diagnostics remain diagnostics. They do not imply retry, recovery, exception injection, instruction emulation, placement, or lifecycle policy.
 
 There is no multi-region memory map yet. `GuestMemoryRegion::overlaps` exists to make range semantics explicit and tested, but the VM intentionally supports only slot 0. The MMIO proofs demonstrate that an address outside that one slot can be serviced as userspace MMIO directly or after guest page-table translation; they do not add another RAM slot or hole-management API.
 
-The port bus is not a trait-object registry yet. One exact bidirectional device is enough to prove checked OUT/IN behavior and provide proof output for long-mode, ELF64, and MMIO fixtures without introducing registration/range-resolution machinery prematurely.
+The port bus is not a trait-object registry yet. One exact bidirectional device is enough to prove checked OUT/IN behavior and provide proof output for long-mode, ELF64, MMIO, and interrupt fixtures without introducing registration/range-resolution machinery prematurely.
 
 The MMIO bus is also not a generic registry. One exact byte-device policy, placeable at one explicit address, proves checked write capture, read response, pending-operation completion, and long-mode translation composition. Multiple simultaneous devices, ranges, register banks, or accelerated eventfds require a separately selected executable milestone.
 
-The execution loop is not a scheduler. It owns no vCPU, thread, timer, or interrupt state; it only bounds repeated execution of one already-created vCPU.
+The execution loop is not a scheduler. It owns no vCPU, thread, timer, or interrupt-controller state; it only bounds repeated execution of one already-created vCPU. The direct interrupt fixture queues its vector explicitly before entering this loop.
 
 ## Next architectural milestone
 
-`ROADMAP.md` is the authoritative live source for milestone selection. The current selected promotion is long-mode virtual MMIO composition on top of the integrated long-mode, non-identity ELF64, and real-mode MMIO foundations. Once this slice is integrated and exact post-merge `main` CI is green, perform another architecture/integration audit rather than farming more fixed-address variants. A small MMIO range/device-routing layer is a candidate only if it can be justified by an executable multi-device or range-routing slice; otherwise promote to the next independent architecture layer, likely interrupt/APIC foundation.
+`ROADMAP.md` is the authoritative live source for milestone selection. Long-mode virtual-MMIO composition is integrated. The current selected promotion is one bounded direct long-mode external-vector delivery path that proves GDT/IDT installation, `KVM_INTERRUPT`, handler execution, `IRETQ`, resumed execution, and terminal HLT without claiming an irqchip/APIC model. Once this slice is integrated and exact post-merge `main` CI is green, perform another architecture/integration audit. The next interrupt frontier should introduce real controller/routing/device-delivery semantics only as one coherent executable slice; do not farm additional fixed direct-vector variants.
 
 ## Internal-error emulation-failure metadata
 
