@@ -13,14 +13,32 @@ fn main() -> ExitCode {
             println!("guest IPI vector: {TARGET_VECTOR:#x}");
             println!("guest IPI ICR high: {ICR_HIGH_VALUE:#x}");
             println!("guest IPI ICR low: {ICR_LOW_VALUE:#x}");
-            println!("guest IPI second runnable mp-state: {}", result.second_mp_state());
+            println!(
+                "guest IPI second runnable mp-state: {}",
+                result.second_mp_state()
+            );
             println!("guest IPI first proof: {:?}", result.first_proof());
             println!("guest IPI second proof: {:?}", result.second_proof());
-            println!("guest IPI first barrier rflags: {:#x}", result.first_barrier_rflags());
-            println!("guest IPI first send rflags: {:#x}", result.first_send_rflags());
-            println!("guest IPI first completion rflags: {:#x}", result.first_completion_rflags());
-            println!("guest IPI second ready rflags: {:#x}", result.second_ready_rflags());
-            println!("guest IPI second completion rflags: {:#x}", result.second_completion_rflags());
+            println!(
+                "guest IPI first barrier rflags: {:#x}",
+                result.first_barrier_rflags()
+            );
+            println!(
+                "guest IPI first send rflags: {:#x}",
+                result.first_send_rflags()
+            );
+            println!(
+                "guest IPI first completion rflags: {:#x}",
+                result.first_completion_rflags()
+            );
+            println!(
+                "guest IPI second ready rflags: {:#x}",
+                result.second_ready_rflags()
+            );
+            println!(
+                "guest IPI second completion rflags: {:#x}",
+                result.second_completion_rflags()
+            );
 
             if result.second_mp_state() == 0
                 && result.first_proof() == FIRST_PROOF
