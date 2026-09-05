@@ -1,6 +1,5 @@
 use crate::config::VmConfig;
 use crate::error::{Error, HostEnvironmentError, KvmCapabilityError, VmExitError};
-use crate::execution::run_vcpu_until_stopped;
 use crate::interrupt::{
     LongModeInterruptLayout, LONG_MODE_INTERRUPT_GUEST_ENTRY, LONG_MODE_INTERRUPT_HANDLER,
     LONG_MODE_INTERRUPT_STACK_POINTER, LONG_MODE_INTERRUPT_VECTOR, X86_RFLAGS_INTERRUPT_ENABLE,
@@ -11,18 +10,19 @@ use crate::long_mode::LONG_MODE_IDENTITY_MAP_SIZE;
 use crate::memory::{GuestMemory, GuestPhysAddr};
 use crate::portio::{PortIoBus, PortIoService, DEBUG_PORT};
 use crate::vcpu::{PortIoDirection, PortIoExit, VcpuExit, VcpuId};
-use crate::vmexit::VmExitReport;
 use std::os::fd::AsRawFd;
 
 const KVM_CAP_IRQCHIP: i32 = 0;
 const KVM_CREATE_IRQCHIP: libc::c_ulong = 0xAE60;
 const KVM_IRQ_LINE: libc::c_ulong = 0x4008_AE61;
-const IRQCHIP_POST_PULSE_EXIT_BUDGET: u32 = 3;
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 const IRQCHIP_READY_BYTE: u8 = b'R';
 const IRQCHIP_ARMED_BYTE: u8 = b'A';
+const IRQCHIP_HANDLER_BYTE: u8 = b'I';
+const IRQCHIP_RESUMED_BYTE: u8 = b'M';
+const IRQCHIP_DONE_BYTE: u8 = b'D';
 
-const IRQCHIP_GUEST_BYTES: [u8; 52] = [
+const IRQCHIP_GUEST_BYTES: [u8; 56] = [
     0xfa, // cli
     0xb0, 0x11, 0xe6, 0x20, 0xe6, 0xa0, // ICW1: initialize master and slave PICs
     0xb0, 0x40, 0xe6, 0x21, // ICW2: master IRQ0..7 -> vectors 0x40..0x47
@@ -36,12 +36,13 @@ const IRQCHIP_GUEST_BYTES: [u8; 52] = [
     0x90, // nop -- complete STI's one-instruction interrupt shadow
     0xb0, IRQCHIP_READY_BYTE, 0xe6, 0xe9, // first readiness output
     0xb0, IRQCHIP_ARMED_BYTE, 0xe6, 0xe9, // second I/O barrier; R is committed here
-    0xb0, b'M', 0xe6, 0xe9, // resumed-main proof after interrupt + IRETQ
-    0xf4, // terminal hlt
+    0xb0, IRQCHIP_RESUMED_BYTE, 0xe6, 0xe9, // resumed-main proof after interrupt + IRETQ
+    0xb0, IRQCHIP_DONE_BYTE, 0xe6, 0xe9, // completion barrier; M is committed here
+    0xf4, // safety fallback; host deliberately does not re-enter after D
 ];
 
 const IRQCHIP_HANDLER_BYTES: [u8; 10] = [
-    0xb0, b'I', 0xe6, 0xe9, // interrupt-handler proof
+    0xb0, IRQCHIP_HANDLER_BYTE, 0xe6, 0xe9, // interrupt-handler proof
     0xb0, 0x20, 0xe6, 0x20, // non-specific EOI to the master PIC
     0x48, 0xcf, // iretq
 ];
@@ -69,9 +70,9 @@ pub struct IrqchipGuestResult {
     lapic_spiv: u32,
     lapic_lint0: u32,
     armed_rflags: u64,
+    completion_rflags: u64,
     io_exits: Vec<PortIoExit>,
     proof: Vec<u8>,
-    report: VmExitReport,
 }
 
 impl IrqchipGuestResult {
@@ -101,6 +102,11 @@ impl IrqchipGuestResult {
     }
 
     #[must_use]
+    pub const fn completion_rflags(&self) -> u64 {
+        self.completion_rflags
+    }
+
+    #[must_use]
     pub fn io_exits(&self) -> &[PortIoExit] {
         &self.io_exits
     }
@@ -109,18 +115,12 @@ impl IrqchipGuestResult {
     pub fn proof(&self) -> &[u8] {
         &self.proof
     }
-
-    #[must_use]
-    pub const fn report(&self) -> VmExitReport {
-        self.report
-    }
 }
 
 impl KvmBackend {
     pub const IRQCHIP_GSI: u32 = 0;
     pub const IRQCHIP_VECTOR: u8 = LONG_MODE_INTERRUPT_VECTOR;
-    pub const IRQCHIP_PROOF: &'static [u8; 4] = b"RAIM";
-    pub const IRQCHIP_TERMINAL_RIP: u64 = 0x1_0034;
+    pub const IRQCHIP_PROOF: &'static [u8; 5] = b"RAIMD";
 
     pub fn create_vm_with_irqchip(&self) -> Result<Vm, Error> {
         require_irqchip_capability(self)?;
@@ -188,49 +188,54 @@ impl KvmBackend {
             "irqchip armed barrier",
         )?;
         let armed = vcpu.registers()?;
-        if armed.rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
-            || armed.rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
-        {
-            return Err(verification_error(
-                "irqchip armed barrier state",
-                format!(
-                    "expected architectural RFLAGS bit 1 and IF set after R→A barrier, got RFLAGS {:#x}",
-                    armed.rflags
-                ),
-            ));
-        }
+        require_interrupt_enabled_flags("irqchip armed barrier state", armed.rflags)?;
 
         vm.pulse_gsi_edge(Self::IRQCHIP_GSI)?;
-        let execution = run_vcpu_until_stopped(
+
+        let handler_io = run_expected_debug_output(
             &mut vcpu,
             &mut port_io,
-            IRQCHIP_POST_PULSE_EXIT_BUDGET,
+            IRQCHIP_HANDLER_BYTE,
+            "irqchip handler output",
         )?;
+        let resumed_io = run_expected_debug_output(
+            &mut vcpu,
+            &mut port_io,
+            IRQCHIP_RESUMED_BYTE,
+            "irqchip resumed-main output",
+        )?;
+        let completion_io = run_expected_debug_output(
+            &mut vcpu,
+            &mut port_io,
+            IRQCHIP_DONE_BYTE,
+            "irqchip completion barrier",
+        )?;
+        let completion = vcpu.registers()?;
+        require_interrupt_enabled_flags("irqchip completion state", completion.rflags)?;
 
-        let mut io_exits = Vec::with_capacity(Self::IRQCHIP_PROOF.len());
-        io_exits.push(readiness_io);
-        io_exits.push(armed_io);
-        io_exits.extend_from_slice(execution.io_exits());
+        // With an in-kernel local APIC, x86 KVM keeps a guest HLT inside the kernel as a
+        // non-runnable vCPU until a wake event arrives instead of guaranteeing KVM_EXIT_HLT.
+        // Observing D after M is therefore the terminal userspace synchronization point. Reaching
+        // D necessarily required one more KVM_RUN after the M exit, so the resumed-main M output
+        // is committed without depending on non-portable serviceable-I/O RIP semantics.
+        let io_exits = vec![
+            readiness_io,
+            armed_io,
+            handler_io,
+            resumed_io,
+            completion_io,
+        ];
         let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
-        let report = execution.report();
 
-        if proof.as_slice() != Self::IRQCHIP_PROOF
-            || io_exits.len() != Self::IRQCHIP_PROOF.len()
-            || report.exit() != VcpuExit::Hlt
-            || report.rip() != Self::IRQCHIP_TERMINAL_RIP
-            || report.rflags() & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
-            || report.rflags() & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
-        {
+        if proof.as_slice() != Self::IRQCHIP_PROOF || io_exits.len() != Self::IRQCHIP_PROOF.len() {
             return Err(verification_error(
                 "irqchip GSI execution proof",
                 format!(
-                    "expected proof {:?}, HLT RIP {:#x}, reserved RFLAGS bit and IF set; got proof {:?}, exit {:?}, RIP {:#x}, RFLAGS {:#x}",
+                    "expected exact proof {:?} across {} byte-wide I/O exits, got proof {:?} across {} exits",
                     Self::IRQCHIP_PROOF,
-                    Self::IRQCHIP_TERMINAL_RIP,
+                    Self::IRQCHIP_PROOF.len(),
                     proof,
-                    report.exit(),
-                    report.rip(),
-                    report.rflags()
+                    io_exits.len()
                 ),
             ));
         }
@@ -241,9 +246,9 @@ impl KvmBackend {
             lapic_spiv: lapic.spiv(),
             lapic_lint0: lapic.lint0(),
             armed_rflags: armed.rflags,
+            completion_rflags: completion.rflags,
             io_exits,
             proof,
-            report,
         })
     }
 }
@@ -347,6 +352,20 @@ fn validate_debug_output(
     Ok(())
 }
 
+fn require_interrupt_enabled_flags(operation: &'static str, rflags: u64) -> Result<(), Error> {
+    if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
+        || rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
+    {
+        return Err(verification_error(
+            operation,
+            format!(
+                "expected architectural RFLAGS bit 1 and IF set, got RFLAGS {rflags:#x}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn verification_error(operation: &'static str, detail: impl Into<String>) -> Error {
     Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
         id: VcpuId::BOOT.get(),
@@ -386,13 +405,22 @@ mod irqchip_tests {
 
     #[test]
     fn deterministic_irqchip_guest_and_handler_bytes_are_stable() {
-        assert_eq!(IRQCHIP_GUEST_BYTES.len(), 52);
+        assert_eq!(IRQCHIP_GUEST_BYTES.len(), 56);
         assert_eq!(&IRQCHIP_GUEST_BYTES[39..43], &[0xb0, b'R', 0xe6, 0xe9]);
         assert_eq!(&IRQCHIP_GUEST_BYTES[43..47], &[0xb0, b'A', 0xe6, 0xe9]);
+        assert_eq!(&IRQCHIP_GUEST_BYTES[47..51], &[0xb0, b'M', 0xe6, 0xe9]);
+        assert_eq!(&IRQCHIP_GUEST_BYTES[51..55], &[0xb0, b'D', 0xe6, 0xe9]);
+        assert_eq!(IRQCHIP_GUEST_BYTES[55], 0xf4);
         assert_eq!(IRQCHIP_HANDLER_BYTES.len(), 10);
-        assert_eq!(KvmBackend::IRQCHIP_TERMINAL_RIP, 0x1_0034);
-        assert_eq!(KvmBackend::IRQCHIP_PROOF, b"RAIM");
+        assert_eq!(KvmBackend::IRQCHIP_PROOF, b"RAIMD");
         assert_eq!(KvmBackend::IRQCHIP_GSI, 0);
         assert_eq!(KvmBackend::IRQCHIP_VECTOR, 0x40);
+    }
+
+    #[test]
+    fn interrupt_enabled_flag_contract_requires_reserved_bit_and_if() {
+        assert!(require_interrupt_enabled_flags("test", 0x202).is_ok());
+        assert!(require_interrupt_enabled_flags("test", 0x200).is_err());
+        assert!(require_interrupt_enabled_flags("test", 0x002).is_err());
     }
 }
