@@ -7,7 +7,10 @@ fn main() -> ExitCode {
         Ok(result) => {
             println!("level interrupt GSI: {}", result.gsi());
             println!("level interrupt vector: {:#x}", result.vector());
-            println!("level interrupt assert events: {}", result.assert_event_count());
+            println!(
+                "level interrupt assert events: {}",
+                result.assert_event_count()
+            );
             println!(
                 "level interrupt deassert events: {}",
                 result.deassert_event_count()
