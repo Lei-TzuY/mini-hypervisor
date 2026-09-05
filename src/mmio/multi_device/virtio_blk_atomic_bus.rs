@@ -26,4 +26,17 @@ impl super::MmioBus {
             .find(|device| device.bar0() == address)
             .map(|device| device.sector0())
     }
+
+    #[must_use]
+    pub fn virtio_blk_backing_range_at(
+        &self,
+        address: u64,
+        sector: u64,
+        data_length: u32,
+    ) -> Option<&[u8]> {
+        self.virtio_blk_devices
+            .iter()
+            .find(|device| device.bar0() == address)
+            .and_then(|device| device.backing_range(sector, data_length))
+    }
 }
