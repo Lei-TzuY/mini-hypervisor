@@ -11,10 +11,9 @@ fn in_kernel_irqchip_routes_gsi0_through_pic_handler_and_resumes_guest() {
         Ok(result) => {
             assert_eq!(result.gsi(), KvmBackend::IRQCHIP_GSI);
             assert_eq!(result.vector(), KvmBackend::IRQCHIP_VECTOR);
-            assert_eq!(result.readiness_rip(), KvmBackend::IRQCHIP_READY_RIP);
-            assert_eq!(result.readiness_rflags() & 0x2, 0x2);
+            assert_eq!(result.armed_rflags() & 0x2, 0x2);
             assert_eq!(
-                result.readiness_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
+                result.armed_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
                 X86_RFLAGS_INTERRUPT_ENABLE
             );
             assert_eq!(result.proof(), KvmBackend::IRQCHIP_PROOF);
