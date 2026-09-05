@@ -11,14 +11,9 @@ pub struct LegacyPicMmioInterruptRoute {
 }
 
 impl LegacyPicMmioInterruptRoute {
-    pub fn new(
-        device_address: u64,
-        gsi: u32,
-    ) -> Result<Self, LegacyPicMmioInterruptRoutingError> {
+    pub fn new(device_address: u64, gsi: u32) -> Result<Self, LegacyPicMmioInterruptRoutingError> {
         if gsi >= LEGACY_PIC_MASTER_GSI_COUNT {
-            return Err(LegacyPicMmioInterruptRoutingError::GsiOutsideMasterPic {
-                gsi,
-            });
+            return Err(LegacyPicMmioInterruptRoutingError::GsiOutsideMasterPic { gsi });
         }
         let offset = u8::try_from(gsi).expect("master PIC GSI is bounded below eight");
         let vector = LEGACY_PIC_MASTER_VECTOR_BASE
@@ -62,11 +57,9 @@ impl LegacyPicMmioInterruptRoutes {
         for (index, route) in routes.iter().copied().enumerate() {
             for existing in &routes[..index] {
                 if existing.device_address() == route.device_address() {
-                    return Err(
-                        LegacyPicMmioInterruptRoutingError::DuplicateDeviceAddress {
-                            device_address: route.device_address(),
-                        },
-                    );
+                    return Err(LegacyPicMmioInterruptRoutingError::DuplicateDeviceAddress {
+                        device_address: route.device_address(),
+                    });
                 }
                 if existing.gsi() == route.gsi() {
                     return Err(LegacyPicMmioInterruptRoutingError::DuplicateGsi {
@@ -103,7 +96,10 @@ pub enum LegacyPicMmioInterruptRoutingError {
 impl fmt::Display for LegacyPicMmioInterruptRoutingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoRoutes => write!(f, "legacy-PIC MMIO interrupt routing requires at least one route"),
+            Self::NoRoutes => write!(
+                f,
+                "legacy-PIC MMIO interrupt routing requires at least one route"
+            ),
             Self::GsiOutsideMasterPic { gsi } => write!(
                 f,
                 "GSI {gsi} is outside the bounded legacy master-PIC range 0..{LEGACY_PIC_MASTER_GSI_COUNT}"
