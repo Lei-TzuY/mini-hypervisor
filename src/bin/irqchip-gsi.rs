@@ -7,11 +7,7 @@ fn main() -> ExitCode {
         Ok(result) => {
             println!("irqchip GSI: {}", result.gsi());
             println!("irqchip vector: {:#x}", result.vector());
-            println!(
-                "irqchip readiness: rip={:#x}, rflags={:#x}",
-                result.readiness_rip(),
-                result.readiness_rflags()
-            );
+            println!("irqchip armed rflags: {:#x}", result.armed_rflags());
             println!("irqchip proof: {:?}", result.proof());
             println!("{}", result.report());
             ExitCode::SUCCESS
