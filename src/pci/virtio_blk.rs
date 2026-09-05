@@ -1,7 +1,5 @@
-mod write_readback {
-    use super::*;
-    include!("virtio_blk_write_readback.rs");
-}
+#[path = "virtio_blk_write_readback.rs"]
+mod write_readback;
 
 pub use write_readback::VIRTIO_BLK_T_OUT;
 

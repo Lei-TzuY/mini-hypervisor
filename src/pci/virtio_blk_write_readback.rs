@@ -1,3 +1,5 @@
+use super::*;
+
 pub const VIRTIO_BLK_T_OUT: u32 = 1;
 
 impl VirtioBlkDevice {
@@ -121,7 +123,10 @@ impl VirtioBlkDevice {
         element[4..8].copy_from_slice(&written.to_le_bytes());
         memory.write(GuestPhysAddr::new(used_element), &element)?;
         let next_used = self.last_used_idx.wrapping_add(1);
-        memory.write(GuestPhysAddr::new(used_idx_address), &next_used.to_le_bytes())?;
+        memory.write(
+            GuestPhysAddr::new(used_idx_address),
+            &next_used.to_le_bytes(),
+        )?;
 
         if let Some(bytes) = outgoing_sector {
             self.sector0 = bytes;
@@ -138,11 +143,7 @@ impl VirtioBlkDevice {
     }
 }
 
-fn preflight_guest_output(
-    memory: &GuestMemory,
-    address: u64,
-    length: usize,
-) -> Result<(), Error> {
+fn preflight_guest_output(memory: &GuestMemory, address: u64, length: usize) -> Result<(), Error> {
     let mut scratch = vec![0_u8; length];
     memory.read(GuestPhysAddr::new(address), &mut scratch)
 }
@@ -272,10 +273,7 @@ mod write_readback_tests {
         assert_eq!(u32::from_le_bytes(used0_len), 1);
 
         memory
-            .write(
-                GuestPhysAddr::new(DATA),
-                &[0x5a; VIRTIO_BLK_SECTOR_SIZE],
-            )
+            .write(GuestPhysAddr::new(DATA), &[0x5a; VIRTIO_BLK_SECTOR_SIZE])
             .unwrap();
         prepare_request(
             &mut memory,
@@ -296,10 +294,14 @@ mod write_readback_tests {
         assert_eq!(u32::from_le_bytes(used1[0..4].try_into().unwrap()), 0);
         assert_eq!(u32::from_le_bytes(used1[4..8].try_into().unwrap()), 513);
         let mut readback = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
-        memory.read(GuestPhysAddr::new(DATA), &mut readback).unwrap();
+        memory
+            .read(GuestPhysAddr::new(DATA), &mut readback)
+            .unwrap();
         assert_eq!(readback, payload);
         let mut status = [0xff_u8];
-        memory.read(GuestPhysAddr::new(STATUS), &mut status).unwrap();
+        memory
+            .read(GuestPhysAddr::new(STATUS), &mut status)
+            .unwrap();
         assert_eq!(status, [VIRTIO_BLK_S_OK]);
         assert_eq!(device.last_avail_idx, 2);
         assert_eq!(device.last_used_idx, 2);
@@ -322,16 +324,15 @@ mod write_readback_tests {
             0,
         );
         memory
-            .write(
-                GuestPhysAddr::new(invalid_used + 2),
-                &0_u16.to_le_bytes(),
-            )
+            .write(GuestPhysAddr::new(invalid_used + 2), &0_u16.to_le_bytes())
             .unwrap();
 
         assert!(device.process_notified_queue_atomic(&mut memory).is_err());
         assert_eq!(device.sector0(), &original);
         let mut status = [0_u8];
-        memory.read(GuestPhysAddr::new(STATUS), &mut status).unwrap();
+        memory
+            .read(GuestPhysAddr::new(STATUS), &mut status)
+            .unwrap();
         assert_eq!(status, [0xff]);
         assert_eq!(device.last_avail_idx, 0);
         assert_eq!(device.last_used_idx, 0);
@@ -345,10 +346,7 @@ mod write_readback_tests {
         let invalid_used = MEMORY_SIZE - 8;
         let mut device = ready_device(invalid_used);
         memory
-            .write(
-                GuestPhysAddr::new(DATA),
-                &[0x5a; VIRTIO_BLK_SECTOR_SIZE],
-            )
+            .write(GuestPhysAddr::new(DATA), &[0x5a; VIRTIO_BLK_SECTOR_SIZE])
             .unwrap();
         prepare_request(
             &mut memory,
@@ -359,10 +357,7 @@ mod write_readback_tests {
             0,
         );
         memory
-            .write(
-                GuestPhysAddr::new(invalid_used + 2),
-                &0_u16.to_le_bytes(),
-            )
+            .write(GuestPhysAddr::new(invalid_used + 2), &0_u16.to_le_bytes())
             .unwrap();
 
         assert!(device.process_notified_queue_atomic(&mut memory).is_err());
@@ -370,7 +365,9 @@ mod write_readback_tests {
         memory.read(GuestPhysAddr::new(DATA), &mut data).unwrap();
         assert_eq!(data, [0x5a; VIRTIO_BLK_SECTOR_SIZE]);
         let mut status = [0_u8];
-        memory.read(GuestPhysAddr::new(STATUS), &mut status).unwrap();
+        memory
+            .read(GuestPhysAddr::new(STATUS), &mut status)
+            .unwrap();
         assert_eq!(status, [0xff]);
         assert_eq!(device.last_avail_idx, 0);
         assert_eq!(device.last_used_idx, 0);

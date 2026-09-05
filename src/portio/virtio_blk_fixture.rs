@@ -1,10 +1,8 @@
 use super::pci;
 use super::pci::virtio_blk::VIRTIO_BLK_T_IN;
 
-mod write_readback {
-    use super::*;
-    include!("virtio_blk_write_readback_fixture.rs");
-}
+#[path = "virtio_blk_write_readback_fixture.rs"]
+mod write_readback;
 
 pub use write_readback::{
     deterministic_write_readback_sector, run_virtio_blk_write_readback_guest,

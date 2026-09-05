@@ -1,3 +1,5 @@
+use super::*;
+
 use super::pci::virtio_blk::VIRTIO_BLK_T_OUT;
 
 pub const VIRTIO_BLK_WRITE_READBACK_PROOF: &[u8; 7] = b"PBWONRD";
@@ -323,7 +325,10 @@ fn write_readback_barrier(continuation: &VmExitContinuation) -> Option<u8> {
                 && io.port() == DEBUG_PORT
                 && io.size() == 1
                 && io.count() == 1
-                && matches!(io.output_data(), [WRITE_NOTIFY_BARRIER] | [READ_NOTIFY_BARRIER]) =>
+                && matches!(
+                    io.output_data(),
+                    [WRITE_NOTIFY_BARRIER] | [READ_NOTIFY_BARRIER]
+                ) =>
         {
             Some(io.output_data()[0])
         }
@@ -398,7 +403,12 @@ fn validate_write_readback_mmio(exits: &[MmioExit]) -> Result<(), Error> {
             &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK],
         ),
         (0x16, MmioDirection::Write, 2, &0_u16.to_le_bytes()),
-        (0x18, MmioDirection::Write, 2, &VIRTIO_QUEUE_SIZE.to_le_bytes()),
+        (
+            0x18,
+            MmioDirection::Write,
+            2,
+            &VIRTIO_QUEUE_SIZE.to_le_bytes(),
+        ),
         (
             0x20,
             MmioDirection::Write,
