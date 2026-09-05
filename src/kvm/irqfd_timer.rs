@@ -258,3 +258,5 @@ mod irqfd_timer_tests {
         assert_eq!(value, 1);
     }
 }
+
+include!("ioeventfd_roundtrip.rs");
