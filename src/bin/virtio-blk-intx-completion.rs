@@ -18,6 +18,11 @@ fn main() -> ExitCode {
             println!("virtio-blk INTx LAPIC SPIV: {:#x}", result.lapic_spiv());
             println!("virtio-blk INTx LAPIC LINT0: {:#x}", result.lapic_lint0());
             println!(
+                "virtio-blk INTx driver features: {:#x}",
+                result.driver_features()
+            );
+            println!("virtio-blk INTx queue enabled: {}", result.queue_enabled());
+            println!(
                 "virtio-blk INTx completion: {}/{}/{}",
                 result.completion().descriptor_id(),
                 result.completion().length(),
@@ -34,6 +39,15 @@ fn main() -> ExitCode {
                 result.request_status()
             );
             println!("virtio-blk INTx data bytes: {}", result.data().len());
+            if result.data().len() != VIRTIO_BLK_SECTOR_SIZE {
+                eprintln!("error: virtio-blk INTx result returned an unexpected data length");
+                return ExitCode::FAILURE;
+            }
+            println!(
+                "virtio-blk INTx data boundary: first={:?} last={:?}",
+                &result.data()[..16],
+                &result.data()[result.data().len() - 8..]
+            );
             println!(
                 "virtio-blk INTx port-I/O exits: {}",
                 result.io_exits().len()
@@ -44,9 +58,7 @@ fn main() -> ExitCode {
                 result.completion_rflags()
             );
             println!("virtio-blk INTx proof: {:?}", result.proof());
-            if result.proof() != VIRTIO_BLK_INTERRUPT_PROOF
-                || result.data().len() != VIRTIO_BLK_SECTOR_SIZE
-            {
+            if result.proof() != VIRTIO_BLK_INTERRUPT_PROOF {
                 eprintln!("error: virtio-blk INTx result did not match fixed proof contract");
                 ExitCode::FAILURE
             } else {
