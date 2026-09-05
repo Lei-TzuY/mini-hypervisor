@@ -23,7 +23,10 @@ fn virtio_blk_read_completes_through_one_intx_lifecycle() {
             assert_eq!(result.assert_count(), 1);
             assert_eq!(result.deassert_count(), 1);
             assert_eq!(result.completion().descriptor_id(), 0);
-            assert_eq!(result.completion().length(), (VIRTIO_BLK_SECTOR_SIZE + 1) as u32);
+            assert_eq!(
+                result.completion().length(),
+                (VIRTIO_BLK_SECTOR_SIZE + 1) as u32
+            );
             assert_eq!(result.completion().sector(), 0);
             assert_eq!(result.used_idx(), 1);
             assert_eq!(result.used_id(), 0);
