@@ -15,7 +15,10 @@ fn main() -> ExitCode {
                 VIRTIO_PCI_VENDOR_ID, VIRTIO_RNG_PCI_DEVICE_ID
             );
             println!("virtio-rng BAR0: {VIRTIO_RNG_BAR0_GPA:#x}");
-            println!("virtio-rng driver features: {:#x}", result.driver_features());
+            println!(
+                "virtio-rng driver features: {:#x}",
+                result.driver_features()
+            );
             println!("virtio-rng device status: {:#04x}", result.status());
             println!("virtio-rng queue enabled: {}", result.queue_enabled());
             println!(
