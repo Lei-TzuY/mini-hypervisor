@@ -1,0 +1,52 @@
+name: Strict KVM two-vCPU work dispatch
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/portio/two_vcpu_work_dispatch_fixture.rs'
+      - 'src/portio.rs'
+      - 'src/bin/two-vcpu-work-dispatch.rs'
+      - 'tests/two_vcpu_work_dispatch_guest.rs'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/vcpu.rs'
+      - 'src/vmexit.rs'
+      - '.github/workflows/two-vcpu-work-dispatch.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  work-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM two-vCPU shared work-dispatch proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin two-vcpu-work-dispatch)"
+          printf '%s\n' "$output"
+
+          grep -F 'work-dispatch BSP proof: [66, 67, 86, 68]' <<<"$output"
+          grep -F 'work-dispatch AP proof: [82, 80, 68]' <<<"$output"
+          grep -F 'work-dispatch payload: 0x21' <<<"$output"
+          grep -F 'work-dispatch command: 0x0' <<<"$output"
+          grep -F 'work-dispatch result: 0x42' <<<"$output"
+          grep -F 'work-dispatch ack: 0x0' <<<"$output"
+
+          bsp="$(grep -F 'work-dispatch BSP report: vCPU 0 exit Hlt: rip=0x10043, rflags=' <<<"$output")"
+          bsp_hex="${bsp##*rflags=}"
+          [[ "$bsp_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          bsp_flags=$((bsp_hex))
+          (( (bsp_flags & 0x2) == 0x2 ))
+
+          ap="$(grep -F 'work-dispatch AP report: vCPU 1 exit Hlt: rip=0x1103c, rflags=' <<<"$output")"
+          ap_hex="${ap##*rflags=}"
+          [[ "$ap_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          ap_flags=$((ap_hex))
+          (( (ap_flags & 0x2) == 0x2 ))
