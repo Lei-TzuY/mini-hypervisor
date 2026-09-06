@@ -79,15 +79,38 @@ const USER_BYTES: [u8; 50] = [
 ];
 
 const COPYOUT_HANDLER_BYTES: [u8; 32] = [
-    0x49, 0x89, 0xe2, // mov r10, rsp: preserve user stack
-    0x48, 0xbc, 0x00, 0xe0, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs rsp, 0x1fe000
-    0xc6, 0x07, COPYOUT_VALUE, // mov byte ptr [rdi], 0xa5 -- unique fault site
-    0x45, 0x31, 0xc0, // xor r8d, r8d: successful return is zero
-    0xb0, b'W', // mov al, 'W'
-    0xe6, 0xe9, // out 0xe9, al
-    0x4c, 0x89, 0xc0, // mov rax, r8
-    0x4c, 0x89, 0xd4, // fixup: mov rsp, r10
-    0x48, 0x0f, 0x07, // sysretq
+    0x49,
+    0x89,
+    0xe2, // mov r10, rsp: preserve user stack
+    0x48,
+    0xbc,
+    0x00,
+    0xe0,
+    0x1f,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00, // movabs rsp, 0x1fe000
+    0xc6,
+    0x07,
+    COPYOUT_VALUE, // mov byte ptr [rdi], 0xa5 -- unique fault site
+    0x45,
+    0x31,
+    0xc0, // xor r8d, r8d: successful return is zero
+    0xb0,
+    b'W', // mov al, 'W'
+    0xe6,
+    0xe9, // out 0xe9, al
+    0x4c,
+    0x89,
+    0xc0, // mov rax, r8
+    0x4c,
+    0x89,
+    0xd4, // fixup: mov rsp, r10
+    0x48,
+    0x0f,
+    0x07, // sysretq
 ];
 
 const PAGE_FAULT_HANDLER_BYTES: [u8; 86] = [
@@ -129,15 +152,29 @@ pub struct CopyoutPageFaultObservation {
 
 impl CopyoutPageFaultObservation {
     #[must_use]
-    pub const fn cr2(self) -> u64 { self.cr2 }
+    pub const fn cr2(self) -> u64 {
+        self.cr2
+    }
+
     #[must_use]
-    pub const fn error_code(self) -> u64 { self.error_code }
+    pub const fn error_code(self) -> u64 {
+        self.error_code
+    }
+
     #[must_use]
-    pub const fn rip(self) -> u64 { self.rip }
+    pub const fn rip(self) -> u64 {
+        self.rip
+    }
+
     #[must_use]
-    pub const fn cs(self) -> u64 { self.cs }
+    pub const fn cs(self) -> u64 {
+        self.cs
+    }
+
     #[must_use]
-    pub const fn rflags(self) -> u64 { self.rflags }
+    pub const fn rflags(self) -> u64 {
+        self.rflags
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,15 +188,29 @@ pub struct CopyoutTerminalFrame {
 
 impl CopyoutTerminalFrame {
     #[must_use]
-    pub const fn rip(self) -> u64 { self.rip }
+    pub const fn rip(self) -> u64 {
+        self.rip
+    }
+
     #[must_use]
-    pub const fn cs(self) -> u64 { self.cs }
+    pub const fn cs(self) -> u64 {
+        self.cs
+    }
+
     #[must_use]
-    pub const fn rflags(self) -> u64 { self.rflags }
+    pub const fn rflags(self) -> u64 {
+        self.rflags
+    }
+
     #[must_use]
-    pub const fn rsp(self) -> u64 { self.rsp }
+    pub const fn rsp(self) -> u64 {
+        self.rsp
+    }
+
     #[must_use]
-    pub const fn ss(self) -> u64 { self.ss }
+    pub const fn ss(self) -> u64 {
+        self.ss
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,47 +240,109 @@ pub struct FaultSafeCopyoutGuestResult {
 
 impl FaultSafeCopyoutGuestResult {
     #[must_use]
-    pub fn io_exits(&self) -> &[PortIoExit] { &self.io_exits }
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
+
     #[must_use]
-    pub fn proof(&self) -> &[u8] { &self.proof }
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
+
     #[must_use]
-    pub const fn report(&self) -> VmExitReport { self.report }
+    pub const fn report(&self) -> VmExitReport {
+        self.report
+    }
+
     #[must_use]
-    pub const fn good_return(&self) -> u64 { self.good_return }
+    pub const fn good_return(&self) -> u64 {
+        self.good_return
+    }
+
     #[must_use]
-    pub const fn bad_return(&self) -> u64 { self.bad_return }
+    pub const fn bad_return(&self) -> u64 {
+        self.bad_return
+    }
+
     #[must_use]
-    pub const fn user_readback(&self) -> u64 { self.user_readback }
+    pub const fn user_readback(&self) -> u64 {
+        self.user_readback
+    }
+
     #[must_use]
-    pub const fn user_memory_value(&self) -> u8 { self.user_memory_value }
+    pub const fn user_memory_value(&self) -> u8 {
+        self.user_memory_value
+    }
+
     #[must_use]
-    pub const fn page_fault(&self) -> CopyoutPageFaultObservation { self.page_fault }
+    pub const fn page_fault(&self) -> CopyoutPageFaultObservation {
+        self.page_fault
+    }
+
     #[must_use]
-    pub const fn terminal_frame(&self) -> CopyoutTerminalFrame { self.terminal_frame }
+    pub const fn terminal_frame(&self) -> CopyoutTerminalFrame {
+        self.terminal_frame
+    }
+
     #[must_use]
-    pub const fn terminal_rsp(&self) -> u64 { self.terminal_rsp }
+    pub const fn terminal_rsp(&self) -> u64 {
+        self.terminal_rsp
+    }
+
     #[must_use]
-    pub const fn terminal_cs(&self) -> u16 { self.terminal_cs }
+    pub const fn terminal_cs(&self) -> u16 {
+        self.terminal_cs
+    }
+
     #[must_use]
-    pub const fn terminal_rflags(&self) -> u64 { self.terminal_rflags }
+    pub const fn terminal_rflags(&self) -> u64 {
+        self.terminal_rflags
+    }
+
     #[must_use]
-    pub const fn final_cr2(&self) -> u64 { self.final_cr2 }
+    pub const fn final_cr2(&self) -> u64 {
+        self.final_cr2
+    }
+
     #[must_use]
-    pub const fn efer(&self) -> u64 { self.efer }
+    pub const fn efer(&self) -> u64 {
+        self.efer
+    }
+
     #[must_use]
-    pub const fn star(&self) -> u64 { self.star }
+    pub const fn star(&self) -> u64 {
+        self.star
+    }
+
     #[must_use]
-    pub const fn lstar(&self) -> u64 { self.lstar }
+    pub const fn lstar(&self) -> u64 {
+        self.lstar
+    }
+
     #[must_use]
-    pub const fn sfmask(&self) -> u64 { self.sfmask }
+    pub const fn sfmask(&self) -> u64 {
+        self.sfmask
+    }
+
     #[must_use]
-    pub const fn good_page_pte(&self) -> u64 { self.good_page_pte }
+    pub const fn good_page_pte(&self) -> u64 {
+        self.good_page_pte
+    }
+
     #[must_use]
-    pub const fn fault_handler_pte(&self) -> u64 { self.fault_handler_pte }
+    pub const fn fault_handler_pte(&self) -> u64 {
+        self.fault_handler_pte
+    }
+
     #[must_use]
-    pub const fn fault_observation_pte(&self) -> u64 { self.fault_observation_pte }
+    pub const fn fault_observation_pte(&self) -> u64 {
+        self.fault_observation_pte
+    }
+
     #[must_use]
-    pub const fn bad_pd_entry(&self) -> u64 { self.bad_pd_entry }
+    pub const fn bad_pd_entry(&self) -> u64 {
+        self.bad_pd_entry
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -251,10 +364,20 @@ struct RuntimeState {
     bad_pd_entry: u64,
 }
 
-pub fn run_fault_safe_copyout_guest(config: VmConfig) -> Result<FaultSafeCopyoutGuestResult, Error> {
-    let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &KERNEL_BOOT_BYTES)?;
+pub fn run_fault_safe_copyout_guest(
+    config: VmConfig,
+) -> Result<FaultSafeCopyoutGuestResult, Error> {
+    let kernel = FlatGuestImage::new(
+        PRIVILEGE_KERNEL_ENTRY,
+        PRIVILEGE_KERNEL_ENTRY,
+        &KERNEL_BOOT_BYTES,
+    )?;
     let user = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &USER_BYTES)?;
-    let copyout_handler = FlatGuestImage::new(SYSCALL_KERNEL_ENTRY, SYSCALL_KERNEL_ENTRY, &COPYOUT_HANDLER_BYTES)?;
+    let copyout_handler = FlatGuestImage::new(
+        SYSCALL_KERNEL_ENTRY,
+        SYSCALL_KERNEL_ENTRY,
+        &COPYOUT_HANDLER_BYTES,
+    )?;
     let page_fault_handler = FlatGuestImage::new(
         COPYOUT_PAGE_FAULT_HANDLER,
         COPYOUT_PAGE_FAULT_HANDLER,
@@ -280,7 +403,10 @@ pub fn run_fault_safe_copyout_guest(config: VmConfig) -> Result<FaultSafeCopyout
     terminal_handler.load(&mut memory)?;
     memory.write(GuestPhysAddr::new(COPYOUT_GOOD_POINTER), &[0])?;
     memory.write(COPYOUT_RESULT_ADDR, &[0; 24])?;
-    memory.write(COPYOUT_FAULT_OBSERVATION_ADDR, &[0; PAGE_FAULT_OBSERVATION_BYTES])?;
+    memory.write(
+        COPYOUT_FAULT_OBSERVATION_ADDR,
+        &[0; PAGE_FAULT_OBSERVATION_BYTES],
+    )?;
     vm.register_guest_memory(memory)?;
 
     debug_assert_eq!(config.vcpu_count(), 1);
@@ -374,7 +500,11 @@ fn configure_copyout_msrs(backend: &KvmBackend, vcpu: &Vcpu) -> Result<[u64; 4],
     if observed.values().len() != indices.len() {
         return Err(verification_error(
             "copyout syscall MSR readback",
-            format!("expected {} values, got {}", indices.len(), observed.values().len()),
+            format!(
+                "expected {} values, got {}",
+                indices.len(),
+                observed.values().len()
+            ),
         ));
     }
     let readback = [
@@ -382,7 +512,13 @@ fn configure_copyout_msrs(backend: &KvmBackend, vcpu: &Vcpu) -> Result<[u64; 4],
         observed.values()[1].value(),
         observed.values()[2].value(),
     ];
-    if readback != [SYSCALL_STAR_VALUE, SYSCALL_LSTAR_VALUE, SYSCALL_SFMASK_VALUE] {
+    if readback
+        != [
+            SYSCALL_STAR_VALUE,
+            SYSCALL_LSTAR_VALUE,
+            SYSCALL_SFMASK_VALUE,
+        ]
+    {
         return Err(verification_error(
             "copyout syscall MSR readback",
             format!("unexpected readback {readback:#x?}"),
@@ -413,7 +549,11 @@ fn encode_kernel_interrupt_gate(handler: u64) -> [u8; 16] {
 fn read_results(memory: &GuestMemory) -> Result<(u64, u64, u64), Error> {
     let mut bytes = [0_u8; 24];
     memory.read(COPYOUT_RESULT_ADDR, &mut bytes)?;
-    Ok((read_u64(&bytes, 0), read_u64(&bytes, 8), read_u64(&bytes, 16)))
+    Ok((
+        read_u64(&bytes, 0),
+        read_u64(&bytes, 8),
+        read_u64(&bytes, 16),
+    ))
 }
 
 fn read_user_value(memory: &GuestMemory) -> Result<u8, Error> {
@@ -451,7 +591,10 @@ fn read_pte(memory: &GuestMemory, address: u64) -> Result<u64, Error> {
     let page = address & !(LONG_MODE_PAGE_SIZE - 1);
     let index = page / LONG_MODE_PAGE_SIZE;
     let mut bytes = [0_u8; 8];
-    memory.read(GuestPhysAddr::new(PRIVILEGE_PT_ADDR.get() + index * 8), &mut bytes)?;
+    memory.read(
+        GuestPhysAddr::new(PRIVILEGE_PT_ADDR.get() + index * 8),
+        &mut bytes,
+    )?;
     Ok(u64::from_le_bytes(bytes))
 }
 
@@ -465,7 +608,11 @@ fn read_bad_pointer_pd_entry(memory: &GuestMemory) -> Result<u64, Error> {
 }
 
 fn read_u64(bytes: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("fixed copyout field is eight bytes"))
+    u64::from_le_bytes(
+        bytes[offset..offset + 8]
+            .try_into()
+            .expect("fixed copyout field is eight bytes"),
+    )
 }
 
 fn validate_runtime_state(state: RuntimeState) -> Result<(), Error> {
@@ -495,7 +642,8 @@ fn validate_runtime_state(state: RuntimeState) -> Result<(), Error> {
         || state.msrs[1] != SYSCALL_STAR_VALUE
         || state.msrs[2] != SYSCALL_LSTAR_VALUE
         || state.msrs[3] != SYSCALL_SFMASK_VALUE
-        || state.good_page_pte & (X86_PAGE_USER | X86_PAGE_WRITE) != (X86_PAGE_USER | X86_PAGE_WRITE)
+        || state.good_page_pte & (X86_PAGE_USER | X86_PAGE_WRITE)
+            != (X86_PAGE_USER | X86_PAGE_WRITE)
         || state.fault_handler_pte & X86_PAGE_USER != 0
         || state.fault_observation_pte & X86_PAGE_USER != 0
         || state.bad_pd_entry & X86_PAGE_PRESENT != 0
@@ -558,7 +706,10 @@ mod tests {
 
     #[test]
     fn copyout_handler_has_one_store_fault_site_and_one_fixup() {
-        assert_eq!(&COPYOUT_HANDLER_BYTES[13..16], &[0xc6, 0x07, COPYOUT_VALUE]);
+        assert_eq!(
+            &COPYOUT_HANDLER_BYTES[13..16],
+            &[0xc6, 0x07, COPYOUT_VALUE]
+        );
         assert_eq!(COPYOUT_FAULT_RIP, SYSCALL_KERNEL_ENTRY.get() + 13);
         assert_eq!(&COPYOUT_HANDLER_BYTES[26..29], &[0x4c, 0x89, 0xd4]);
         assert_eq!(COPYOUT_FIXUP_RIP, SYSCALL_KERNEL_ENTRY.get() + 26);
@@ -578,33 +729,53 @@ mod tests {
 
     #[test]
     fn installs_dpl0_page_fault_gate_without_weakening_terminal_user_gate() {
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let layout = layout();
         layout.install_tables(&mut memory).unwrap();
         install_page_fault_gate(&mut memory).unwrap();
 
         let mut gate = [0_u8; 16];
-        memory.read(
-            GuestPhysAddr::new(PRIVILEGE_IDT_ADDR.get() + u64::from(COPYOUT_PAGE_FAULT_VECTOR) * 16),
-            &mut gate,
-        ).unwrap();
-        assert_eq!(gate, encode_kernel_interrupt_gate(COPYOUT_PAGE_FAULT_HANDLER.get()));
+        memory
+            .read(
+                GuestPhysAddr::new(
+                    PRIVILEGE_IDT_ADDR.get() + u64::from(COPYOUT_PAGE_FAULT_VECTOR) * 16,
+                ),
+                &mut gate,
+            )
+            .unwrap();
+        assert_eq!(
+            gate,
+            encode_kernel_interrupt_gate(COPYOUT_PAGE_FAULT_HANDLER.get())
+        );
         assert_eq!(gate[5], 0x8e);
 
         let mut terminal_gate = [0_u8; 16];
-        memory.read(GuestPhysAddr::new(PRIVILEGE_IDT_ADDR.get() + 0x81 * 16), &mut terminal_gate).unwrap();
+        memory
+            .read(
+                GuestPhysAddr::new(PRIVILEGE_IDT_ADDR.get() + 0x81 * 16),
+                &mut terminal_gate,
+            )
+            .unwrap();
         assert_eq!(terminal_gate[5], 0xee);
     }
 
     #[test]
     fn good_destination_is_user_writable_and_bad_pointer_stays_unmapped() {
         assert_eq!(COPYOUT_BAD_POINTER, 2 * LONG_MODE_IDENTITY_MAP_SIZE);
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let layout = layout();
         layout.install_tables(&mut memory).unwrap();
         let pte = read_pte(&memory, COPYOUT_GOOD_POINTER).unwrap();
-        assert_eq!(pte & (X86_PAGE_USER | X86_PAGE_WRITE), X86_PAGE_USER | X86_PAGE_WRITE);
-        assert_eq!(read_bad_pointer_pd_entry(&memory).unwrap() & X86_PAGE_PRESENT, 0);
+        assert_eq!(
+            pte & (X86_PAGE_USER | X86_PAGE_WRITE),
+            X86_PAGE_USER | X86_PAGE_WRITE
+        );
+        assert_eq!(
+            read_bad_pointer_pd_entry(&memory).unwrap() & X86_PAGE_PRESENT,
+            0
+        );
     }
 
     #[test]
