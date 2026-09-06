@@ -27,11 +27,12 @@ Acceptance contract:
 - only after command publication may BSP send the existing guest-originated fixed xAPIC IPI vector `0x52` to APIC ID `1`;
 - the AP must enter the existing vector-`0x52` handler, emit handler proof, issue LAPIC EOI and `iretq`; after return it claims command with locked `XCHG`, doubles payload, stores result `0x42`, publishes acknowledgement `1` with locked `XCHG`, and requires previous acknowledgement ownership `0`;
 - BSP uses a bounded poll, consumes acknowledgement with locked `XCHG`, requires old acknowledgement `1`, validates result `0x42`, and leaves command and acknowledgement both cleared to zero;
-- bounded poll exhaustion, ownership mismatch, startup/long-mode/IDT mismatch, IPI sequencing failure, mailbox mismatch, proof mismatch or terminal-state mismatch remain hard failures and must not be retried into success or hidden by changed expectations;
+- bounded poll exhaustion, ownership mismatch, startup/long-mode/IDT mismatch, IPI sequencing failure, mailbox mismatch, proof mismatch or completion-state mismatch remain hard failures and must not be retried into success or hidden by changed expectations;
 - exact BSP debug proof is `0IDSCXVD`; exact AP proof is `ALRIPD`; every byte-wide port-I/O exit must have exact direction, size, debug port, count and payload;
 - exact final mailbox is payload `0x21`, command `0`, result `0x42`, acknowledgement `0`;
-- exact BSP terminal report is `KVM_EXIT_HLT` at RIP `0x1009b`; exact AP terminal report is `KVM_EXIT_HLT` at RIP `0x80a6`; architectural RFLAGS bit1 is required on both and AP completion must retain IF set;
-- KVM-aware integration independently validates both proof streams, all debug-port exits, initial/startup AP MP state, AP long-mode/IDT state, ready/completion RFLAGS, mailbox state and both terminal reports;
+- the final `D` byte on each vCPU is the userspace-visible completion barrier. After servicing that `KVM_EXIT_IO`, userspace must capture architectural state and must not re-enter `KVM_RUN` merely to observe the following guest `HLT`: with the in-kernel LAPIC/irqchip, HLT is allowed to remain inside KVM waiting for another event and is not a portable userspace terminal-exit contract;
+- BSP completion after `D` requires architectural RFLAGS bit1 set and IF clear; AP completion after `D` requires architectural RFLAGS bit1 and IF set. The HLT bytes that follow `D` remain in the deterministic guest images only as fail-safe stops if a caller erroneously re-enters execution, not as acceptance evidence;
+- KVM-aware integration independently validates both proof streams, all debug-port exits, initial/startup AP MP state, AP long-mode/IDT state, ready/completion RFLAGS, mailbox state and both userspace completion barriers;
 - permanent workflow `Strict KVM SIPI IPI work dispatch` must run independently on hosted KVM and require this exact composition while all previous permanent workflows remain unchanged;
 - locally generated assembler/linker artifacts and construction scripts are not committed.
 
