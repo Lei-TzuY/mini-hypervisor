@@ -4,52 +4,55 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `28dc682079c9d9ce7ff9fabf7dc2198178d4146f` through PR #105 (`Dispatch work through the SIPI-started AP`). The repository now integrates the Phase 73 foundation, x86-64/ELF64 execution, userspace and virtual MMIO, controller-backed interrupts, direct and irqfd/eventfd asynchronous delivery, PCI/virtio-rng/virtio-blk paths, and a bounded two-vCPU SMP control/data plane.
+`main` is `ee289d59fb648b84db3e1042dbdaa526d6730827` through PR #106 (`Run a SIPI-started AP local LAPIC timer`). The repository integrates the Phase 73 foundation, x86-64/ELF64 execution, userspace and virtual MMIO, controller-backed interrupts, direct and irqfd/eventfd asynchronous delivery, PCI/virtio-rng/virtio-blk paths, and a bounded two-vCPU SMP control/data plane.
 
-The SMP path now composes the previously separate pieces in one VM: vCPU1 begins `KVM_MP_STATE_UNINITIALIZED`, the guest BSP performs xAPIC INIT/SIPI vector `0x08`, the AP owns its real-mode-to-long-mode transition, the BSP publishes the fixed mailbox work item at GPA `0x9000`, and the guest-originated vector-`0x52` IPI notifies the running AP. The AP consumes the command with locked `XCHG`, computes `0x21→0x42`, publishes acknowledgement ownership, and both vCPUs terminate their acceptance paths at userspace-visible debug-port completion barriers rather than relying on an in-kernel-LAPIC HLT exit.
+The SMP path now includes guest-owned INIT/SIPI AP startup, the AP real-mode-to-long-mode transition, guest-originated xAPIC IPIs, shared mailbox work dispatch, targeted MSI delivery, and one AP-owned local LAPIC one-shot timer. PR #106 proves that the SIPI-started AP programs and services vector `0x53` itself, performs EOI/IRETQ, publishes shared completion ownership, and preserves the integrated AP startup/long-mode state.
 
-PR #105 and its exact merged-main ordinary CI plus permanent hosted-KVM workflows are green at this boundary. The fixed one-work-item SIPI/IPI/mailbox composition is sealed. Do not farm alternate payloads, vectors, APIC IDs, SIPI vectors, polling constants, or vCPU2/vCPU3 clones merely to extend the phase number.
+Exact merged-main ordinary CI and all permanent hosted-KVM workflows for `ee289d59fb648b84db3e1042dbdaa526d6730827` are green. The fixed AP-local-timer vector/count proof is sealed. Do not farm periodic/count/divide/vector variants merely to extend the phase number.
 
-## Selected milestone — SIPI-started AP owns a one-shot local LAPIC timer
+## Selected milestone — bounded cross-vCPU TLB shootdown
 
-The next boundary is per-vCPU local timer ownership. The AP must retain the integrated INIT/SIPI startup and guest-owned long-mode transition, then program and service its own xAPIC local timer instead of receiving the event from the BSP or a host-owned external timer path.
+The next architecture boundary is shared address-space invalidation across vCPUs. Both vCPUs share CR3/page tables; the AP must first establish one alias translation, the BSP must then mutate that shared PTE and send a guest-originated xAPIC shootdown IPI, and the AP handler must execute `invlpg` before acknowledging completion. The AP must subsequently observe the replacement physical page through the same virtual address.
 
-This is a bounded local-APIC timer proof, not a general timer subsystem. vCPU1 remains the only AP, vector `0x53` is fixed, the timer is one-shot, and a targeted-MSI watchdog exists only to keep a broken timer path from hanging hosted CI. If the watchdog fires, the milestone fails and cannot be accepted as timer evidence.
+This is deliberately one fixed target page and one AP. It proves the end-to-end protocol and ownership ordering without claiming a general TLB-generation framework or relying on an architecturally unguaranteed stale read before the shootdown.
 
 Acceptance contract:
 
-- preserve ordinary CI, Rust 1.74 shipped-target MSRV and every existing permanent hosted-KVM workflow;
-- create exactly two vCPUs; vCPU1 must begin `KVM_MP_STATE_UNINITIALIZED` and may start only through the existing guest BSP INIT assert/deassert plus SIPI vector `0x08` sequence;
+- preserve ordinary CI, Rust 1.74 shipped-target MSRV, and every permanent hosted-KVM workflow already green on merged `main`;
+- create exactly two vCPUs; vCPU1 must begin `KVM_MP_STATE_UNINITIALIZED` and start only through the existing guest BSP INIT assert/deassert plus SIPI vector `0x08` path;
 - preserve the first 73 bytes of the integrated AP guest-owned real-mode-to-long-mode transition byte-for-byte;
-- after SIPI, AP startup state must remain MP runnable, RIP `0`, CS selector `0x0800`, CS base `0x8000`, CR0.PE clear before the AP performs its own PAE/CR3/EFER/CR0 transition;
-- preserve AP long-mode architectural state: stack `0x1ef000`, CS selector `0x08` with L=1, SS selector `0x10`, GDT `0x7000/0x17`, CR3 `0x1000`, and required CR0/CR4/EFER bits;
-- install AP timer IDT vector `0x53` at handler GPA `0x13000`; IDTR must be `0x6000/0x53f`;
-- AP must software-enable its local APIC and program a one-shot timer with divide configuration `0x0b`, unmasked LVT timer vector `0x53`, and initial count `0x00100000`;
-- AP emits readiness `R` and armed `A` while architectural RFLAGS bit1 is set and IF is clear, then executes adjacent `sti; hlt`;
-- the local timer must enter vector `0x53`; the handler emits `T`, writes LAPIC EOI and `iretq`; resumed AP mainline stores shared marker `K` at GPA `0x9000`, emits `W`, then emits completion barrier `D`;
-- exact AP proof is `ALRATWD`; exact BSP proof is `0IDSMD`; every byte-wide debug-port exit must have exact direction, size, port, count and payload;
-- AP completion after `D` requires architectural RFLAGS bit1 and IF set; BSP completion requires bit1 set and IF clear;
-- the BSP may observe marker `K` and emit `M`,`D` only after the AP worker has completed the timer path;
-- a five-second targeted-MSI watchdog may only prevent a failed timer from wedging CI. Any watchdog intervention is a hard failure with no retry-to-success path;
-- worker startup/channel/join failures must preserve their real error or become deterministic verification errors; they must not be coerced into an unrelated outer result type or swallowed;
-- KVM-aware integration must independently validate initial/startup AP MP state, AP long-mode/IDT state, ready/armed/completion RFLAGS, both proof streams, every debug exit, shared marker and watchdog=false;
-- permanent workflow `Strict KVM two-vCPU AP local timer` must run independently on hosted KVM and require vector `0x53`, TDCR `0x0b`, TMICT `0x100000`, watchdog=false, initial AP MP state `1`, exact SIPI startup state, IDT `0x6000/0x53f`, marker `75`, BSP proof `[48, 73, 68, 83, 77, 68]`, AP proof `[65, 76, 82, 65, 84, 87, 68]`, ready/armed IF clear and completion IF set;
-- formatter, Clippy, MSRV, startup, timer, watchdog, proof or architectural-state failures remain hard failures and must not be hidden by changed expectations or skipped hosted-KVM evidence.
+- preserve shared CR3/page tables and the existing LAPIC mapping VA `0x500000` → GPA `0xfee00000`;
+- fixed target alias VA `0x501000` uses PTE GPA `0x4808`, initially mapping RAM page A `0x18000` containing byte `A`;
+- AP must read `A` through the target alias before reporting readiness, establishing the translation without making any stale-read timing claim;
+- only after AP readiness may BSP guest code mutate PTE `0x4808` to page B with exact software-written value `0x19003` (`0x19000|Present|Writable`), execute `mfence`, report barrier `P`, send xAPIC vector `0x54` to APIC ID1, and report `X`;
+- AP owns IDT vector `0x54` with handler GPA `0x14000`; IDTR must be `0x6000/0x54f`;
+- the handler must execute `invlpg [0x501000]` before observable byte `I`, publish exactly one shootdown acknowledgement, write LAPIC EOI, and `iretq`;
+- after handler return the AP must read the same VA and require exact byte `B`, then report `B,D`; that post-`invlpg` read must cause a new page walk and therefore leave the leaf PTE Accessed bit set while Dirty remains clear;
+- BSP may consume the acknowledgement only after the AP handler publishes it, then reports `A,D`;
+- exact BSP proof is `0IDSPXAD`; exact AP proof is `ALRIBD`; every byte-wide debug-port exit must have exact direction, port, size, count and payload;
+- final guest memory must retain page A=`A`, page B=`B`, final target PTE=`0x19023` (page B + Present + Writable + hardware-managed Accessed, with Dirty clear), and consumed acknowledgement byte=`0`; arbitrary A/D-bit masking is not accepted;
+- AP ready state requires architectural RFLAGS bit1 with IF clear; AP completion requires bit1+IF;
+- AP startup state must remain SIPI-compatible (`RIP=0`, CS selector `0x0800`, CS base `0x8000`, pre-transition CR0.PE clear), and post-shootdown state must retain stack `0x1ef000`, CS `0x08` with L=1, SS `0x10`, GDT `0x7000/0x17`, CR3 `0x1000`, required CR0/CR4/EFER bits, and the shootdown IDT;
+- deterministic regressions must prove target PTE placement outside the LAPIC slot, preserve the integrated 73-byte SIPI prefix, prove the handler's `invlpg` opcode precedes observable acknowledgement byte `I`, distinguish the BSP software-written PTE `0x19003` from the post-page-walk final PTE `0x19023`, and require final Accessed=1/Dirty=0;
+- KVM-aware integration must independently validate startup/long-mode/IDT/RFLAGS state, both proof streams, every debug-port exit, exact final PTE including Accessed/Dirty semantics, final acknowledgement, and both backing-page bytes;
+- executable evidence must expose vector `0x54`, target VA `0x501000`, PTE `0x4808`, initial AP MP state `1`, exact startup/IDT state, final PTE `0x19023`, final ack `0`, page A `65`, page B `66`, both proof streams, and ready/completion RFLAGS;
+- permanent workflow `Strict KVM two-vCPU TLB shootdown` must run independently on hosted KVM with a bounded timeout and require all executable evidence above; it may not skip `/dev/kvm` or convert a shootdown failure into success;
+- formatter, Clippy, MSRV, startup, page-table mutation, IPI, `invlpg`, acknowledgement, proof, PTE Accessed/Dirty semantics, or architectural-state failures remain hard failures and must not be hidden by changed expectations, retries-to-success, or weakened permanent gates.
 
-The implementation is currently in progress on `milestone/ap-local-lapic-timer` / PR #106. No capability is considered integrated until the final exact candidate passes ordinary CI plus the new permanent AP-local-timer workflow, remains current with `main`, and completes the repository's normal review/merge audit.
+The implementation is in progress on `milestone/cross-vcpu-tlb-shootdown` / PR #107. Its initial compile/API integration blockers were corrected by aligning vCPU IDs with the repository's `u16` boundary and using the integrated MP-state reader. A later hosted-KVM run exposed that the original final-memory verifier incorrectly required the BSP software-written PTE value `0x19003` to remain byte-for-byte unchanged after the AP re-read the alias. The real processor correctly set the leaf Accessed bit, producing `0x19023`; the milestone now treats that CPU-managed transition as additional page-walk evidence and requires Dirty to remain clear. Binary, KVM-aware integration and the dedicated permanent shootdown workflow are part of this same coherent slice. No capability is considered integrated until the final exact candidate passes all ordinary/permanent workflows, remains current with `main`, and completes the normal review/merge audit.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- periodic LAPIC timer mode, TSC-deadline mode, timer calibration, guest wall clock, PIT, HPET or a general scheduler;
-- a BSP local timer, multiple timer vectors, alternate divide/count values, repeated timer interrupts or timer performance/latency claims;
-- a third vCPU, CPU hotplug, repeated INIT/SIPI cycles, alternate SIPI/IPI vectors or APIC IDs;
-- cross-vCPU TLB shootdown, shared page-table mutation, per-CPU TSS, ring transitions, SYSCALL/SYSRET or a kernel/user privilege model;
-- new PCI/virtio/storage behavior, DMA/IOMMU, migration, persistence or durability claims.
+- a global TLB generation counter, generic shootdown queue, multiple target pages, additional APs, broadcast invalidation, or arbitrary vCPU masks;
+- PCID, INVPCID, CR3 broadcast/reload policy, large-page invalidation, nested paging control, or guest ASID management;
+- a stale-read timing guarantee, TLB residency introspection, performance/latency benchmark, or timing-based correctness assertion;
+- ring transition/TSS, SYSCALL/SYSRET, privilege separation, userspace/kernel address-space ownership, or per-process page tables;
+- new timer variants, PCI/virtio/storage features, DMA/IOMMU, migration, persistence, or durability claims.
 
 ## Promotion rule
 
-After the SIPI-started AP local-timer proof is integrated and exact merged-`main` ordinary CI plus all permanent workflows are green, seal the fixed one-shot vector/count proof rather than multiplying timer constants or periodic variants.
+After the fixed one-target cross-vCPU shootdown is integrated and exact merged-`main` ordinary CI plus every permanent workflow are green, seal the proof rather than adding extra target addresses, vectors or AP clones.
 
-The next architecture audit should select a capability that uses the now-integrated SMP startup, IPI, mailbox and per-vCPU timer foundations in a materially new way. Strong candidates are a bounded cross-vCPU TLB-shootdown protocol backed by an actual shared page-table mutation, or a privileged execution boundary with per-CPU TSS/ring transition and executable end-to-end evidence. More timer variants are not a promotion.
+The next architecture audit should select a genuinely higher-order boundary. Strong candidates are a bounded privileged execution transition with per-vCPU TSS/ring ownership, or a more general shared-address-space invalidation protocol only if it introduces real reusable generation/queue semantics plus executable multi-vCPU evidence. More fixed shootdown variants are not a promotion.
