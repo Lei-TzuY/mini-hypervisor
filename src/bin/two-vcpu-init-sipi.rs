@@ -12,6 +12,17 @@ fn main() -> ExitCode {
                 u64::from(SIPI_VECTOR) << 12
             );
             println!("INIT/SIPI initial AP mp-state: {}", result.initial_mp_state());
+            println!("INIT/SIPI startup AP mp-state: {}", result.startup_mp_state());
+            println!("INIT/SIPI startup AP RIP: {:#x}", result.startup_rip());
+            println!(
+                "INIT/SIPI startup AP CS selector: {:#x}",
+                result.startup_cs_selector()
+            );
+            println!(
+                "INIT/SIPI startup AP CS base: {:#x}",
+                result.startup_cs_base()
+            );
+            println!("INIT/SIPI startup AP CR0: {:#x}", result.startup_cr0());
             println!("INIT/SIPI final AP mp-state: {}", result.final_mp_state());
             println!("INIT/SIPI shared marker: {:#x}", result.shared_marker());
             println!("INIT/SIPI AP completion rflags: {:#x}", result.ap_completion_rflags());
