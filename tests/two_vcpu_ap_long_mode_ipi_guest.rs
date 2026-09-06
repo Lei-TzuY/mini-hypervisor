@@ -11,7 +11,7 @@ use mini_hypervisor::portio::two_vcpu_init_sipi_fixture::{
     AP_LONG_MODE_STACK,
 };
 use mini_hypervisor::portio::DEBUG_PORT;
-use mini_hypervisor::vcpu::{PortIoDirection, VcpuId};
+use mini_hypervisor::vcpu::PortIoDirection;
 
 #[test]
 fn sipi_started_long_mode_ap_handles_guest_originated_ipi() {
@@ -80,8 +80,6 @@ fn sipi_started_long_mode_ap_handles_guest_originated_ipi() {
                 result.ap_completion_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
                 X86_RFLAGS_INTERRUPT_ENABLE
             );
-
-            let _ = VcpuId::BOOT;
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
