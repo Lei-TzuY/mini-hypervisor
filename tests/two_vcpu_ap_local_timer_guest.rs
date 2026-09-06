@@ -4,8 +4,8 @@ use mini_hypervisor::long_mode::{
     LONG_MODE_PML4_ADDR,
 };
 use mini_hypervisor::portio::two_vcpu_ap_local_timer_fixture::{
-    run_two_vcpu_ap_local_timer, AP_LOCAL_TIMER_IDT_LIMIT, AP_LOCAL_TIMER_VECTOR,
-    AP_TIMER_PROOF, BSP_TIMER_PROOF,
+    run_two_vcpu_ap_local_timer, AP_LOCAL_TIMER_IDT_LIMIT, AP_LOCAL_TIMER_VECTOR, AP_TIMER_PROOF,
+    BSP_TIMER_PROOF,
 };
 use mini_hypervisor::portio::two_vcpu_init_sipi_fixture::{
     AP_LONG_MODE_CODE_SELECTOR, AP_LONG_MODE_DATA_SELECTOR, AP_LONG_MODE_GDT,
@@ -43,17 +43,25 @@ fn sipi_started_ap_owns_one_shot_local_lapic_timer() {
             assert_eq!(state.idt_base(), 0x6000);
             assert_eq!(state.idt_limit(), AP_LOCAL_TIMER_IDT_LIMIT);
             assert_eq!(state.cr3(), LONG_MODE_PML4_ADDR.get());
-            assert_eq!(state.cr0() & LONG_MODE_CR0_REQUIRED_BITS, LONG_MODE_CR0_REQUIRED_BITS);
-            assert_eq!(state.cr4() & LONG_MODE_CR4_REQUIRED_BITS, LONG_MODE_CR4_REQUIRED_BITS);
-            assert_eq!(state.efer() & LONG_MODE_EFER_REQUIRED_BITS, LONG_MODE_EFER_REQUIRED_BITS);
+            assert_eq!(
+                state.cr0() & LONG_MODE_CR0_REQUIRED_BITS,
+                LONG_MODE_CR0_REQUIRED_BITS
+            );
+            assert_eq!(
+                state.cr4() & LONG_MODE_CR4_REQUIRED_BITS,
+                LONG_MODE_CR4_REQUIRED_BITS
+            );
+            assert_eq!(
+                state.efer() & LONG_MODE_EFER_REQUIRED_BITS,
+                LONG_MODE_EFER_REQUIRED_BITS
+            );
 
             for rflags in [state.ready_rflags(), state.armed_rflags()] {
                 assert_eq!(rflags & X86_RFLAGS_RESERVED_BIT, X86_RFLAGS_RESERVED_BIT);
                 assert_eq!(rflags & X86_RFLAGS_INTERRUPT_ENABLE, 0);
             }
             assert_eq!(
-                state.completion_rflags()
-                    & (X86_RFLAGS_RESERVED_BIT | X86_RFLAGS_INTERRUPT_ENABLE),
+                state.completion_rflags() & (X86_RFLAGS_RESERVED_BIT | X86_RFLAGS_INTERRUPT_ENABLE),
                 X86_RFLAGS_RESERVED_BIT | X86_RFLAGS_INTERRUPT_ENABLE
             );
 
