@@ -69,12 +69,62 @@ impl Vcpu {
         Ok(())
     }
 
-    /// Read the current Linux KVM MP state without mutating vCPU startup state.
+    /// Read the current Linux KVM MP state without mutating or processing pending startup events.
     ///
-    /// In particular, INIT/SIPI execution uses this to prove the secondary vCPU transitions from
-    /// UNINITIALIZED to INIT_RECEIVED and finally RUNNABLE without a userspace RUNNABLE shortcut.
+    /// INIT/SIPI execution uses this before the target vCPU runs to prove it starts UNINITIALIZED,
+    /// then separately uses the startup `KVM_RUN` handoff below to make KVM consume pending LAPIC
+    /// INIT/SIPI events before validating the resulting RUNNABLE real-mode startup state.
     pub(crate) fn multiprocessing_state_raw(&self) -> Result<u32, Error> {
         Ok(self.multiprocessing_state()?.raw())
+    }
+
+    /// Execute exactly the Linux x86 UNINITIALIZED-vCPU startup handoff for pending INIT/SIPI.
+    ///
+    /// Linux KVM processes pending local-APIC INIT/SIPI events while entering an UNINITIALIZED vCPU
+    /// and returns `EAGAIN` to userspace after that state transition. This helper recognizes only
+    /// that one `WouldBlock` result. It does not retry the guest, sleep, or generalize EAGAIN into a
+    /// recoverable `KVM_RUN` result. The caller must validate the resulting architectural startup
+    /// state before issuing the one subsequent `KVM_RUN` that executes guest instructions.
+    pub(crate) fn accept_init_sipi_startup_handoff(&mut self) -> Result<u32, Error> {
+        loop {
+            match sys::run_vcpu(self.fd.as_raw_fd()) {
+                Ok(()) => {
+                    return Err(vcpu_operation(
+                        self.id,
+                        "KVM_RUN INIT/SIPI startup handoff",
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "expected KVM_RUN EAGAIN while consuming pending INIT/SIPI, but KVM returned a guest exit",
+                        ),
+                    ));
+                }
+                Err(source) if source.kind() == io::ErrorKind::Interrupted => continue,
+                Err(source) if is_init_sipi_startup_handoff_error(&source) => break,
+                Err(source) => {
+                    return Err(vcpu_operation(
+                        self.id,
+                        "KVM_RUN INIT/SIPI startup handoff",
+                        source,
+                    ));
+                }
+            }
+        }
+
+        let observed = self.multiprocessing_state()?;
+        if observed != VcpuMpState::RUNNABLE {
+            return Err(vcpu_operation(
+                self.id,
+                "verify INIT/SIPI startup MP state after KVM_RUN EAGAIN",
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "expected secondary vCPU MP state RUNNABLE after startup handoff, got {}",
+                        observed.raw()
+                    ),
+                ),
+            ));
+        }
+        Ok(observed.raw())
     }
 
     pub(crate) fn ensure_runnable_mp_state(&mut self) -> Result<u32, Error> {
@@ -112,6 +162,10 @@ impl Vcpu {
     }
 }
 
+fn is_init_sipi_startup_handoff_error(source: &io::Error) -> bool {
+    source.kind() == io::ErrorKind::WouldBlock
+}
+
 const _: () = {
     assert!(std::mem::size_of::<KvmMpState>() == 4);
 };
@@ -134,5 +188,18 @@ mod mp_state_tests {
         assert_eq!(KVM_MP_STATE_INIT_RECEIVED, 2);
         assert_eq!(KVM_MP_STATE_HALTED, 3);
         assert_eq!(KVM_MP_STATE_SIPI_RECEIVED, 4);
+    }
+
+    #[test]
+    fn init_sipi_startup_handoff_accepts_only_would_block() {
+        assert!(is_init_sipi_startup_handoff_error(&io::Error::from(
+            io::ErrorKind::WouldBlock
+        )));
+        assert!(!is_init_sipi_startup_handoff_error(&io::Error::from(
+            io::ErrorKind::Interrupted
+        )));
+        assert!(!is_init_sipi_startup_handoff_error(&io::Error::from(
+            io::ErrorKind::Other
+        )));
     }
 }
