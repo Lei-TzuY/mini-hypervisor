@@ -3,6 +3,7 @@ pub mod pci;
 pub mod pci_fixture;
 pub mod two_vcpu_fixture;
 pub mod two_vcpu_guest_ipi_fixture;
+pub mod two_vcpu_init_sipi_fixture;
 pub mod two_vcpu_targeted_msi_fixture;
 pub mod virtio_blk_completion_interrupt_fixture;
 pub mod virtio_blk_fixture;

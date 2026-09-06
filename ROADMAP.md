@@ -4,50 +4,50 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` contains the Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 loading/mapping, userspace and virtual MMIO, direct/controller-backed interrupt delivery, MMIO interrupt lifecycles and multi-device routing, host-driven timer delivery through direct `KVM_IRQ_LINE` and irqfd/eventfd, ioeventfd-backed device signaling, guest-discovered PCI BAR MMIO, bounded virtio-rng split-ring execution with INTx/MSI completion, bounded virtio-blk read/INTx execution, same-VM in-memory virtio-blk `T_OUT`→`T_IN` write/readback, bounded four-sector multi-sector read/write, negotiated virtio-blk indirect descriptor execution, the bounded two-vCPU same-VM shared-memory handoff, and host-targeted fixed MSI delivery to a uniquely thread-owned second vCPU.
+`main` contains the Phase 73 foundation, deterministic x86-64 long-mode execution, bounded ELF64 loading/mapping, userspace and virtual MMIO, direct/controller-backed interrupt delivery, MMIO interrupt lifecycles and multi-device routing, host-driven timer delivery through direct `KVM_IRQ_LINE` and irqfd/eventfd, ioeventfd-backed device signaling, guest-discovered PCI BAR MMIO, bounded virtio-rng split-ring execution with INTx/MSI completion, bounded virtio-blk read/INTx execution, same-VM in-memory virtio-blk `T_OUT`→`T_IN` write/readback, bounded four-sector multi-sector read/write, negotiated virtio-blk indirect descriptor execution, a bounded two-vCPU same-VM shared-memory handoff, host-targeted fixed MSI delivery to a uniquely thread-owned second vCPU, and guest-originated xAPIC fixed-IPI delivery from vCPU0 to vCPU1.
 
-Current `main` is `bf9a2933325720cec0bc8cadf437191d60d4739d` through PR #99. PR #98 integrated negotiated `VIRTIO_RING_F_INDIRECT_DESC` execution while preserving the direct descriptor path. PR #99 then promoted the SMP surface independently of storage: vCPU1 is explicitly read back as `KVM_MP_STATE_RUNNABLE`, ownership moves to one worker thread, and host `KVM_SIGNAL_MSI` targets physical APIC ID 1 with vector `0x51`. Its exact proofs are `0MD` on vCPU0 and `RI1D` on vCPU1, with one MSI delivery and architectural RFLAGS/MP-state validation. The permanent hosted-KVM workflows for CI, virtio-blk INTx/write-readback/multi-sector/indirect execution, the two-vCPU foundation and targeted MSI are green on the integrated boundary.
+Current `main` is `4cf0afb321196bd81c4977d65d8638a457e3d0b1` through PR #100. PR #99 established explicit host promotion/readback of vCPU1 as `KVM_MP_STATE_RUNNABLE` plus host `KVM_SIGNAL_MSI` targeting physical APIC ID 1. PR #100 then moved interrupt origination into the guest: vCPU0 maps the local APIC, writes ICR high/low for APIC ID 1 and vector `0x52`, vCPU1 receives the fixed IPI in its uniquely owned worker thread, and the handler acknowledges LAPIC EOI before returning. The permanent CI, storage, two-vCPU foundation, targeted-MSI and guest-IPI workflows are green on this integrated boundary.
 
-The negotiated indirect-descriptor phase and the fixed host-targeted-MSI phase are sealed. Do not farm larger fixed indirect tables, extra payload signatures, more fixed MSI vectors, additional destination APIC IDs or vCPU2/vCPU3 clones merely to extend the phase number. The independently named persistent-flush storage surface remains a separate storage frontier and is not part of the current SMP slice.
+The host-targeted-MSI and guest-originated fixed-IPI phases are sealed. Do not farm more fixed MSI/IPI vectors, destination APIC IDs, or vCPU2/vCPU3 clones merely to extend the phase number. The independently named persistent-flush storage surface remains a separate storage frontier.
 
-## Selected milestone — guest-originated xAPIC fixed IPI to the thread-owned second vCPU
+## Selected milestone — guest-driven xAPIC INIT/SIPI startup of the second vCPU
 
-The next multiprocessor boundary is guest-visible interrupt control. The integrated two-vCPU proof can already target vCPU1 from the host through `KVM_SIGNAL_MSI`; this milestone requires vCPU0 itself to program the in-kernel legacy xAPIC ICR and deliver one fixed IPI to APIC ID 1 while preserving the existing unique vCPU1 worker ownership and explicit RUNNABLE startup.
+The next multiprocessor boundary is application-processor lifecycle control. The integrated two-vCPU proofs currently use a userspace `KVM_SET_MP_STATE(RUNNABLE)` shortcut before guest execution. This milestone removes that shortcut from its fixture: vCPU1 must begin `KVM_MP_STATE_UNINITIALIZED`, vCPU0 must send a bounded xAPIC INIT assert/deassert plus SIPI sequence to APIC ID 1, and Linux KVM must establish the SIPI-selected real-mode startup state before the AP executes a trampoline at GPA `0x8000`.
 
-This is a deliberately bounded xAPIC IPI proof, not guest AP startup or a general APIC model. vCPU1 remains host-promoted to RUNNABLE; INIT/SIPI startup is reserved for a later architectural phase.
+Linux KVM's observable startup boundary matters here. `KVM_GET_MP_STATE` by itself does not process pending LAPIC startup events, so this milestone does **not** claim that userspace can sample `INIT_RECEIVED` after each BSP debug-port barrier. Instead, after the BSP has committed all three ICR commands, the first AP `KVM_RUN` must take the x86 UNINITIALIZED-vCPU startup path, consume pending INIT/SIPI, and return the documented `EAGAIN`/`WouldBlock` handoff. At that exact checkpoint userspace must observe `MP_STATE=RUNNABLE`, `RIP=0`, `CS.selector=0x0800`, `CS.base=0x8000`, and `CR0.PE=0`; only then may one subsequent `KVM_RUN` execute the trampoline.
 
 Acceptance contract:
 
-- preserve current main CI, every permanent virtio-blk workflow, the two-vCPU foundation and host-targeted-MSI workflow, all existing long-mode/ELF64/MMIO/interrupt/PCI/virtio contracts, and Rust 1.74 MSRV;
-- do not modify or compete with the independently named persistent-flush storage surface;
-- keep vCPU1 uniquely owned by one worker thread after setup; no `Vcpu: Sync`, shared concurrent vCPU access or scheduler abstraction is introduced;
-- retain explicit `KVM_MP_STATE_RUNNABLE` promotion/readback for vCPU1 so this milestone isolates IPI delivery from INIT/SIPI startup;
-- reuse the bounded virtual-MMIO page-table machinery to map guest VA `0x500000` to local-APIC GPA `0xFEE00000` without weakening RAM-backed mapping validation;
-- install fixed vector `0x52` on both vCPUs so wrong-target self-delivery is observable rather than silently ignored;
-- vCPU0 must execute xAPIC ICR high write `0x01000000` at offset `0x310` followed by ICR low fixed-delivery value `0x52` at offset `0x300`; userspace must not emulate these LAPIC accesses;
-- if either ICR write or the handler EOI escapes the in-kernel LAPIC as `KVM_EXIT_MMIO`, execution fails rather than converting the milestone into userspace APIC emulation;
-- vCPU1 emits readiness `R` under CLI, then remains blocked on the host synchronization channel until vCPU0 has crossed the post-ICR `S` barrier;
-- after authorization, vCPU1 executes `sti; nop` and must observe handler `I` before mainline `1`, then `D`, producing exact proof `RI1D`;
-- the handler must acknowledge the local APIC by writing zero to EOI offset `0xB0` through the same LAPIC alias before `iretq`;
-- vCPU0 exact proof is `0SMD`; any handler `I` on vCPU0 before `S`, `M` or `D` hard-fails destination isolation;
-- exact metadata is LAPIC alias `0x500000`, LAPIC GPA `0xFEE00000`, destination APIC ID `1`, vector `0x52`, ICR high `0x01000000`, ICR low `0x52`, and second MP-state `0` (`RUNNABLE`);
-- RFLAGS architectural bit 1 remains set; IF is enabled at all vCPU0 barriers/completion, clear at vCPU1 readiness, and enabled at vCPU1 completion;
-- KVM-aware integration independently validates exact LAPIC/ICR metadata, MP-state, both proof streams and all byte-wide debug-port exits;
-- a permanent `Strict KVM two-vCPU guest IPI` workflow must independently require the same contract on hosted `/dev/kvm`, while the existing targeted-MSI workflow remains green as a separate host-originated transport proof;
-- mapping, ICR encoding, destination isolation, LAPIC EOI, MP-state, worker ownership, proof order, RFLAGS, MSRV or real-KVM failures remain hard failures and must not be swallowed, skipped into success, retried into success or hidden by changed expectations.
+- preserve current main CI, every permanent virtio-blk workflow, the two-vCPU foundation, targeted-MSI and guest-IPI workflows, all existing long-mode/ELF64/MMIO/interrupt/PCI/virtio contracts, and Rust 1.74 MSRV;
+- do not modify or compete with independently owned storage/virtio surfaces;
+- do not call `ensure_runnable_mp_state()` or otherwise set vCPU1 RUNNABLE from userspace in this fixture;
+- create vCPU1 through the in-kernel irqchip path and prove its initial read-only MP state is exactly `KVM_MP_STATE_UNINITIALIZED (1)`;
+- vCPU0 must map the local APIC through the existing bounded virtual-MMIO mechanism and target physical APIC ID 1 with ICR high `0x01000000`;
+- vCPU0 must issue INIT assert `0x0000c500`, INIT deassert `0x00008500`, then SIPI `0x00000608`; the SIPI vector is exactly `0x08` and therefore selects real-mode trampoline base `0x8000`;
+- the BSP debug-port proof is exactly `0IDSMD`: `0` is the pre-INIT barrier, `I` follows INIT assert, `D` follows INIT deassert, `S` follows SIPI, `M` proves the BSP observed the AP's guest-memory marker, and the final `D` is the BSP completion barrier;
+- after those BSP commands commit, move vCPU1 into exactly one worker thread; no `Vcpu: Sync`, shared concurrent vCPU access or scheduler abstraction is introduced;
+- the AP's first `KVM_RUN` must return exactly the startup `EAGAIN`/`WouldBlock` handoff; EINTR may be restarted as usual, but any guest exit, other error, or repeated EAGAIN after the checkpoint remains a hard failure rather than a retry loop;
+- immediately after that startup handoff require `KVM_MP_STATE_RUNNABLE (0)`, `RIP=0`, `CS.selector=0x0800`, `CS.base=0x8000`, and `CR0.PE=0` before any trampoline instruction executes;
+- the one subsequent AP `KVM_RUN` must enter the trampoline, which keeps IF clear, emits exact proof `APD`, writes marker `K` to GPA `0x9000`, and reaches an explicit completion barrier;
+- BSP guest code must observe marker `K` from shared guest RAM before its `M`/`D` completion bytes; userspace-only handoff is insufficient;
+- final AP MP state remains RUNNABLE, AP RFLAGS architectural bit 1 remains set and IF remains clear;
+- KVM-aware integration independently validates the startup checkpoint, both proof streams, both debug-port exit sequences, marker value, final MP state and RFLAGS;
+- the permanent `Strict KVM two-vCPU INIT SIPI` workflow must require vector `0x08`, trampoline GPA `0x8000`, initial MP state 1, startup MP state 0, startup RIP 0, startup CS selector/base `0x0800`/`0x8000`, CR0.PE clear, final MP state 0, marker `K`, proofs `0IDSMD`/`APD`, and AP completion RFLAGS bit1 set with IF clear;
+- the EAGAIN handling remains fixture-specific: generic `Vcpu::run_once()` must not start swallowing or indefinitely retrying `WouldBlock` failures for unrelated execution paths;
+- INIT/SIPI encoding, startup-state readback, worker ownership, shared-memory handoff, proof ordering, RFLAGS, MSRV or real-KVM failures remain hard failures and must not be skipped, slept into success, retried into success or hidden by changed expectations.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- guest INIT/SIPI application-processor startup, SIPI trampoline/real-mode bootstrap or AP reset sequencing;
-- x2APIC, logical destination mode, broadcast/shorthand destinations, lowest-priority, NMI, SMI or INIT delivery modes;
-- LAPIC timer/TSC-deadline, interrupt-priority arbitration, more than two vCPUs or a general vCPU scheduler;
+- x2APIC, logical destination mode, broadcast/shorthand INIT/SIPI or more than one AP;
+- an AP long-mode transition, per-CPU GDT/IDT/TSS setup, ACPI/MADT discovery, firmware AP startup tables or a general trampoline allocator;
+- hotplug, repeated reset/startup cycles, NMI/SMI startup variants or a general vCPU scheduler;
 - changes to virtio-blk persistence/durability, packed rings, `EVENT_IDX`, multi-queue storage or the independent persistent-flush surface;
 - DMA/IOMMU, migration, resumable execution, whole-VM snapshots, throughput/latency claims or benchmark claims.
 
 ## Promotion rule
 
-After guest-originated xAPIC IPI delivery is integrated and exact merged-`main` permanent workflows are green, seal the fixed APIC-ID1/vector-0x52 proof rather than farming additional targets or vectors.
+After guest-driven INIT/SIPI startup is integrated and exact merged-`main` permanent workflows are green, seal the fixed APIC-ID1/vector-0x08 real-mode trampoline proof rather than farming alternate SIPI vectors or repeated startup cycles.
 
-The next SMP architecture audit should prefer a genuinely higher control-plane boundary. The strongest candidate is guest-driven AP startup through a bounded INIT/SIPI sequence that removes the current host `KVM_SET_MP_STATE(RUNNABLE)` shortcut and proves reset/startup state, trampoline execution and post-startup communication. If that cannot be made deterministic without a larger architecture change, choose another executable SMP/device interaction frontier rather than cloning the fixed IPI. Persistent backing/durability remains a separate storage frontier and should be advanced independently only when that surface is unclaimed.
+The next SMP architecture audit should prefer a higher execution boundary. A strong candidate is a bounded AP real-mode-to-long-mode transition that reuses the established SIPI lifecycle but proves a second vCPU can join the existing 64-bit execution environment with its own validated stack/state before participating in shared-memory or interrupt work. If that cannot be made coherent without a larger per-vCPU descriptor/state architecture, choose another executable SMP/device interaction frontier rather than cloning the fixed startup fixture. Persistent backing/durability remains a separate storage frontier and should advance independently only when that surface is unclaimed.
