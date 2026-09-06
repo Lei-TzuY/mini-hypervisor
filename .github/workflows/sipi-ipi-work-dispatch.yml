@@ -60,17 +60,11 @@ jobs:
           (( (completion_flags & 0x2) == 0x2 ))
           (( (completion_flags & 0x200) == 0x200 ))
 
+          bsp_completion="$(grep -F 'sipi-work BSP completion rflags:' <<<"$output")"
+          bsp_completion_hex="${bsp_completion##*: }"
+          [[ "$bsp_completion_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          bsp_completion_flags=$((bsp_completion_hex))
+          (( (bsp_completion_flags & 0x2) == 0x2 ))
+          (( (bsp_completion_flags & 0x200) == 0 ))
+
           grep -F 'sipi-work AP long mode: rsp=0x1ef000 cs=0x8 L=1 ss=0x10 gdt=0x7000/0x17 idt=0x6000/0x52f cr3=0x1000' <<<"$output"
-
-          bsp="$(grep -F 'sipi-work BSP report: vCPU 0 exit Hlt: rip=0x1009b, rflags=' <<<"$output")"
-          bsp_hex="${bsp##*rflags=}"
-          [[ "$bsp_hex" =~ ^0x[0-9a-fA-F]+$ ]]
-          bsp_flags=$((bsp_hex))
-          (( (bsp_flags & 0x2) == 0x2 ))
-
-          ap="$(grep -F 'sipi-work AP report: vCPU 1 exit Hlt: rip=0x80a6, rflags=' <<<"$output")"
-          ap_hex="${ap##*rflags=}"
-          [[ "$ap_hex" =~ ^0x[0-9a-fA-F]+$ ]]
-          ap_flags=$((ap_hex))
-          (( (ap_flags & 0x2) == 0x2 ))
-          (( (ap_flags & 0x200) == 0x200 ))
