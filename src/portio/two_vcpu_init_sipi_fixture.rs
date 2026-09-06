@@ -587,7 +587,7 @@ pub fn run_two_vcpu_ap_long_mode() -> Result<TwoVcpuApLongModeResult, Error> {
         initial_mp_state: outcome.initial_mp_state,
         startup_mp_state: outcome.second.startup.mp_state,
         startup_rip: outcome.second.startup.rip,
-        startup_cs_selector: outcome.second.startup.cs.selector,
+        startup_cs_selector: outcome.second.startup.cs_selector,
         startup_cs_base: outcome.second.startup.cs_base,
         startup_cr0: outcome.second.startup.cr0,
         final_mp_state: outcome.second.final_mp_state,
