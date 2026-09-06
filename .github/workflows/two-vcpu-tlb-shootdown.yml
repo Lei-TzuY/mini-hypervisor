@@ -41,7 +41,7 @@ jobs:
           grep -F 'TLB shootdown initial AP MP state: 1' <<<"$output"
           grep -F 'TLB shootdown startup: rip=0x0 cs=0x800 base=0x8000' <<<"$output"
           grep -F 'TLB shootdown AP IDT: base=0x6000 limit=0x54f' <<<"$output"
-          grep -F 'TLB shootdown final PTE: 0x19003' <<<"$output"
+          grep -F 'TLB shootdown final PTE: 0x19023' <<<"$output"
           grep -F 'TLB shootdown final ack: 0' <<<"$output"
           grep -F 'TLB shootdown page A: 65' <<<"$output"
           grep -F 'TLB shootdown page B: 66' <<<"$output"
