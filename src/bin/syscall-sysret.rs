@@ -39,10 +39,7 @@ fn main() -> ExitCode {
             );
             println!("syscall user code PTE: {:#x}", result.user_code_pte());
             println!("syscall user stack PTE: {:#x}", result.user_stack_pte());
-            println!(
-                "syscall handler PTE: {:#x}",
-                result.syscall_handler_pte()
-            );
+            println!("syscall handler PTE: {:#x}", result.syscall_handler_pte());
             println!(
                 "syscall observation PTE: {:#x}",
                 result.syscall_observation_pte()
