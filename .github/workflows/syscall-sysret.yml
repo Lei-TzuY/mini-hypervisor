@@ -1,0 +1,89 @@
+name: Strict KVM SYSCALL SYSRET privilege ABI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/syscall.rs'
+      - 'src/bin/syscall-sysret.rs'
+      - 'tests/syscall_sysret_guest.rs'
+      - 'src/privilege.rs'
+      - 'src/kvm/msr.rs'
+      - 'src/kvm/msr/**'
+      - 'src/vcpu.rs'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/lib.rs'
+      - '.github/workflows/syscall-sysret.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  syscall-sysret:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM SYSCALL/SYSRET proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin syscall-sysret)"
+          printf '%s\n' "$output"
+
+          grep -F 'syscall proof: [83, 68]' <<<"$output"
+          grep -F 'syscall user selectors: [35, 27, 35, 27]' <<<"$output"
+          grep -F 'syscall entry: rcx=0x11017 r11=0x202 user_rsp=0x1fd000 kernel_rflags=0x2 cs=0x8 ss=0x10 kernel_rsp=0x1fe000' <<<"$output"
+          grep -F 'sysret frame: rip=0x1102f cs=0x23 rflags=0x202 rsp=0x1fd000 ss=0x1b' <<<"$output"
+          grep -F 'syscall terminal: rsp=0x1fdfd8 cs=0x8 rflags=' <<<"$output"
+          grep -F 'syscall terminal report: rip=0x13005 rflags=' <<<"$output"
+
+          msrs="$(grep -F 'syscall MSRs:' <<<"$output")"
+          efer_hex="$(sed -n 's/.*efer=\(0x[0-9a-fA-F]*\).*/\1/p' <<<"$msrs")"
+          star_hex="$(sed -n 's/.*star=\(0x[0-9a-fA-F]*\).*/\1/p' <<<"$msrs")"
+          lstar_hex="$(sed -n 's/.*lstar=\(0x[0-9a-fA-F]*\).*/\1/p' <<<"$msrs")"
+          sfmask_hex="$(sed -n 's/.*sfmask=\(0x[0-9a-fA-F]*\).*/\1/p' <<<"$msrs")"
+          for value in "$efer_hex" "$star_hex" "$lstar_hex" "$sfmask_hex"; do
+            [[ "$value" =~ ^0x[0-9a-fA-F]+$ ]]
+          done
+          efer=$((efer_hex))
+          star=$((star_hex))
+          lstar=$((lstar_hex))
+          sfmask=$((sfmask_hex))
+          (( (efer & 0x1) == 0x1 ))
+          (( star == 0x0010000800000000 ))
+          (( lstar == 0x12000 ))
+          (( sfmask == 0x200 ))
+
+          terminal="$(grep -F 'syscall terminal: rsp=0x1fdfd8 cs=0x8 rflags=' <<<"$output")"
+          terminal_hex="${terminal##*rflags=}"
+          [[ "$terminal_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          terminal_flags=$((terminal_hex))
+          (( (terminal_flags & 0x2) == 0x2 ))
+          (( (terminal_flags & 0x200) == 0 ))
+
+          report="$(grep -F 'syscall terminal report: rip=0x13005 rflags=' <<<"$output")"
+          report_hex="${report##*rflags=}"
+          [[ "$report_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          report_flags=$((report_hex))
+          (( (report_flags & 0x2) == 0x2 ))
+
+          user_code="$(grep -F 'syscall user code PTE:' <<<"$output")"
+          user_stack="$(grep -F 'syscall user stack PTE:' <<<"$output")"
+          handler="$(grep -F 'syscall handler PTE:' <<<"$output")"
+          observation="$(grep -F 'syscall observation PTE:' <<<"$output")"
+          for line in "$user_code" "$user_stack"; do
+            pte_hex="${line##*: }"
+            [[ "$pte_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            pte=$((pte_hex))
+            (( (pte & 0x4) == 0x4 ))
+          done
+          for line in "$handler" "$observation"; do
+            pte_hex="${line##*: }"
+            [[ "$pte_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            pte=$((pte_hex))
+            (( (pte & 0x4) == 0 ))
+          done
