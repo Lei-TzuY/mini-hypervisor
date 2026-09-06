@@ -11,11 +11,14 @@ use crate::long_mode::{
 use crate::memory::{GuestMemory, GuestPhysAddr};
 use crate::mmio::long_mode::{LongModeMmioBootLayout, LongModeMmioPageMapping};
 use crate::portio::two_vcpu_init_sipi_fixture::{
-    AP_LONG_MODE_CODE_SELECTOR, AP_LONG_MODE_DATA_SELECTOR, AP_LONG_MODE_GDT,
-    AP_LONG_MODE_GDT_LIMIT, AP_LONG_MODE_GDTR, AP_LONG_MODE_IPI_HANDLER,
-    AP_LONG_MODE_IPI_IDT_LIMIT, AP_LONG_MODE_IPI_IDTR, AP_LONG_MODE_IPI_VECTOR,
-    AP_LONG_MODE_STACK, FIRST_VCPU_ID, ICR_HIGH_VALUE, INIT_ASSERT_VALUE, INIT_DEASSERT_VALUE,
-    LAPIC_GPA, LAPIC_VIRTUAL_PAGE, SECOND_VCPU_ID, SIPI_VALUE,
+    AP_LONG_MODE_CODE_SELECTOR, AP_LONG_MODE_DATA_SELECTOR, AP_LONG_MODE_GDT, AP_LONG_MODE_GDTR,
+    AP_LONG_MODE_GDT_LIMIT, AP_LONG_MODE_IPI_HANDLER, AP_LONG_MODE_IPI_IDTR,
+    AP_LONG_MODE_IPI_IDT_LIMIT, AP_LONG_MODE_IPI_VECTOR, AP_LONG_MODE_STACK, FIRST_VCPU_ID,
+    LAPIC_GPA, LAPIC_VIRTUAL_PAGE, SECOND_VCPU_ID,
+};
+#[cfg(test)]
+use crate::portio::two_vcpu_init_sipi_fixture::{
+    ICR_HIGH_VALUE, INIT_ASSERT_VALUE, INIT_DEASSERT_VALUE, SIPI_VALUE,
 };
 use crate::portio::two_vcpu_work_dispatch_fixture::{
     WORK_ACK_OFFSET, WORK_COMMAND_OFFSET, WORK_MAILBOX, WORK_PAYLOAD, WORK_RESULT,
@@ -45,8 +48,8 @@ pub const BSP_TERMINAL_RIP: u64 = 0x1_009b;
 pub const AP_TERMINAL_RIP: u64 = 0x80a6;
 
 const AP_LONG_MODE_GDT_BYTES: [u8; 24] = [
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x9a,
-    0xaf, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x92, 0xcf, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x9a, 0xaf, 0x00,
+    0xff, 0xff, 0x00, 0x00, 0x00, 0x92, 0xcf, 0x00,
 ];
 const AP_LONG_MODE_GDTR_BYTES: [u8; 6] = [0x17, 0x00, 0x00, 0x70, 0x00, 0x00];
 const AP_LONG_MODE_IPI_IDTR_BYTES: [u8; 10] =
@@ -98,8 +101,7 @@ const AP_GUEST_BYTES: [u8; 171] = [
 ];
 
 const AP_HANDLER_BYTES: [u8; 16] = [
-    0xb0, b'I', 0xe6, 0xe9, 0xc7, 0x83, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x48, 0xcf,
+    0xb0, b'I', 0xe6, 0xe9, 0xc7, 0x83, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0xcf,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,14 +117,17 @@ impl ComposedMailboxSnapshot {
     pub const fn payload(self) -> u8 {
         self.payload
     }
+
     #[must_use]
     pub const fn command(self) -> u8 {
         self.command
     }
+
     #[must_use]
     pub const fn result(self) -> u8 {
         self.result
     }
+
     #[must_use]
     pub const fn ack(self) -> u8 {
         self.ack
@@ -153,41 +158,94 @@ pub struct ComposedApState {
 
 impl ComposedApState {
     #[must_use]
-    pub const fn ready_rflags(self) -> u64 { self.ready_rflags }
+    pub const fn ready_rflags(self) -> u64 {
+        self.ready_rflags
+    }
+
     #[must_use]
-    pub const fn completion_rflags(self) -> u64 { self.completion_rflags }
+    pub const fn completion_rflags(self) -> u64 {
+        self.completion_rflags
+    }
+
     #[must_use]
-    pub const fn startup_mp_state(self) -> u32 { self.startup_mp_state }
+    pub const fn startup_mp_state(self) -> u32 {
+        self.startup_mp_state
+    }
+
     #[must_use]
-    pub const fn startup_rip(self) -> u64 { self.startup_rip }
+    pub const fn startup_rip(self) -> u64 {
+        self.startup_rip
+    }
+
     #[must_use]
-    pub const fn startup_cs_selector(self) -> u16 { self.startup_cs_selector }
+    pub const fn startup_cs_selector(self) -> u16 {
+        self.startup_cs_selector
+    }
+
     #[must_use]
-    pub const fn startup_cs_base(self) -> u64 { self.startup_cs_base }
+    pub const fn startup_cs_base(self) -> u64 {
+        self.startup_cs_base
+    }
+
     #[must_use]
-    pub const fn rsp(self) -> u64 { self.rsp }
+    pub const fn rsp(self) -> u64 {
+        self.rsp
+    }
+
     #[must_use]
-    pub const fn cs_selector(self) -> u16 { self.cs_selector }
+    pub const fn cs_selector(self) -> u16 {
+        self.cs_selector
+    }
+
     #[must_use]
-    pub const fn cs_long(self) -> u8 { self.cs_long }
+    pub const fn cs_long(self) -> u8 {
+        self.cs_long
+    }
+
     #[must_use]
-    pub const fn ss_selector(self) -> u16 { self.ss_selector }
+    pub const fn ss_selector(self) -> u16 {
+        self.ss_selector
+    }
+
     #[must_use]
-    pub const fn gdt_base(self) -> u64 { self.gdt_base }
+    pub const fn gdt_base(self) -> u64 {
+        self.gdt_base
+    }
+
     #[must_use]
-    pub const fn gdt_limit(self) -> u16 { self.gdt_limit }
+    pub const fn gdt_limit(self) -> u16 {
+        self.gdt_limit
+    }
+
     #[must_use]
-    pub const fn idt_base(self) -> u64 { self.idt_base }
+    pub const fn idt_base(self) -> u64 {
+        self.idt_base
+    }
+
     #[must_use]
-    pub const fn idt_limit(self) -> u16 { self.idt_limit }
+    pub const fn idt_limit(self) -> u16 {
+        self.idt_limit
+    }
+
     #[must_use]
-    pub const fn cr0(self) -> u64 { self.cr0 }
+    pub const fn cr0(self) -> u64 {
+        self.cr0
+    }
+
     #[must_use]
-    pub const fn cr3(self) -> u64 { self.cr3 }
+    pub const fn cr3(self) -> u64 {
+        self.cr3
+    }
+
     #[must_use]
-    pub const fn cr4(self) -> u64 { self.cr4 }
+    pub const fn cr4(self) -> u64 {
+        self.cr4
+    }
+
     #[must_use]
-    pub const fn efer(self) -> u64 { self.efer }
+    pub const fn efer(self) -> u64 {
+        self.efer
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,23 +263,49 @@ pub struct SipiIpiWorkDispatchResult {
 
 impl SipiIpiWorkDispatchResult {
     #[must_use]
-    pub fn bsp_io_exits(&self) -> &[PortIoExit] { &self.bsp_io_exits }
+    pub fn bsp_io_exits(&self) -> &[PortIoExit] {
+        &self.bsp_io_exits
+    }
+
     #[must_use]
-    pub fn ap_io_exits(&self) -> &[PortIoExit] { &self.ap_io_exits }
+    pub fn ap_io_exits(&self) -> &[PortIoExit] {
+        &self.ap_io_exits
+    }
+
     #[must_use]
-    pub fn bsp_proof(&self) -> &[u8] { &self.bsp_proof }
+    pub fn bsp_proof(&self) -> &[u8] {
+        &self.bsp_proof
+    }
+
     #[must_use]
-    pub fn ap_proof(&self) -> &[u8] { &self.ap_proof }
+    pub fn ap_proof(&self) -> &[u8] {
+        &self.ap_proof
+    }
+
     #[must_use]
-    pub const fn mailbox(&self) -> ComposedMailboxSnapshot { self.mailbox }
+    pub const fn mailbox(&self) -> ComposedMailboxSnapshot {
+        self.mailbox
+    }
+
     #[must_use]
-    pub const fn initial_ap_mp_state(&self) -> u32 { self.initial_ap_mp_state }
+    pub const fn initial_ap_mp_state(&self) -> u32 {
+        self.initial_ap_mp_state
+    }
+
     #[must_use]
-    pub const fn ap_state(&self) -> ComposedApState { self.ap_state }
+    pub const fn ap_state(&self) -> ComposedApState {
+        self.ap_state
+    }
+
     #[must_use]
-    pub const fn bsp_report(&self) -> VmExitReport { self.bsp_report }
+    pub const fn bsp_report(&self) -> VmExitReport {
+        self.bsp_report
+    }
+
     #[must_use]
-    pub const fn ap_report(&self) -> VmExitReport { self.ap_report }
+    pub const fn ap_report(&self) -> VmExitReport {
+        self.ap_report
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,6 +320,14 @@ struct ApWorkerResult {
     proof: Vec<u8>,
     state: ComposedApState,
     report: VmExitReport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ApStartupObservation {
+    mp_state: u32,
+    rip: u64,
+    cs_selector: u16,
+    cs_base: u64,
 }
 
 pub fn run_sipi_ipi_work_dispatch() -> Result<SipiIpiWorkDispatchResult, Error> {
@@ -327,8 +419,7 @@ pub fn run_sipi_ipi_work_dispatch() -> Result<SipiIpiWorkDispatchResult, Error> 
     let worker = std::thread::spawn(move || -> Result<ApWorkerResult, Error> {
         let mut ap_vcpu = ap_vcpu;
         let mut port_io = PortIoBus::with_debug_port();
-        let (startup_mp_state, startup_rip, startup_cs_selector, startup_cs_base) =
-            require_init_sipi_startup_state(&mut ap_vcpu)?;
+        let startup = require_init_sipi_startup_state(&mut ap_vcpu)?;
         let mut io_exits = Vec::new();
         for (byte, stage) in [
             (b'A', "composed AP real-mode startup"),
@@ -384,7 +475,7 @@ pub fn run_sipi_ipi_work_dispatch() -> Result<SipiIpiWorkDispatchResult, Error> 
                     SECOND_VCPU_ID.get(),
                     "composed AP abort",
                     "BSP failed before the work-notification IPI completed",
-                ))
+                ));
             }
         }
         for (byte, stage) in [
@@ -408,10 +499,7 @@ pub fn run_sipi_ipi_work_dispatch() -> Result<SipiIpiWorkDispatchResult, Error> 
         let terminal = run_vcpu_until_stopped(&mut ap_vcpu, &mut port_io, 1)?;
         let state = capture_composed_ap_state(
             &ap_vcpu,
-            startup_mp_state,
-            startup_rip,
-            startup_cs_selector,
-            startup_cs_base,
+            startup,
             ready_rflags,
             completion_rflags,
             ready_idt.base(),
@@ -550,7 +638,7 @@ pub fn run_sipi_ipi_work_dispatch() -> Result<SipiIpiWorkDispatchResult, Error> 
     })
 }
 
-fn require_init_sipi_startup_state(vcpu: &mut Vcpu) -> Result<(u32, u64, u16, u64), Error> {
+fn require_init_sipi_startup_state(vcpu: &mut Vcpu) -> Result<ApStartupObservation, Error> {
     let mp_state = vcpu.accept_init_sipi_startup_handoff()?;
     let registers = vcpu.registers()?;
     let special = vcpu.capture_special_register_snapshot()?;
@@ -572,16 +660,17 @@ fn require_init_sipi_startup_state(vcpu: &mut Vcpu) -> Result<(u32, u64, u16, u6
             ),
         ));
     }
-    Ok((mp_state, registers.rip, cs.selector(), cs.base()))
+    Ok(ApStartupObservation {
+        mp_state,
+        rip: registers.rip,
+        cs_selector: cs.selector(),
+        cs_base: cs.base(),
+    })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn capture_composed_ap_state(
     vcpu: &Vcpu,
-    startup_mp_state: u32,
-    startup_rip: u64,
-    startup_cs_selector: u16,
-    startup_cs_base: u64,
+    startup: ApStartupObservation,
     ready_rflags: u64,
     completion_rflags: u64,
     idt_base: u64,
@@ -614,10 +703,10 @@ fn capture_composed_ap_state(
     Ok(ComposedApState {
         ready_rflags,
         completion_rflags,
-        startup_mp_state,
-        startup_rip,
-        startup_cs_selector,
-        startup_cs_base,
+        startup_mp_state: startup.mp_state,
+        startup_rip: startup.rip,
+        startup_cs_selector: startup.cs_selector,
+        startup_cs_base: startup.cs_base,
         rsp: registers.rsp(),
         cs_selector: cs.selector(),
         cs_long: cs.l(),
@@ -682,7 +771,11 @@ fn run_expected_debug_output(
     Ok(io_exit)
 }
 
-fn require_interrupt_disabled_flags(id: u32, stage: &'static str, rflags: u64) -> Result<(), Error> {
+fn require_interrupt_disabled_flags(
+    id: u16,
+    stage: &'static str,
+    rflags: u64,
+) -> Result<(), Error> {
     if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
         || rflags & X86_RFLAGS_INTERRUPT_ENABLE != 0
     {
@@ -695,7 +788,11 @@ fn require_interrupt_disabled_flags(id: u32, stage: &'static str, rflags: u64) -
     Ok(())
 }
 
-fn require_interrupt_enabled_flags(id: u32, stage: &'static str, rflags: u64) -> Result<(), Error> {
+fn require_interrupt_enabled_flags(
+    id: u16,
+    stage: &'static str,
+    rflags: u64,
+) -> Result<(), Error> {
     if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
         || rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
     {
@@ -708,7 +805,7 @@ fn require_interrupt_enabled_flags(id: u32, stage: &'static str, rflags: u64) ->
     Ok(())
 }
 
-fn verification_error(id: u32, operation: &'static str, detail: impl Into<String>) -> Error {
+fn verification_error(id: u16, operation: &'static str, detail: impl Into<String>) -> Error {
     Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
         id,
         operation,
@@ -740,18 +837,38 @@ mod tests {
         assert!(AP_GUEST_BYTES
             .windows(3)
             .any(|window| window == [0x86, 0x41, WORK_ACK_OFFSET as u8]));
-        assert!(AP_GUEST_BYTES.windows(2).any(|window| window == [0xfb, 0xf4]));
+        assert!(AP_GUEST_BYTES
+            .windows(2)
+            .any(|window| window == [0xfb, 0xf4]));
         assert!(BSP_GUEST_BYTES.windows(10).any(|window| {
-            window == [0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, AP_LONG_MODE_IPI_VECTOR, 0, 0, 0]
+            window
+                == [
+                    0xc7,
+                    0x83,
+                    0x00,
+                    0x03,
+                    0x00,
+                    0x00,
+                    AP_LONG_MODE_IPI_VECTOR,
+                    0,
+                    0,
+                    0,
+                ]
         }));
         assert_eq!(&AP_HANDLER_BYTES[..4], &[0xb0, b'I', 0xe6, 0xe9]);
     }
 
     #[test]
     fn composed_tables_match_integrated_ap_startup_contract() {
-        assert_eq!(AP_LONG_MODE_GDT_BYTES[8..16], [0xff, 0xff, 0, 0, 0, 0x9a, 0xaf, 0]);
+        assert_eq!(
+            AP_LONG_MODE_GDT_BYTES[8..16],
+            [0xff, 0xff, 0, 0, 0, 0x9a, 0xaf, 0]
+        );
         assert_eq!(AP_LONG_MODE_GDTR_BYTES, [0x17, 0, 0, 0x70, 0, 0]);
-        assert_eq!(AP_LONG_MODE_IPI_IDTR_BYTES, [0x2f, 0x05, 0, 0x60, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            AP_LONG_MODE_IPI_IDTR_BYTES,
+            [0x2f, 0x05, 0, 0x60, 0, 0, 0, 0, 0, 0]
+        );
         assert_eq!(AP_LONG_MODE_IPI_VECTOR, 0x52);
         assert_eq!(AP_LONG_MODE_IPI_IDT_LIMIT, 0x52f);
         assert_eq!(ICR_HIGH_VALUE, 0x0100_0000);
