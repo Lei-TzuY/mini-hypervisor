@@ -1,6 +1,7 @@
 #[path = "pci.rs"]
 pub mod pci;
 pub mod pci_fixture;
+pub mod two_vcpu_ap_local_timer_fixture;
 pub mod two_vcpu_fixture;
 pub mod two_vcpu_guest_ipi_fixture;
 pub mod two_vcpu_init_sipi_fixture;
