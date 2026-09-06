@@ -1,0 +1,97 @@
+name: Strict KVM fault-safe usercopy service
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/bin/fault-safe-usercopy.rs'
+      - 'src/syscall/base.rs'
+      - 'src/syscall/mod.rs'
+      - 'src/syscall/usercopy.rs'
+      - 'tests/fault_safe_usercopy_guest.rs'
+      - 'src/privilege.rs'
+      - 'src/kvm/msr.rs'
+      - 'src/kvm/msr/**'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/**'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/lib.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/fault-safe-usercopy.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fault-safe-usercopy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM fault-safe usercopy proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin fault-safe-usercopy)"
+          printf '%s\n' "$output"
+
+          grep -F 'usercopy proof: [67, 82, 87, 68]' <<<"$output"
+          grep -F 'usercopy results: good=0x0 bad_src=0xfffffffffffffff2 bad_dst=0xfffffffffffffff2 readback=0x6b source=0x6b destination=0x6b' <<<"$output"
+          grep -F 'usercopy read fault: cr2=0x400000 error=0x0 rip=0x1200d cs=0x8 rflags=0x10002 fixup=0x1201b' <<<"$output"
+          grep -F 'usercopy write fault: cr2=0x400000 error=0x2 rip=0x12010 cs=0x8 rflags=0x10002 fixup=0x12021' <<<"$output"
+          grep -F 'usercopy fixup[0]: fault=0x1200d fixup=0x1201b observation=0xb000' <<<"$output"
+          grep -F 'usercopy fixup[1]: fault=0x12010 fixup=0x12021 observation=0xb040' <<<"$output"
+          grep -F 'usercopy terminal frame: rip=0x11060 cs=0x23 rflags=0x202 rsp=0x1fd000 ss=0x1b' <<<"$output"
+          grep -F 'usercopy terminal: rsp=0x1fdfd8 cs=0x8 rflags=' <<<"$output"
+          grep -F ' cr2=0x400000' <<<"$output"
+          grep -F 'usercopy bad PD entry: 0x0' <<<"$output"
+          grep -F 'usercopy terminal report: rip=0x13005 rflags=' <<<"$output"
+
+          msrs="$(grep -F 'usercopy MSRs:' <<<"$output")"
+          efer_hex="$(sed -n 's/.* efer=\(0x[0-9a-fA-F]*\) star=.*/\1/p' <<<"$msrs")"
+          star_hex="$(sed -n 's/.* star=\(0x[0-9a-fA-F]*\) lstar=.*/\1/p' <<<"$msrs")"
+          lstar_hex="$(sed -n 's/.* lstar=\(0x[0-9a-fA-F]*\) sfmask=.*/\1/p' <<<"$msrs")"
+          sfmask_hex="$(sed -n 's/.* sfmask=\(0x[0-9a-fA-F]*\)$/\1/p' <<<"$msrs")"
+          for value in "$efer_hex" "$star_hex" "$lstar_hex" "$sfmask_hex"; do
+            [[ "$value" =~ ^0x[0-9a-fA-F]+$ ]]
+          done
+          efer=$((efer_hex))
+          star=$((star_hex))
+          lstar=$((lstar_hex))
+          sfmask=$((sfmask_hex))
+          (( (efer & 0x1) == 0x1 ))
+          (( star == 0x0013000800000000 ))
+          (( lstar == 0x12000 ))
+          (( sfmask == 0x200 ))
+
+          user_pte="$(grep -F 'usercopy user page PTE:' <<<"$output")"
+          handler_pte="$(grep -F 'usercopy fault handler PTE:' <<<"$output")"
+          metadata_pte="$(grep -F 'usercopy fault metadata PTE:' <<<"$output")"
+          user_hex="${user_pte##*: }"
+          handler_hex="${handler_pte##*: }"
+          metadata_hex="${metadata_pte##*: }"
+          for value in "$user_hex" "$handler_hex" "$metadata_hex"; do
+            [[ "$value" =~ ^0x[0-9a-fA-F]+$ ]]
+          done
+          user=$((user_hex))
+          handler=$((handler_hex))
+          metadata=$((metadata_hex))
+          (( (user & 0x6) == 0x6 ))
+          (( (handler & 0x4) == 0 ))
+          (( (metadata & 0x4) == 0 ))
+
+          terminal="$(grep -F 'usercopy terminal: rsp=0x1fdfd8 cs=0x8 rflags=' <<<"$output")"
+          terminal_rflags_hex="$(sed -n 's/.* rflags=\(0x[0-9a-fA-F]*\) cr2=.*/\1/p' <<<"$terminal")"
+          [[ "$terminal_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          terminal_rflags=$((terminal_rflags_hex))
+          (( (terminal_rflags & 0x2) == 0x2 ))
+          (( (terminal_rflags & 0x200) == 0 ))
+
+          report="$(grep -F 'usercopy terminal report: rip=0x13005 rflags=' <<<"$output")"
+          report_hex="${report##*rflags=}"
+          [[ "$report_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          report_flags=$((report_hex))
+          (( (report_flags & 0x2) == 0x2 ))
