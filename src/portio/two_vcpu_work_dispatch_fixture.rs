@@ -196,11 +196,8 @@ pub fn run_two_vcpu_work_dispatch() -> Result<TwoVcpuWorkDispatchResult, Error> 
             )
         })?;
 
-        let execution = run_vcpu_until_stopped(
-            &mut ap_vcpu,
-            &mut port_io,
-            AP_REMAINING_EXIT_BUDGET,
-        )?;
+        let execution =
+            run_vcpu_until_stopped(&mut ap_vcpu, &mut port_io, AP_REMAINING_EXIT_BUDGET)?;
         let mut io_exits = vec![ready];
         io_exits.extend_from_slice(execution.io_exits());
         Ok(ApWorkerResult {
@@ -219,11 +216,7 @@ pub fn run_two_vcpu_work_dispatch() -> Result<TwoVcpuWorkDispatchResult, Error> 
     })?;
 
     let mut bsp_port_io = PortIoBus::with_debug_port();
-    let bsp_execution = run_vcpu_until_stopped(
-        &mut bsp_vcpu,
-        &mut bsp_port_io,
-        BSP_EXIT_BUDGET,
-    )?;
+    let bsp_execution = run_vcpu_until_stopped(&mut bsp_vcpu, &mut bsp_port_io, BSP_EXIT_BUDGET)?;
     let bsp_proof = bsp_port_io.debug_output().unwrap_or(&[]).to_vec();
 
     let ap = worker.join().map_err(|_| {
