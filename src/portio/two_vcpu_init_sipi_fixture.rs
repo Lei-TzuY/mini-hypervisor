@@ -121,7 +121,7 @@ const AP_TRAMPOLINE_BYTES: [u8; 27] = [
 // Assembled with GNU as/ld at VMA 0x8000. The 16-bit prefix establishes PAE, CR3, EFER.LME
 // and CR0.PE|PG from guest code, then far-jumps through selector 0x08 into the 64-bit suffix.
 #[rustfmt::skip]
-const AP_LONG_MODE_TRAMPOLINE_BYTES: [u8; 121] = [
+const AP_LONG_MODE_TRAMPOLINE_BYTES: [u8; 119] = [
     0xfa, 0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xd0, 0xb0, 0x41, 0xe6, 0xe9, 0x66,
     0x0f, 0x01, 0x16, 0x20, 0x70, 0x0f, 0x20, 0xe0, 0x66, 0x83, 0xc8, 0x20,
     0x0f, 0x22, 0xe0, 0x66, 0xb8, 0x00, 0x10, 0x00, 0x00, 0x0f, 0x22, 0xd8,
@@ -587,7 +587,7 @@ pub fn run_two_vcpu_ap_long_mode() -> Result<TwoVcpuApLongModeResult, Error> {
         initial_mp_state: outcome.initial_mp_state,
         startup_mp_state: outcome.second.startup.mp_state,
         startup_rip: outcome.second.startup.rip,
-        startup_cs_selector: outcome.second.startup.cs_selector,
+        startup_cs_selector: outcome.second.startup.cs.selector,
         startup_cs_base: outcome.second.startup.cs_base,
         startup_cr0: outcome.second.startup.cr0,
         final_mp_state: outcome.second.final_mp_state,
@@ -1050,7 +1050,7 @@ fn require_init_sipi_startup_state(vcpu: &mut Vcpu) -> Result<ApStartupState, Er
         mp_state,
         rip: registers.rip,
         cs_selector: cs.selector(),
-        cs_base: cs.base,
+        cs_base: cs.base(),
         cr0: special.cr0(),
     })
 }
