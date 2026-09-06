@@ -36,7 +36,10 @@ fn main() -> ExitCode {
             println!("ring3 user code PTE: {:#x}", result.user_code_pte());
             println!("ring3 observation PTE: {:#x}", result.observation_pte());
             println!("ring3 user stack PTE: {:#x}", result.user_stack_pte());
-            println!("ring3 kernel handler PTE: {:#x}", result.kernel_handler_pte());
+            println!(
+                "ring3 kernel handler PTE: {:#x}",
+                result.kernel_handler_pte()
+            );
             println!(
                 "ring3 terminal report: rip={:#x} rflags={:#x}",
                 result.report().rip(),
