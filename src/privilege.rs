@@ -38,12 +38,15 @@ pub const PRIVILEGE_PROOF: &[u8; 2] = b"KD";
 const X86_PAGE_PRESENT: u64 = 1;
 const X86_PAGE_WRITABLE: u64 = 1 << 1;
 const X86_PAGE_USER: u64 = 1 << 2;
+#[cfg(test)]
 const X86_PAGE_ACCESSED: u64 = 1 << 5;
+#[cfg(test)]
 const X86_PAGE_DIRTY: u64 = 1 << 6;
 const X86_RFLAGS_RESERVED: u64 = 1 << 1;
 const X86_RFLAGS_IF: u64 = 1 << 9;
 const X86_INTERRUPT_GATE_SIZE: u64 = 16;
 const KERNEL_CODE_SELECTOR: u16 = 0x08;
+#[cfg(test)]
 const KERNEL_DATA_SELECTOR: u16 = 0x10;
 const GDT_LIMIT: u16 = 55;
 const IDT_LIMIT: u16 = 0x081f;
