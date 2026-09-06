@@ -403,11 +403,7 @@ pub fn run_two_vcpu_tlb_shootdown() -> Result<TwoVcpuTlbShootdownResult, Error> 
             )?);
         }
         let ready_rflags = ap_vcpu.registers()?.rflags;
-        require_interrupt_disabled_flags(
-            SECOND_VCPU_ID.get(),
-            "AP TLB ready state",
-            ready_rflags,
-        )?;
+        require_interrupt_disabled_flags(SECOND_VCPU_ID.get(), "AP TLB ready state", ready_rflags)?;
         let special = ap_vcpu.capture_special_register_snapshot()?;
         let idt = special.idt();
         if idt.base() != LONG_MODE_INTERRUPT_IDT_ADDR.get()
