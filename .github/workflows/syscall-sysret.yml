@@ -42,10 +42,10 @@ jobs:
           grep -F 'syscall terminal report: rip=0x13005 rflags=' <<<"$output"
 
           msrs="$(grep -F 'syscall MSRs:' <<<"$output")"
-          efer_hex="$(sed -n 's/.*efer=\(0x[0-9a-fA-F]*\).*/\1/p' <<<"$msrs")"
-          star_hex="$(sed -n 's/.*star=\(0x[0-9a-fA-F]*\).*/\1/p' <<<"$msrs")"
-          lstar_hex="$(sed -n 's/.*lstar=\(0x[0-9a-fA-F]*\).*/\1/p' <<<"$msrs")"
-          sfmask_hex="$(sed -n 's/.*sfmask=\(0x[0-9a-fA-F]*\).*/\1/p' <<<"$msrs")"
+          efer_hex="$(sed -n 's/.* efer=\(0x[0-9a-fA-F]*\) star=.*/\1/p' <<<"$msrs")"
+          star_hex="$(sed -n 's/.* star=\(0x[0-9a-fA-F]*\) lstar=.*/\1/p' <<<"$msrs")"
+          lstar_hex="$(sed -n 's/.* lstar=\(0x[0-9a-fA-F]*\) sfmask=.*/\1/p' <<<"$msrs")"
+          sfmask_hex="$(sed -n 's/.* sfmask=\(0x[0-9a-fA-F]*\)$/\1/p' <<<"$msrs")"
           for value in "$efer_hex" "$star_hex" "$lstar_hex" "$sfmask_hex"; do
             [[ "$value" =~ ^0x[0-9a-fA-F]+$ ]]
           done
