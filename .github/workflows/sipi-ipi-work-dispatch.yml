@@ -1,0 +1,76 @@
+name: Strict KVM SIPI IPI work dispatch
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/portio/two_vcpu_sipi_work_dispatch_fixture.rs'
+      - 'src/portio/two_vcpu_init_sipi_fixture.rs'
+      - 'src/portio/two_vcpu_work_dispatch_fixture.rs'
+      - 'src/portio.rs'
+      - 'src/bin/sipi-ipi-work-dispatch.rs'
+      - 'tests/two_vcpu_sipi_work_dispatch_guest.rs'
+      - 'src/interrupt.rs'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/mmio/long_mode.rs'
+      - 'src/kvm/**'
+      - 'src/vcpu.rs'
+      - 'src/vmexit.rs'
+      - '.github/workflows/sipi-ipi-work-dispatch.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sipi-ipi-work-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM SIPI-started AP IPI work-dispatch proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin sipi-ipi-work-dispatch)"
+          printf '%s\n' "$output"
+
+          grep -F 'sipi-work BSP proof: [48, 73, 68, 83, 67, 88, 86, 68]' <<<"$output"
+          grep -F 'sipi-work AP proof: [65, 76, 82, 73, 80, 68]' <<<"$output"
+          grep -F 'sipi-work payload: 0x21' <<<"$output"
+          grep -F 'sipi-work command: 0x0' <<<"$output"
+          grep -F 'sipi-work result: 0x42' <<<"$output"
+          grep -F 'sipi-work ack: 0x0' <<<"$output"
+          grep -F 'sipi-work initial AP MP state: 1' <<<"$output"
+          grep -F 'sipi-work AP startup: mp=0 rip=0x0 cs=0x800 base=0x8000' <<<"$output"
+
+          ready="$(grep -F 'sipi-work AP ready rflags:' <<<"$output")"
+          ready_hex="${ready##*: }"
+          [[ "$ready_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          ready_flags=$((ready_hex))
+          (( (ready_flags & 0x2) == 0x2 ))
+          (( (ready_flags & 0x200) == 0 ))
+
+          completion="$(grep -F 'sipi-work AP completion rflags:' <<<"$output")"
+          completion_hex="${completion##*: }"
+          [[ "$completion_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          completion_flags=$((completion_hex))
+          (( (completion_flags & 0x2) == 0x2 ))
+          (( (completion_flags & 0x200) == 0x200 ))
+
+          grep -F 'sipi-work AP long mode: rsp=0x1ef000 cs=0x8 L=1 ss=0x10 gdt=0x7000/0x17 idt=0x6000/0x52f cr3=0x1000' <<<"$output"
+
+          bsp="$(grep -F 'sipi-work BSP report: vCPU 0 exit Hlt: rip=0x1009b, rflags=' <<<"$output")"
+          bsp_hex="${bsp##*rflags=}"
+          [[ "$bsp_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          bsp_flags=$((bsp_hex))
+          (( (bsp_flags & 0x2) == 0x2 ))
+
+          ap="$(grep -F 'sipi-work AP report: vCPU 1 exit Hlt: rip=0x80a6, rflags=' <<<"$output")"
+          ap_hex="${ap##*rflags=}"
+          [[ "$ap_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          ap_flags=$((ap_hex))
+          (( (ap_flags & 0x2) == 0x2 ))
+          (( (ap_flags & 0x200) == 0x200 ))
