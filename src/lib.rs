@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod copyin;
+pub mod copyout;
 pub mod error;
 pub mod execution;
 pub mod interrupt;
