@@ -6,9 +6,9 @@ use mini_hypervisor::privilege::{
     PRIVILEGE_USER_STACK,
 };
 use mini_hypervisor::syscall::{
-    run_syscall_sysret_guest, EFER_SYSCALL_ENABLE, SYSCALL_KERNEL_STACK,
-    SYSCALL_LSTAR_VALUE, SYSCALL_PROOF, SYSCALL_SFMASK_VALUE, SYSCALL_STAR_VALUE,
-    SYSCALL_TERMINAL_RETURN_RIP, SYSCALL_USER_RETURN_RIP,
+    run_syscall_sysret_guest, EFER_SYSCALL_ENABLE, SYSCALL_KERNEL_STACK, SYSCALL_LSTAR_VALUE,
+    SYSCALL_PROOF, SYSCALL_SFMASK_VALUE, SYSCALL_STAR_VALUE, SYSCALL_TERMINAL_RETURN_RIP,
+    SYSCALL_USER_RETURN_RIP,
 };
 use mini_hypervisor::vcpu::{PortIoDirection, VcpuExit};
 
@@ -20,11 +20,7 @@ fn syscall_enters_kernel_on_manual_stack_and_sysret_returns_to_ring3() {
         Ok(result) => {
             assert_eq!(result.proof(), SYSCALL_PROOF);
             assert_eq!(result.io_exits().len(), 2);
-            for (io, expected) in result
-                .io_exits()
-                .iter()
-                .zip(SYSCALL_PROOF.iter().copied())
-            {
+            for (io, expected) in result.io_exits().iter().zip(SYSCALL_PROOF.iter().copied()) {
                 assert_eq!(io.direction(), PortIoDirection::Out);
                 assert_eq!(io.port(), DEBUG_PORT);
                 assert_eq!(io.size(), 1);
