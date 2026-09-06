@@ -369,6 +369,7 @@ pub fn run_privilege_transition_guest(
     }
 
     let regs = vcpu.registers()?;
+    let register_snapshot = vcpu.capture_register_snapshot()?;
     let special = vcpu.capture_special_register_snapshot()?;
     let tr = special.tr();
     let guest_memory = vm
@@ -385,7 +386,7 @@ pub fn run_privilege_transition_guest(
     validate_runtime_state(
         user_selectors,
         frame,
-        regs.rsp,
+        register_snapshot.rsp(),
         regs.rflags,
         special.cs().selector(),
         tr.selector(),
@@ -412,7 +413,7 @@ pub fn run_privilege_transition_guest(
         report: execution.report(),
         user_selectors,
         frame,
-        terminal_rsp: regs.rsp,
+        terminal_rsp: register_snapshot.rsp(),
         terminal_cs: special.cs().selector(),
         terminal_rflags: regs.rflags,
         tr_selector: tr.selector(),
