@@ -3,7 +3,8 @@ const KVM_SET_MP_STATE: libc::c_ulong = 0x4004_AE99;
 
 pub(crate) const KVM_MP_STATE_RUNNABLE: u32 = 0;
 pub(crate) const KVM_MP_STATE_UNINITIALIZED: u32 = 1;
-pub(crate) const KVM_MP_STATE_INIT_RECEIVED: u32 = 2;
+#[cfg(test)]
+const KVM_MP_STATE_INIT_RECEIVED: u32 = 2;
 #[cfg(test)]
 const KVM_MP_STATE_HALTED: u32 = 3;
 #[cfg(test)]
