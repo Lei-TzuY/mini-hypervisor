@@ -9,7 +9,7 @@ on:
       - 'src/bin/fault-safe-copyout.rs'
       - 'tests/fault_safe_copyout_guest.rs'
       - 'src/privilege.rs'
-      - 'src/syscall.rs'
+      - 'src/syscall/**'
       - 'src/kvm/msr.rs'
       - 'src/kvm/msr/**'
       - 'src/vcpu.rs'
