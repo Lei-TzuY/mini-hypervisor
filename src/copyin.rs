@@ -1,7 +1,7 @@
 use crate::config::VmConfig;
 use crate::error::{Error, HostEnvironmentError, VmExitError};
 use crate::execution::run_vcpu_until_stopped;
-use crate::kvm::msr::{GuestMsrAccessPolicy, GuestMsrValueSet, MsrIndex};
+use crate::kvm::msr::{GuestMsrAccessPolicy, GuestMsrValueSet};
 use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
 use crate::long_mode::{LONG_MODE_IDENTITY_MAP_SIZE, LONG_MODE_PAGE_SIZE, LONG_MODE_PD_ADDR};
@@ -13,8 +13,8 @@ use crate::privilege::{
     PRIVILEGE_USER_DATA_SELECTOR, PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_STACK,
 };
 use crate::syscall::{
-    EFER_SYSCALL_ENABLE, MSR_EFER, MSR_LSTAR, MSR_SFMASK, MSR_STAR, SYSCALL_KERNEL_ENTRY,
-    SYSCALL_KERNEL_STACK, SYSCALL_LSTAR_VALUE, SYSCALL_SFMASK_VALUE, SYSCALL_STAR_VALUE,
+    EFER_SYSCALL_ENABLE, MSR_LSTAR, MSR_SFMASK, MSR_STAR, SYSCALL_KERNEL_ENTRY,
+    SYSCALL_LSTAR_VALUE, SYSCALL_SFMASK_VALUE, SYSCALL_STAR_VALUE,
 };
 use crate::vcpu::{PortIoExit, Vcpu, VcpuId};
 use crate::vmexit::VmExitReport;
@@ -37,7 +37,6 @@ pub const COPYIN_EFAULT: u64 = (-14_i64) as u64;
 pub const COPYIN_PROOF: &[u8; 3] = b"GFD";
 
 const KERNEL_CODE_SELECTOR: u16 = 0x08;
-const KERNEL_DATA_SELECTOR: u16 = 0x10;
 const X86_PAGE_PRESENT: u64 = 1;
 const X86_PAGE_USER: u64 = 1 << 2;
 const X86_RFLAGS_RESERVED: u64 = 1 << 1;
@@ -360,7 +359,10 @@ pub fn run_fault_safe_copyin_guest(config: VmConfig) -> Result<FaultSafeCopyinGu
     copyin_handler.load(&mut memory)?;
     page_fault_handler.load(&mut memory)?;
     terminal_handler.load(&mut memory)?;
-    memory.write(GuestPhysAddr::new(COPYIN_GOOD_POINTER), &[COPYIN_GOOD_VALUE])?;
+    memory.write(
+        GuestPhysAddr::new(COPYIN_GOOD_POINTER),
+        &[COPYIN_GOOD_VALUE],
+    )?;
     memory.write(COPYIN_RESULT_ADDR, &[0; 16])?;
     memory.write(
         COPYIN_FAULT_OBSERVATION_ADDR,
@@ -485,8 +487,7 @@ fn configure_copyin_msrs(backend: &KvmBackend, vcpu: &Vcpu) -> Result<[u64; 4], 
 fn install_page_fault_gate(memory: &mut GuestMemory) -> Result<(), Error> {
     memory.write(
         GuestPhysAddr::new(
-            PRIVILEGE_IDT_ADDR.get()
-                + u64::from(COPYIN_PAGE_FAULT_VECTOR) * PAGE_FAULT_GATE_SIZE,
+            PRIVILEGE_IDT_ADDR.get() + u64::from(COPYIN_PAGE_FAULT_VECTOR) * PAGE_FAULT_GATE_SIZE,
         ),
         &encode_kernel_interrupt_gate(COPYIN_PAGE_FAULT_HANDLER.get()),
     )
@@ -509,9 +510,7 @@ fn read_results(memory: &GuestMemory) -> Result<(u64, u64), Error> {
     Ok((read_u64(&bytes, 0), read_u64(&bytes, 8)))
 }
 
-fn read_page_fault_observation(
-    memory: &GuestMemory,
-) -> Result<CopyinPageFaultObservation, Error> {
+fn read_page_fault_observation(memory: &GuestMemory) -> Result<CopyinPageFaultObservation, Error> {
     let mut bytes = [0_u8; PAGE_FAULT_OBSERVATION_BYTES];
     memory.read(COPYIN_FAULT_OBSERVATION_ADDR, &mut bytes)?;
     Ok(CopyinPageFaultObservation {
@@ -660,10 +659,13 @@ mod tests {
     fn page_fault_handler_rewrites_saved_rip_discards_error_code_and_iretqs() {
         assert_eq!(&PAGE_FAULT_HANDLER_BYTES[0..3], &[0x0f, 0x20, 0xd0]);
         assert_eq!(
-            &PAGE_FAULT_HANDLER_BYTES[62..72],
+            &PAGE_FAULT_HANDLER_BYTES[51..61],
             &[0x48, 0xb8, 0x1a, 0x20, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]
         );
-        assert_eq!(&PAGE_FAULT_HANDLER_BYTES[72..77], &[0x48, 0x89, 0x44, 0x24, 0x08]);
+        assert_eq!(
+            &PAGE_FAULT_HANDLER_BYTES[61..66],
+            &[0x48, 0x89, 0x44, 0x24, 0x08]
+        );
         assert_eq!(&PAGE_FAULT_HANDLER_BYTES[80..84], &[0x48, 0x83, 0xc4, 0x08]);
         assert_eq!(&PAGE_FAULT_HANDLER_BYTES[84..86], &[0x48, 0xcf]);
     }
@@ -686,7 +688,10 @@ mod tests {
                 &mut gate,
             )
             .unwrap();
-        assert_eq!(gate, encode_kernel_interrupt_gate(COPYIN_PAGE_FAULT_HANDLER.get()));
+        assert_eq!(
+            gate,
+            encode_kernel_interrupt_gate(COPYIN_PAGE_FAULT_HANDLER.get())
+        );
         assert_eq!(gate[5], 0x8e);
 
         let mut terminal_gate = [0_u8; 16];
@@ -707,7 +712,10 @@ mod tests {
             GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let layout = layout();
         layout.install_tables(&mut memory).unwrap();
-        assert_eq!(read_bad_pointer_pd_entry(&memory).unwrap() & X86_PAGE_PRESENT, 0);
+        assert_eq!(
+            read_bad_pointer_pd_entry(&memory).unwrap() & X86_PAGE_PRESENT,
+            0
+        );
     }
 
     #[test]
