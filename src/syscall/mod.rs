@@ -1,3 +1,3 @@
-include!("syscall/base.rs");
+include!("base.rs");
 
 pub mod usercopy;
