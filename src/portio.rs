@@ -4,6 +4,7 @@ pub mod pci_fixture;
 pub mod two_vcpu_fixture;
 pub mod two_vcpu_guest_ipi_fixture;
 pub mod two_vcpu_init_sipi_fixture;
+pub mod two_vcpu_sipi_work_dispatch_fixture;
 pub mod two_vcpu_targeted_msi_fixture;
 pub mod two_vcpu_work_dispatch_fixture;
 pub mod virtio_blk_completion_interrupt_fixture;
@@ -266,9 +267,8 @@ mod tests {
 
     #[test]
     fn rejects_debug_port_wide_output() {
-        let mut bus = PortIoBus::with_debug_port();
         let io = output(DEBUG_PORT, 2, 1, &[0x34, 0x12]);
-
+        let mut bus = PortIoBus::with_debug_port();
         assert!(matches!(
             bus.dispatch(&io),
             Err(Error::PortIo(PortIoError::UnsupportedDebugAccess {
@@ -282,9 +282,8 @@ mod tests {
 
     #[test]
     fn rejects_debug_port_multi_count_output() {
-        let mut bus = PortIoBus::with_debug_port();
         let io = output(DEBUG_PORT, 1, 2, b"AB");
-
+        let mut bus = PortIoBus::with_debug_port();
         assert!(matches!(
             bus.dispatch(&io),
             Err(Error::PortIo(PortIoError::UnsupportedDebugAccess {
@@ -298,9 +297,8 @@ mod tests {
 
     #[test]
     fn rejects_mismatched_output_payload_length() {
-        let mut bus = PortIoBus::with_debug_port();
         let io = output(DEBUG_PORT, 1, 1, b"AB");
-
+        let mut bus = PortIoBus::with_debug_port();
         assert!(matches!(
             bus.dispatch(&io),
             Err(Error::PortIo(PortIoError::InvalidOutputPayload {
