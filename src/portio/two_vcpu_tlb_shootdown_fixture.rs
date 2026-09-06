@@ -51,8 +51,7 @@ const AP_LONG_MODE_GDT_BYTES: [u8; 24] = [
     0xff, 0xff, 0x00, 0x00, 0x00, 0x92, 0xcf, 0x00,
 ];
 const AP_LONG_MODE_GDTR_BYTES: [u8; 6] = [0x17, 0x00, 0x00, 0x70, 0x00, 0x00];
-const AP_TLB_IDTR_BYTES: [u8; 10] =
-    [0x4f, 0x05, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+const AP_TLB_IDTR_BYTES: [u8; 10] = [0x4f, 0x05, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 // Generated as 64-bit code at VMA 0x10000. The first half preserves the integrated BSP
 // INIT/SIPI sequence. After userspace has observed AP readiness, the BSP guest mutates the shared
@@ -132,41 +131,77 @@ pub struct TlbShootdownState {
 
 impl TlbShootdownState {
     #[must_use]
-    pub const fn initial_ap_mp_state(self) -> u32 { self.initial_ap_mp_state }
+    pub const fn initial_ap_mp_state(self) -> u32 {
+        self.initial_ap_mp_state
+    }
     #[must_use]
-    pub const fn startup_rip(self) -> u64 { self.startup_rip }
+    pub const fn startup_rip(self) -> u64 {
+        self.startup_rip
+    }
     #[must_use]
-    pub const fn startup_cs_selector(self) -> u16 { self.startup_cs_selector }
+    pub const fn startup_cs_selector(self) -> u16 {
+        self.startup_cs_selector
+    }
     #[must_use]
-    pub const fn startup_cs_base(self) -> u64 { self.startup_cs_base }
+    pub const fn startup_cs_base(self) -> u64 {
+        self.startup_cs_base
+    }
     #[must_use]
-    pub const fn ready_rflags(self) -> u64 { self.ready_rflags }
+    pub const fn ready_rflags(self) -> u64 {
+        self.ready_rflags
+    }
     #[must_use]
-    pub const fn completion_rflags(self) -> u64 { self.completion_rflags }
+    pub const fn completion_rflags(self) -> u64 {
+        self.completion_rflags
+    }
     #[must_use]
-    pub const fn rsp(self) -> u64 { self.rsp }
+    pub const fn rsp(self) -> u64 {
+        self.rsp
+    }
     #[must_use]
-    pub const fn cs_selector(self) -> u16 { self.cs_selector }
+    pub const fn cs_selector(self) -> u16 {
+        self.cs_selector
+    }
     #[must_use]
-    pub const fn cs_long(self) -> u8 { self.cs_long }
+    pub const fn cs_long(self) -> u8 {
+        self.cs_long
+    }
     #[must_use]
-    pub const fn ss_selector(self) -> u16 { self.ss_selector }
+    pub const fn ss_selector(self) -> u16 {
+        self.ss_selector
+    }
     #[must_use]
-    pub const fn gdt_base(self) -> u64 { self.gdt_base }
+    pub const fn gdt_base(self) -> u64 {
+        self.gdt_base
+    }
     #[must_use]
-    pub const fn gdt_limit(self) -> u16 { self.gdt_limit }
+    pub const fn gdt_limit(self) -> u16 {
+        self.gdt_limit
+    }
     #[must_use]
-    pub const fn idt_base(self) -> u64 { self.idt_base }
+    pub const fn idt_base(self) -> u64 {
+        self.idt_base
+    }
     #[must_use]
-    pub const fn idt_limit(self) -> u16 { self.idt_limit }
+    pub const fn idt_limit(self) -> u16 {
+        self.idt_limit
+    }
     #[must_use]
-    pub const fn cr0(self) -> u64 { self.cr0 }
+    pub const fn cr0(self) -> u64 {
+        self.cr0
+    }
     #[must_use]
-    pub const fn cr3(self) -> u64 { self.cr3 }
+    pub const fn cr3(self) -> u64 {
+        self.cr3
+    }
     #[must_use]
-    pub const fn cr4(self) -> u64 { self.cr4 }
+    pub const fn cr4(self) -> u64 {
+        self.cr4
+    }
     #[must_use]
-    pub const fn efer(self) -> u64 { self.efer }
+    pub const fn efer(self) -> u64 {
+        self.efer
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,23 +219,41 @@ pub struct TwoVcpuTlbShootdownResult {
 
 impl TwoVcpuTlbShootdownResult {
     #[must_use]
-    pub fn bsp_io_exits(&self) -> &[PortIoExit] { &self.bsp_io_exits }
+    pub fn bsp_io_exits(&self) -> &[PortIoExit] {
+        &self.bsp_io_exits
+    }
     #[must_use]
-    pub fn ap_io_exits(&self) -> &[PortIoExit] { &self.ap_io_exits }
+    pub fn ap_io_exits(&self) -> &[PortIoExit] {
+        &self.ap_io_exits
+    }
     #[must_use]
-    pub fn bsp_proof(&self) -> &[u8] { &self.bsp_proof }
+    pub fn bsp_proof(&self) -> &[u8] {
+        &self.bsp_proof
+    }
     #[must_use]
-    pub fn ap_proof(&self) -> &[u8] { &self.ap_proof }
+    pub fn ap_proof(&self) -> &[u8] {
+        &self.ap_proof
+    }
     #[must_use]
-    pub const fn state(&self) -> TlbShootdownState { self.state }
+    pub const fn state(&self) -> TlbShootdownState {
+        self.state
+    }
     #[must_use]
-    pub const fn final_pte(&self) -> u64 { self.final_pte }
+    pub const fn final_pte(&self) -> u64 {
+        self.final_pte
+    }
     #[must_use]
-    pub const fn final_ack(&self) -> u8 { self.final_ack }
+    pub const fn final_ack(&self) -> u8 {
+        self.final_ack
+    }
     #[must_use]
-    pub const fn page_a(&self) -> u8 { self.page_a }
+    pub const fn page_a(&self) -> u8 {
+        self.page_a
+    }
     #[must_use]
-    pub const fn page_b(&self) -> u8 { self.page_b }
+    pub const fn page_b(&self) -> u8 {
+        self.page_b
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,7 +265,10 @@ struct ApStartupObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ApWorkerCommand { Continue, Abort }
+enum ApWorkerCommand {
+    Continue,
+    Abort,
+}
 
 #[derive(Debug)]
 struct ApWorkerResult {
@@ -238,7 +294,11 @@ struct ApWorkerResult {
 pub fn run_two_vcpu_tlb_shootdown() -> Result<TwoVcpuTlbShootdownResult, Error> {
     let bsp_image = FlatGuestImage::new(BSP_ENTRY, BSP_ENTRY, &BSP_GUEST_BYTES)?;
     let ap_image = FlatGuestImage::new(AP_TRAMPOLINE, AP_TRAMPOLINE, &AP_GUEST_BYTES)?;
-    let handler = FlatGuestImage::new(TLB_SHOOTDOWN_HANDLER, TLB_SHOOTDOWN_HANDLER, &AP_HANDLER_BYTES)?;
+    let handler = FlatGuestImage::new(
+        TLB_SHOOTDOWN_HANDLER,
+        TLB_SHOOTDOWN_HANDLER,
+        &AP_HANDLER_BYTES,
+    )?;
 
     let backend = KvmBackend::open()?;
     backend.require_mp_state_capability()?;
@@ -265,12 +325,20 @@ pub fn run_two_vcpu_tlb_shootdown() -> Result<TwoVcpuTlbShootdownResult, Error> 
         return Err(verification_error(
             SECOND_VCPU_ID.get(),
             "TLB-shootdown AP IDT layout",
-            format!("unexpected IDT {:#x}/{:#x}", ap_interrupt_layout.idt_base().get(), ap_interrupt_layout.idt_limit()),
+            format!(
+                "unexpected IDT {:#x}/{:#x}",
+                ap_interrupt_layout.idt_base().get(),
+                ap_interrupt_layout.idt_limit()
+            ),
         ));
     }
     ap_interrupt_layout.install_tables(&mut memory)?;
     bsp_layout.install_page_tables(&mut memory)?;
-    write_u64(&mut memory, TLB_TARGET_PTE, TLB_PAGE_A.get() | PAGE_TABLE_ENTRY_FLAGS)?;
+    write_u64(
+        &mut memory,
+        TLB_TARGET_PTE,
+        TLB_PAGE_A.get() | PAGE_TABLE_ENTRY_FLAGS,
+    )?;
     bsp_image.load(&mut memory)?;
     ap_image.load(&mut memory)?;
     handler.load(&mut memory)?;
@@ -288,13 +356,27 @@ pub fn run_two_vcpu_tlb_shootdown() -> Result<TwoVcpuTlbShootdownResult, Error> 
     let _ = bsp_vcpu.configure_legacy_pic_extint()?;
     let initial_ap_mp_state = ap_vcpu.multiprocessing_state_raw()?;
     if initial_ap_mp_state != KVM_MP_STATE_UNINITIALIZED {
-        return Err(verification_error(SECOND_VCPU_ID.get(), "initial AP MP state", format!("expected {KVM_MP_STATE_UNINITIALIZED}, got {initial_ap_mp_state}")));
+        return Err(verification_error(
+            SECOND_VCPU_ID.get(),
+            "initial AP MP state",
+            format!("expected {KVM_MP_STATE_UNINITIALIZED}, got {initial_ap_mp_state}"),
+        ));
     }
 
     let mut bsp_port_io = PortIoBus::with_debug_port();
     let mut bsp_io_exits = Vec::new();
-    for (byte, stage) in [(b'0', "pre-INIT"), (b'I', "INIT assert"), (b'D', "INIT deassert"), (b'S', "SIPI")] {
-        bsp_io_exits.push(run_expected_debug_output(&mut bsp_vcpu, &mut bsp_port_io, byte, stage)?);
+    for (byte, stage) in [
+        (b'0', "pre-INIT"),
+        (b'I', "INIT assert"),
+        (b'D', "INIT deassert"),
+        (b'S', "SIPI"),
+    ] {
+        bsp_io_exits.push(run_expected_debug_output(
+            &mut bsp_vcpu,
+            &mut bsp_port_io,
+            byte,
+            stage,
+        )?);
     }
 
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
@@ -304,26 +386,72 @@ pub fn run_two_vcpu_tlb_shootdown() -> Result<TwoVcpuTlbShootdownResult, Error> 
         let startup = require_init_sipi_startup_state(&mut ap_vcpu)?;
         let mut port_io = PortIoBus::with_debug_port();
         let mut io_exits = Vec::new();
-        for (byte, stage) in [(b'A', "AP startup"), (b'L', "AP long-mode entry"), (b'R', "AP alias prime") ] {
-            io_exits.push(run_expected_debug_output(&mut ap_vcpu, &mut port_io, byte, stage)?);
+        for (byte, stage) in [
+            (b'A', "AP startup"),
+            (b'L', "AP long-mode entry"),
+            (b'R', "AP alias prime"),
+        ] {
+            io_exits.push(run_expected_debug_output(
+                &mut ap_vcpu,
+                &mut port_io,
+                byte,
+                stage,
+            )?);
         }
         let ready_rflags = ap_vcpu.registers()?.rflags;
         require_interrupt_disabled_flags(SECOND_VCPU_ID.get(), "AP TLB ready state", ready_rflags)?;
         let special = ap_vcpu.capture_special_register_snapshot()?;
         let idt = special.idt();
-        if idt.base() != LONG_MODE_INTERRUPT_IDT_ADDR.get() || idt.limit() != TLB_SHOOTDOWN_IDT_LIMIT {
-            return Err(verification_error(SECOND_VCPU_ID.get(), "AP TLB ready IDT", format!("unexpected IDT {:#x}/{:#x}", idt.base(), idt.limit())));
+        if idt.base() != LONG_MODE_INTERRUPT_IDT_ADDR.get()
+            || idt.limit() != TLB_SHOOTDOWN_IDT_LIMIT
+        {
+            return Err(verification_error(
+                SECOND_VCPU_ID.get(),
+                "AP TLB ready IDT",
+                format!("unexpected IDT {:#x}/{:#x}", idt.base(), idt.limit()),
+            ));
         }
-        ready_tx.send(()).map_err(|_| verification_error(SECOND_VCPU_ID.get(), "AP ready channel", "BSP dropped readiness receiver"))?;
-        match command_rx.recv().map_err(|_| verification_error(SECOND_VCPU_ID.get(), "AP resume channel", "BSP dropped resume sender"))? {
+        ready_tx.send(()).map_err(|_| {
+            verification_error(
+                SECOND_VCPU_ID.get(),
+                "AP ready channel",
+                "BSP dropped readiness receiver",
+            )
+        })?;
+        match command_rx.recv().map_err(|_| {
+            verification_error(
+                SECOND_VCPU_ID.get(),
+                "AP resume channel",
+                "BSP dropped resume sender",
+            )
+        })? {
             ApWorkerCommand::Continue => {}
-            ApWorkerCommand::Abort => return Err(verification_error(SECOND_VCPU_ID.get(), "AP abort", "BSP failed before shootdown IPI")),
+            ApWorkerCommand::Abort => {
+                return Err(verification_error(
+                    SECOND_VCPU_ID.get(),
+                    "AP abort",
+                    "BSP failed before shootdown IPI",
+                ))
+            }
         }
-        for (byte, stage) in [(b'I', "AP shootdown handler"), (b'B', "AP post-shootdown alias read"), (b'D', "AP completion")] {
-            io_exits.push(run_expected_debug_output(&mut ap_vcpu, &mut port_io, byte, stage)?);
+        for (byte, stage) in [
+            (b'I', "AP shootdown handler"),
+            (b'B', "AP post-shootdown alias read"),
+            (b'D', "AP completion"),
+        ] {
+            io_exits.push(run_expected_debug_output(
+                &mut ap_vcpu,
+                &mut port_io,
+                byte,
+                stage,
+            )?);
         }
         let completion_rflags = ap_vcpu.registers()?.rflags;
-        require_interrupt_enabled_flags(SECOND_VCPU_ID.get(), "AP TLB completion state", completion_rflags)?;
+        require_interrupt_enabled_flags(
+            SECOND_VCPU_ID.get(),
+            "AP TLB completion state",
+            completion_rflags,
+        )?;
         let regs = ap_vcpu.capture_register_snapshot()?;
         let special = ap_vcpu.capture_special_register_snapshot()?;
         let cs = special.cs();
@@ -331,7 +459,11 @@ pub fn run_two_vcpu_tlb_shootdown() -> Result<TwoVcpuTlbShootdownResult, Error> 
         let gdt = special.gdt();
         let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
         if proof.as_slice() != AP_TLB_PROOF {
-            return Err(verification_error(SECOND_VCPU_ID.get(), "AP TLB proof", format!("expected {AP_TLB_PROOF:?}, got {proof:?}")));
+            return Err(verification_error(
+                SECOND_VCPU_ID.get(),
+                "AP TLB proof",
+                format!("expected {AP_TLB_PROOF:?}, got {proof:?}"),
+            ));
         }
         Ok(ApWorkerResult {
             io_exits,
@@ -354,9 +486,15 @@ pub fn run_two_vcpu_tlb_shootdown() -> Result<TwoVcpuTlbShootdownResult, Error> 
         })
     });
 
-    ready_rx.recv().map_err(|_| verification_error(SECOND_VCPU_ID.get(), "AP ready receive", "AP exited before priming alias"))?;
+    ready_rx.recv().map_err(|_| {
+        verification_error(
+            SECOND_VCPU_ID.get(),
+            "AP ready receive",
+            "AP exited before priming alias",
+        )
+    })?;
 
-    for (byte, stage) in [(b'P', "shared PTE mutation"), (b'X', "shootdown IPI") ] {
+    for (byte, stage) in [(b'P', "shared PTE mutation"), (b'X', "shootdown IPI")] {
         match run_expected_debug_output(&mut bsp_vcpu, &mut bsp_port_io, byte, stage) {
             Ok(exit) => bsp_io_exits.push(exit),
             Err(error) => {
@@ -366,20 +504,46 @@ pub fn run_two_vcpu_tlb_shootdown() -> Result<TwoVcpuTlbShootdownResult, Error> 
             }
         }
     }
-    command_tx.send(ApWorkerCommand::Continue).map_err(|_| verification_error(FIRST_VCPU_ID.get(), "AP resume command", "AP exited before shootdown IPI resume"))?;
+    command_tx.send(ApWorkerCommand::Continue).map_err(|_| {
+        verification_error(
+            FIRST_VCPU_ID.get(),
+            "AP resume command",
+            "AP exited before shootdown IPI resume",
+        )
+    })?;
 
-    for (byte, stage) in [(b'A', "shootdown acknowledgement"), (b'D', "BSP completion")] {
-        bsp_io_exits.push(run_expected_debug_output(&mut bsp_vcpu, &mut bsp_port_io, byte, stage)?);
+    for (byte, stage) in [
+        (b'A', "shootdown acknowledgement"),
+        (b'D', "BSP completion"),
+    ] {
+        bsp_io_exits.push(run_expected_debug_output(
+            &mut bsp_vcpu,
+            &mut bsp_port_io,
+            byte,
+            stage,
+        )?);
     }
     let bsp_proof = bsp_port_io.debug_output().unwrap_or(&[]).to_vec();
     if bsp_proof.as_slice() != BSP_TLB_PROOF {
-        return Err(verification_error(FIRST_VCPU_ID.get(), "BSP TLB proof", format!("expected {BSP_TLB_PROOF:?}, got {bsp_proof:?}")));
+        return Err(verification_error(
+            FIRST_VCPU_ID.get(),
+            "BSP TLB proof",
+            format!("expected {BSP_TLB_PROOF:?}, got {bsp_proof:?}"),
+        ));
     }
 
-    let ap = worker.join().map_err(|_| verification_error(SECOND_VCPU_ID.get(), "AP TLB worker join", "AP worker panicked"))??;
+    let ap = worker.join().map_err(|_| {
+        verification_error(
+            SECOND_VCPU_ID.get(),
+            "AP TLB worker join",
+            "AP worker panicked",
+        )
+    })??;
     validate_ap_state(&ap)?;
 
-    let guest_memory = vm.guest_memory().expect("registered TLB-shootdown memory remains VM-owned");
+    let guest_memory = vm
+        .guest_memory()
+        .expect("registered TLB-shootdown memory remains VM-owned");
     let mut pte_bytes = [0_u8; 8];
     guest_memory.read(TLB_TARGET_PTE, &mut pte_bytes)?;
     let final_pte = u64::from_le_bytes(pte_bytes);
@@ -389,8 +553,19 @@ pub fn run_two_vcpu_tlb_shootdown() -> Result<TwoVcpuTlbShootdownResult, Error> 
     guest_memory.read(SHOOTDOWN_ACK, &mut ack)?;
     guest_memory.read(TLB_PAGE_A, &mut page_a)?;
     guest_memory.read(TLB_PAGE_B, &mut page_b)?;
-    if final_pte != TLB_PAGE_B.get() | PAGE_TABLE_ENTRY_FLAGS || ack[0] != 0 || page_a[0] != TLB_PAGE_A_VALUE || page_b[0] != TLB_PAGE_B_VALUE {
-        return Err(verification_error(FIRST_VCPU_ID.get(), "TLB-shootdown final memory", format!("pte={final_pte:#x} ack={} pageA={} pageB={}", ack[0], page_a[0], page_b[0])));
+    if final_pte != TLB_PAGE_B.get() | PAGE_TABLE_ENTRY_FLAGS
+        || ack[0] != 0
+        || page_a[0] != TLB_PAGE_A_VALUE
+        || page_b[0] != TLB_PAGE_B_VALUE
+    {
+        return Err(verification_error(
+            FIRST_VCPU_ID.get(),
+            "TLB-shootdown final memory",
+            format!(
+                "pte={final_pte:#x} ack={} pageA={} pageB={}",
+                ack[0], page_a[0], page_b[0]
+            ),
+        ));
     }
 
     Ok(TwoVcpuTlbShootdownResult {
@@ -436,9 +611,24 @@ fn require_init_sipi_startup_state(vcpu: &mut Vcpu) -> Result<ApStartupObservati
         || cs.base() != SIPI_CS_BASE
         || special.cr0() & X86_CR0_PROTECTED_MODE_ENABLE != 0
     {
-        return Err(verification_error(vcpu.id().get(), "AP SIPI startup", format!("mp={mp_state} rip={:#x} cs={:#x} base={:#x} cr0={:#x}", registers.rip, cs.selector(), cs.base(), special.cr0())));
+        return Err(verification_error(
+            vcpu.id().get(),
+            "AP SIPI startup",
+            format!(
+                "mp={mp_state} rip={:#x} cs={:#x} base={:#x} cr0={:#x}",
+                registers.rip,
+                cs.selector(),
+                cs.base(),
+                special.cr0()
+            ),
+        ));
     }
-    Ok(ApStartupObservation { mp_state, rip: registers.rip, cs_selector: cs.selector(), cs_base: cs.base() })
+    Ok(ApStartupObservation {
+        mp_state,
+        rip: registers.rip,
+        cs_selector: cs.selector(),
+        cs_base: cs.base(),
+    })
 }
 
 fn validate_ap_state(ap: &ApWorkerResult) -> Result<(), Error> {
@@ -456,36 +646,78 @@ fn validate_ap_state(ap: &ApWorkerResult) -> Result<(), Error> {
         && ap.efer & LONG_MODE_EFER_REQUIRED_BITS == LONG_MODE_EFER_REQUIRED_BITS
         && ap.cr3 == LONG_MODE_PML4_ADDR.get();
     if !valid {
-        return Err(verification_error(SECOND_VCPU_ID.get(), "AP post-shootdown long-mode state", "AP architectural state drifted from integrated SIPI/long-mode contract"));
+        return Err(verification_error(
+            SECOND_VCPU_ID.get(),
+            "AP post-shootdown long-mode state",
+            "AP architectural state drifted from integrated SIPI/long-mode contract",
+        ));
     }
     Ok(())
 }
 
-fn run_expected_debug_output(vcpu: &mut Vcpu, port_io: &mut PortIoBus, expected: u8, stage: &'static str) -> Result<PortIoExit, Error> {
+fn run_expected_debug_output(
+    vcpu: &mut Vcpu,
+    port_io: &mut PortIoBus,
+    expected: u8,
+    stage: &'static str,
+) -> Result<PortIoExit, Error> {
     let exit = vcpu.run_once()?;
     if exit != VcpuExit::Io {
-        return Err(verification_error(vcpu.id().get(), stage, format!("expected KVM_EXIT_IO, got {exit:?}")));
+        return Err(verification_error(
+            vcpu.id().get(),
+            stage,
+            format!("expected KVM_EXIT_IO, got {exit:?}"),
+        ));
     }
     let io = vcpu.port_io_exit()?;
-    if io.direction() != PortIoDirection::Out || io.port() != DEBUG_PORT || io.size() != 1 || io.count() != 1 || io.output_data() != [expected] {
-        return Err(verification_error(vcpu.id().get(), stage, format!("unexpected debug exit {io:?}; expected {expected:#x}")));
+    if io.direction() != PortIoDirection::Out
+        || io.port() != DEBUG_PORT
+        || io.size() != 1
+        || io.count() != 1
+        || io.output_data() != [expected]
+    {
+        return Err(verification_error(
+            vcpu.id().get(),
+            stage,
+            format!("unexpected debug exit {io:?}; expected {expected:#x}"),
+        ));
     }
     if port_io.dispatch(&io)? != PortIoService::Output {
-        return Err(verification_error(vcpu.id().get(), stage, "debug output requested input response"));
+        return Err(verification_error(
+            vcpu.id().get(),
+            stage,
+            "debug output requested input response",
+        ));
     }
     Ok(io)
 }
 
-fn require_interrupt_disabled_flags(id: u16, stage: &'static str, rflags: u64) -> Result<(), Error> {
-    if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT || rflags & X86_RFLAGS_INTERRUPT_ENABLE != 0 {
-        return Err(verification_error(id, stage, format!("expected bit1 with IF clear, got {rflags:#x}")));
+fn require_interrupt_disabled_flags(
+    id: u16,
+    stage: &'static str,
+    rflags: u64,
+) -> Result<(), Error> {
+    if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
+        || rflags & X86_RFLAGS_INTERRUPT_ENABLE != 0
+    {
+        return Err(verification_error(
+            id,
+            stage,
+            format!("expected bit1 with IF clear, got {rflags:#x}"),
+        ));
     }
     Ok(())
 }
 
 fn require_interrupt_enabled_flags(id: u16, stage: &'static str, rflags: u64) -> Result<(), Error> {
-    if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT || rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE {
-        return Err(verification_error(id, stage, format!("expected bit1+IF, got {rflags:#x}")));
+    if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
+        || rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
+    {
+        return Err(verification_error(
+            id,
+            stage,
+            format!("expected bit1+IF, got {rflags:#x}"),
+        ));
     }
     Ok(())
 }
@@ -510,7 +742,10 @@ mod tests {
     #[test]
     fn target_alias_uses_shared_page_table_entry_outside_lapic_slot() {
         let pte_index = (TLB_TARGET_VIRTUAL_PAGE - 0x40_0000) / 0x1000;
-        assert_eq!(TLB_TARGET_PTE.get(), LONG_MODE_ALIAS_PT_ADDR.get() + pte_index * 8);
+        assert_eq!(
+            TLB_TARGET_PTE.get(),
+            LONG_MODE_ALIAS_PT_ADDR.get() + pte_index * 8
+        );
         assert_eq!(TLB_TARGET_PTE.get(), 0x4808);
         assert_ne!(TLB_TARGET_VIRTUAL_PAGE, LAPIC_VIRTUAL_PAGE);
         assert_eq!(TLB_PAGE_A.get() | PAGE_TABLE_ENTRY_FLAGS, 0x1_8003);
@@ -520,17 +755,21 @@ mod tests {
     #[test]
     fn ap_preserves_integrated_sipi_transition_and_executes_invlpg_before_ack() {
         const INTEGRATED_PREFIX_LEN: usize = 73;
-        assert_eq!(&AP_GUEST_BYTES[..INTEGRATED_PREFIX_LEN], &[
-            0xfa, 0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0, 0x8e, 0xd0, 0xb0, 0x41, 0xe6,
-            0xe9, 0x0f, 0x01, 0x16, 0x20, 0x70, 0x0f, 0x20, 0xe0, 0x66, 0x83, 0xc8,
-            0x20, 0x0f, 0x22, 0xe0, 0x66, 0xb8, 0x00, 0x10, 0x00, 0x00, 0x0f, 0x22,
-            0xd8, 0x66, 0xb9, 0x80, 0x00, 0x00, 0xc0, 0x0f, 0x32, 0x66, 0x0d, 0x00,
-            0x01, 0x00, 0x00, 0x0f, 0x30, 0x0f, 0x20, 0xc0, 0x66, 0x0d, 0x01, 0x00,
-            0x00, 0x80, 0x0f, 0x22, 0xc0, 0x66, 0xea, 0x49, 0x80, 0x00, 0x00, 0x08,
-            0x00,
-        ]);
+        assert_eq!(
+            &AP_GUEST_BYTES[..INTEGRATED_PREFIX_LEN],
+            &[
+                0xfa, 0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0, 0x8e, 0xd0, 0xb0, 0x41, 0xe6, 0xe9, 0x0f,
+                0x01, 0x16, 0x20, 0x70, 0x0f, 0x20, 0xe0, 0x66, 0x83, 0xc8, 0x20, 0x0f, 0x22, 0xe0,
+                0x66, 0xb8, 0x00, 0x10, 0x00, 0x00, 0x0f, 0x22, 0xd8, 0x66, 0xb9, 0x80, 0x00, 0x00,
+                0xc0, 0x0f, 0x32, 0x66, 0x0d, 0x00, 0x01, 0x00, 0x00, 0x0f, 0x30, 0x0f, 0x20, 0xc0,
+                0x66, 0x0d, 0x01, 0x00, 0x00, 0x80, 0x0f, 0x22, 0xc0, 0x66, 0xea, 0x49, 0x80, 0x00,
+                0x00, 0x08, 0x00,
+            ]
+        );
         assert_eq!(&AP_HANDLER_BYTES[..3], &[0x0f, 0x01, 0x3e]);
-        assert!(AP_HANDLER_BYTES.windows(4).any(|window| window == [0xb0, b'I', 0xe6, 0xe9]));
+        assert!(AP_HANDLER_BYTES
+            .windows(4)
+            .any(|window| window == [0xb0, b'I', 0xe6, 0xe9]));
     }
 
     #[test]
