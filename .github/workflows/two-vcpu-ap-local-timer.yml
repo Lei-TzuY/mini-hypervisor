@@ -1,0 +1,68 @@
+name: Strict KVM two-vCPU AP local timer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/portio/two_vcpu_ap_local_timer_fixture.rs'
+      - 'src/portio/two_vcpu_init_sipi_fixture.rs'
+      - 'src/portio.rs'
+      - 'src/bin/two-vcpu-ap-local-timer.rs'
+      - 'tests/two_vcpu_ap_local_timer_guest.rs'
+      - 'src/interrupt.rs'
+      - 'src/kvm/**'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/mmio/long_mode.rs'
+      - 'src/vcpu.rs'
+      - '.github/workflows/two-vcpu-ap-local-timer.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ap-local-timer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM SIPI-started AP local LAPIC timer proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin two-vcpu-ap-local-timer)"
+          printf '%s\n' "$output"
+
+          grep -F 'AP local timer vector: 0x53' <<<"$output"
+          grep -F 'AP local timer divide configuration: 0xb' <<<"$output"
+          grep -F 'AP local timer initial count: 0x100000' <<<"$output"
+          grep -F 'AP local timer watchdog fired: false' <<<"$output"
+          grep -F 'AP local timer initial MP state: 1' <<<"$output"
+          grep -F 'AP local timer startup: mp=0 rip=0x0 cs=0x800 base=0x8000' <<<"$output"
+          grep -F 'AP local timer IDT: base=0x6000 limit=0x53f' <<<"$output"
+          grep -F 'AP local timer shared marker: 75' <<<"$output"
+          grep -F 'AP local timer BSP proof: [48, 73, 68, 83, 77, 68]' <<<"$output"
+          grep -F 'AP local timer AP proof: [65, 76, 82, 65, 84, 87, 68]' <<<"$output"
+
+          ready="$(grep -F 'AP local timer ready rflags:' <<<"$output")"
+          ready_hex="${ready##*: }"
+          [[ "$ready_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          ready_flags=$((ready_hex))
+          (( (ready_flags & 0x2) == 0x2 ))
+          (( (ready_flags & 0x200) == 0 ))
+
+          armed="$(grep -F 'AP local timer armed rflags:' <<<"$output")"
+          armed_hex="${armed##*: }"
+          [[ "$armed_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          armed_flags=$((armed_hex))
+          (( (armed_flags & 0x2) == 0x2 ))
+          (( (armed_flags & 0x200) == 0 ))
+
+          completion="$(grep -F 'AP local timer completion rflags:' <<<"$output")"
+          completion_hex="${completion##*: }"
+          [[ "$completion_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          completion_flags=$((completion_hex))
+          (( (completion_flags & 0x2) == 0x2 ))
+          (( (completion_flags & 0x200) == 0x200 ))
