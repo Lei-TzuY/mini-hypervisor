@@ -34,6 +34,7 @@ const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 const X86_RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
 const PAGE_TABLE_ENTRY_FLAGS: u64 = 0x3;
 const PAGE_TABLE_ENTRY_ACCESSED: u64 = 1 << 5;
+#[cfg(test)]
 const PAGE_TABLE_ENTRY_DIRTY: u64 = 1 << 6;
 
 pub const TLB_TARGET_VIRTUAL_PAGE: u64 = 0x50_1000;
@@ -45,12 +46,12 @@ pub const TLB_PAGE_B_VALUE: u8 = b'B';
 pub const TLB_SHOOTDOWN_VECTOR: u8 = 0x54;
 pub const TLB_SHOOTDOWN_HANDLER: GuestPhysAddr = GuestPhysAddr::new(0x1_4000);
 pub const TLB_SHOOTDOWN_IDT_LIMIT: u16 = 0x054f;
-pub const TLB_FINAL_PTE: u64 = 0x1_9023;
+pub const TLB_FINAL_PTE: u64 = 0x1_9000 | PAGE_TABLE_ENTRY_FLAGS | PAGE_TABLE_ENTRY_ACCESSED;
 pub const BSP_TLB_PROOF: &[u8; 8] = b"0IDSPXAD";
 pub const AP_TLB_PROOF: &[u8; 6] = b"ALRIBD";
 
 const AP_LONG_MODE_GDT_BYTES: [u8; 24] = [
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x9a, 0xaf, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x9a, 0xaf, 0x00,
     0xff, 0xff, 0x00, 0x00, 0x00, 0x92, 0xcf, 0x00,
 ];
 const AP_LONG_MODE_GDTR_BYTES: [u8; 6] = [0x17, 0x00, 0x00, 0x70, 0x00, 0x00];
