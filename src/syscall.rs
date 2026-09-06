@@ -83,9 +83,9 @@ const SYSCALL_HANDLER_BYTES: [u8; 66] = [
     0x58, // pop rax
     0x48, 0x89, 0x47, 0x18, // mov [rdi+24], rax
     0x8c, 0xc8, // mov ax, cs
-    0x66, 0x89, 0x47, 0x20, // mov ax, [rdi+32]
+    0x66, 0x89, 0x47, 0x20, // mov [rdi+32], ax
     0x8c, 0xd0, // mov ax, ss
-    0x66, 0x89, 0x47, 0x22, // mov ax, [rdi+34]
+    0x66, 0x89, 0x47, 0x22, // mov [rdi+34], ax
     0x48, 0x89, 0x67, 0x28, // mov [rdi+40], rsp
     0xb0, b'S', // mov al, 'S'
     0xe6, 0xe9, // out 0xe9, al
@@ -402,23 +402,18 @@ pub fn run_syscall_sysret_guest(config: VmConfig) -> Result<SyscallSysretGuestRe
 }
 
 fn configure_syscall_msrs(backend: &KvmBackend, vcpu: &Vcpu) -> Result<[u64; 4], Error> {
-    let initial = vcpu.msrs(&[MSR_EFER])?;
-    let initial_efer = initial
-        .values()
-        .first()
-        .expect("one requested EFER read produces one value")
-        .value();
-    let indices = [MSR_EFER, MSR_STAR, MSR_LSTAR, MSR_SFMASK];
+    let indices = [MSR_STAR, MSR_LSTAR, MSR_SFMASK];
     let policy = GuestMsrAccessPolicy::from_host(backend.host_msr_indices(), &indices)
         .map_err(|error| verification_error("syscall MSR policy", error.to_string()))?;
     let requested = [
-        (MSR_EFER, initial_efer | EFER_SYSCALL_ENABLE),
         (MSR_STAR, SYSCALL_STAR_VALUE),
         (MSR_LSTAR, SYSCALL_LSTAR_VALUE),
         (MSR_SFMASK, SYSCALL_SFMASK_VALUE),
     ];
     let values = GuestMsrValueSet::from_policy(&policy, &requested)
         .map_err(|error| verification_error("syscall MSR values", error.to_string()))?;
+
+    let efer = vcpu.enable_efer_bits_preserving(EFER_SYSCALL_ENABLE)?;
     vcpu.set_msrs(&values)?;
 
     let observed = vcpu.msrs(&indices)?;
@@ -436,22 +431,14 @@ fn configure_syscall_msrs(backend: &KvmBackend, vcpu: &Vcpu) -> Result<[u64; 4],
         observed.values()[0].value(),
         observed.values()[1].value(),
         observed.values()[2].value(),
-        observed.values()[3].value(),
     ];
-    if readback
-        != [
-            initial_efer | EFER_SYSCALL_ENABLE,
-            SYSCALL_STAR_VALUE,
-            SYSCALL_LSTAR_VALUE,
-            SYSCALL_SFMASK_VALUE,
-        ]
-    {
+    if readback != [SYSCALL_STAR_VALUE, SYSCALL_LSTAR_VALUE, SYSCALL_SFMASK_VALUE] {
         return Err(verification_error(
             "syscall MSR readback",
             format!("unexpected readback {readback:#x?}"),
         ));
     }
-    Ok(readback)
+    Ok([efer, readback[0], readback[1], readback[2]])
 }
 
 fn read_user_selectors(memory: &GuestMemory) -> Result<[u16; 4], Error> {
