@@ -1,8 +1,7 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::copyin::{
     run_fault_safe_copyin_guest, COPYIN_BAD_POINTER, COPYIN_EFAULT, COPYIN_GOOD_VALUE,
-    COPYIN_PAGE_FAULT_HANDLER, COPYIN_PROOF, COPYIN_TERMINAL_HLT_RIP,
-    COPYIN_TERMINAL_RETURN_RIP,
+    COPYIN_PAGE_FAULT_HANDLER, COPYIN_PROOF, COPYIN_TERMINAL_HLT_RIP, COPYIN_TERMINAL_RETURN_RIP,
 };
 use mini_hypervisor::vcpu::VcpuExit;
 use std::process::ExitCode;
