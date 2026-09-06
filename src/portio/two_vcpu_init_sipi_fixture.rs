@@ -1050,8 +1050,8 @@ fn require_init_sipi_startup_state(vcpu: &mut Vcpu) -> Result<ApStartupState, Er
     Ok(ApStartupState {
         mp_state,
         rip: registers.rip,
-        cs_selector: cs.selector,
-        cs_base: cs.base,
+        cs_selector: cs.selector(),
+        cs_base: cs.base(),
         cr0: special.cr0(),
     })
 }
