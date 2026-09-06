@@ -1050,8 +1050,8 @@ fn require_init_sipi_startup_state(vcpu: &mut Vcpu) -> Result<ApStartupState, Er
     Ok(ApStartupState {
         mp_state,
         rip: registers.rip,
-        cs_selector: cs.selector(),
-        cs_base: cs.base(),
+        cs_selector: cs.selector,
+        cs_base: cs.base,
         cr0: special.cr0(),
     })
 }
@@ -1210,7 +1210,7 @@ mod tests {
         assert_eq!(AP_LONG_MODE_GDTR_BYTES, [0x17, 0, 0, 0x70, 0, 0]);
         assert_eq!(
             &AP_LONG_MODE_TRAMPOLINE_BYTES[..13],
-            &[0xfa, 0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0, 0x8e, 0xd0, b'A', 0xe6, 0xe9]
+            &[0xfa, 0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0, 0x8e, 0xd0, 0xb0, b'A', 0xe6, 0xe9]
         );
         assert_eq!(
             &AP_LONG_MODE_TRAMPOLINE_BYTES[66..74],
