@@ -59,80 +59,34 @@ const PAGE_FAULT_SAVED_RFLAGS: u64 = X86_RFLAGS_RESERVED | X86_RFLAGS_RF;
 const BAD_POINTER_PD_INDEX: u64 = (USERCOPY_BAD_POINTER >> 21) & 0x1ff;
 
 const KERNEL_BOOT_BYTES: [u8; 41] = [
-    0xfa,
-    0x66, 0xb8, 0x28, 0x00,
-    0x0f, 0x00, 0xd8,
-    0x6a, 0x1b,
-    0x48, 0xb8, 0x00, 0xd0, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x50,
-    0x68, 0x02, 0x02, 0x00, 0x00,
-    0x6a, 0x23,
-    0x48, 0xb8, 0x00, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x50,
-    0x48, 0xcf,
+    0xfa, 0x66, 0xb8, 0x28, 0x00, 0x0f, 0x00, 0xd8, 0x6a, 0x1b, 0x48, 0xb8, 0x00, 0xd0, 0x1f, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x50, 0x68, 0x02, 0x02, 0x00, 0x00, 0x6a, 0x23, 0x48, 0xb8, 0x00, 0x10,
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x48, 0xcf,
 ];
 
 const USER_BYTES: [u8; 96] = [
-    0x48, 0xbf, 0x00, 0xa1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x48, 0xbe, 0x01, 0xa1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x0f, 0x05,
-    0x48, 0xbb, 0x80, 0xa1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x48, 0x89, 0x03,
-    0x0f, 0xb6, 0x06,
-    0x48, 0x89, 0x43, 0x18,
-    0x48, 0xbf, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x48, 0xbe, 0x01, 0xa1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x0f, 0x05,
-    0x48, 0x89, 0x43, 0x08,
-    0x48, 0xbf, 0x00, 0xa1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x48, 0xbe, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x0f, 0x05,
-    0x48, 0x89, 0x43, 0x10,
-    0xcd, 0x81,
+    0x48, 0xbf, 0x00, 0xa1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0xbe, 0x01, 0xa1, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x0f, 0x05, 0x48, 0xbb, 0x80, 0xa1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x48, 0x89, 0x03, 0x0f, 0xb6, 0x06, 0x48, 0x89, 0x43, 0x18, 0x48, 0xbf, 0x00, 0x00, 0x40, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x48, 0xbe, 0x01, 0xa1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x05,
+    0x48, 0x89, 0x43, 0x08, 0x48, 0xbf, 0x00, 0xa1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0xbe,
+    0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x05, 0x48, 0x89, 0x43, 0x10, 0xcd, 0x81,
 ];
 
 const USERCOPY_HANDLER_BYTES: [u8; 46] = [
-    0x49, 0x89, 0xe2,
-    0x48, 0xbc, 0x00, 0xe0, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x0f, 0xb6, 0x07,
-    0x88, 0x06,
-    0x45, 0x31, 0xc0,
-    0xb0, b'C', 0xe6, 0xe9,
-    0xeb, 0x0a,
-    0xb0, b'R', 0xe6, 0xe9,
-    0xeb, 0x04,
-    0xb0, b'W', 0xe6, 0xe9,
-    0x4c, 0x89, 0xc0,
-    0x4c, 0x89, 0xd4,
-    0x48, 0x0f, 0x07,
+    0x49, 0x89, 0xe2, 0x48, 0xbc, 0x00, 0xe0, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xb6, 0x07,
+    0x88, 0x06, 0x45, 0x31, 0xc0, 0xb0, b'C', 0xe6, 0xe9, 0xeb, 0x0a, 0xb0, b'R', 0xe6, 0xe9, 0xeb,
+    0x04, 0xb0, b'W', 0xe6, 0xe9, 0x4c, 0x89, 0xc0, 0x4c, 0x89, 0xd4, 0x48, 0x0f, 0x07,
 ];
 
 const PAGE_FAULT_HANDLER_BYTES: [u8; 112] = [
-    0x48, 0x8b, 0x44, 0x24, 0x08,
-    0x49, 0xb9, 0x00, 0xb1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x49, 0x3b, 0x01, 0x74, 0x0b,
-    0x49, 0x3b, 0x41, 0x18, 0x74, 0x0f,
-    0xb0, b'X', 0xe6, 0xe9, 0xf4,
-    0x4d, 0x8b, 0x41, 0x08,
-    0x49, 0x8b, 0x51, 0x10,
-    0xeb, 0x08,
-    0x4d, 0x8b, 0x41, 0x20,
-    0x49, 0x8b, 0x51, 0x28,
-    0x0f, 0x20, 0xd0,
-    0x48, 0x89, 0x02,
-    0x48, 0x8b, 0x04, 0x24,
-    0x48, 0x89, 0x42, 0x08,
-    0x48, 0x8b, 0x44, 0x24, 0x08,
-    0x48, 0x89, 0x42, 0x10,
-    0x48, 0x8b, 0x44, 0x24, 0x10,
-    0x48, 0x89, 0x42, 0x18,
-    0x48, 0x8b, 0x44, 0x24, 0x18,
-    0x48, 0x89, 0x42, 0x20,
-    0x4c, 0x89, 0x42, 0x28,
-    0x4c, 0x89, 0x44, 0x24, 0x08,
-    0x49, 0xc7, 0xc0, 0xf2, 0xff, 0xff, 0xff,
-    0x48, 0x83, 0xc4, 0x08,
-    0x48, 0xcf,
+    0x48, 0x8b, 0x44, 0x24, 0x08, 0x49, 0xb9, 0x00, 0xb1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49,
+    0x3b, 0x01, 0x74, 0x0b, 0x49, 0x3b, 0x41, 0x18, 0x74, 0x0f, 0xb0, b'X', 0xe6, 0xe9, 0xf4, 0x4d,
+    0x8b, 0x41, 0x08, 0x49, 0x8b, 0x51, 0x10, 0xeb, 0x08, 0x4d, 0x8b, 0x41, 0x20, 0x49, 0x8b, 0x51,
+    0x28, 0x0f, 0x20, 0xd0, 0x48, 0x89, 0x02, 0x48, 0x8b, 0x04, 0x24, 0x48, 0x89, 0x42, 0x08, 0x48,
+    0x8b, 0x44, 0x24, 0x08, 0x48, 0x89, 0x42, 0x10, 0x48, 0x8b, 0x44, 0x24, 0x10, 0x48, 0x89, 0x42,
+    0x18, 0x48, 0x8b, 0x44, 0x24, 0x18, 0x48, 0x89, 0x42, 0x20, 0x4c, 0x89, 0x42, 0x28, 0x4c, 0x89,
+    0x44, 0x24, 0x08, 0x49, 0xc7, 0xc0, 0xf2, 0xff, 0xff, 0xff, 0x48, 0x83, 0xc4, 0x08, 0x48, 0xcf,
 ];
 
 const TERMINAL_HANDLER_BYTES: [u8; 5] = [0xb0, b'D', 0xe6, 0xe9, 0xf4];
@@ -146,11 +100,17 @@ pub struct UsercopyFixupEntry {
 
 impl UsercopyFixupEntry {
     #[must_use]
-    pub const fn fault_rip(self) -> u64 { self.fault_rip }
+    pub const fn fault_rip(self) -> u64 {
+        self.fault_rip
+    }
     #[must_use]
-    pub const fn fixup_rip(self) -> u64 { self.fixup_rip }
+    pub const fn fixup_rip(self) -> u64 {
+        self.fixup_rip
+    }
     #[must_use]
-    pub const fn observation_addr(self) -> u64 { self.observation_addr }
+    pub const fn observation_addr(self) -> u64 {
+        self.observation_addr
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,17 +125,29 @@ pub struct UsercopyFaultObservation {
 
 impl UsercopyFaultObservation {
     #[must_use]
-    pub const fn cr2(self) -> u64 { self.cr2 }
+    pub const fn cr2(self) -> u64 {
+        self.cr2
+    }
     #[must_use]
-    pub const fn error_code(self) -> u64 { self.error_code }
+    pub const fn error_code(self) -> u64 {
+        self.error_code
+    }
     #[must_use]
-    pub const fn rip(self) -> u64 { self.rip }
+    pub const fn rip(self) -> u64 {
+        self.rip
+    }
     #[must_use]
-    pub const fn cs(self) -> u64 { self.cs }
+    pub const fn cs(self) -> u64 {
+        self.cs
+    }
     #[must_use]
-    pub const fn rflags(self) -> u64 { self.rflags }
+    pub const fn rflags(self) -> u64 {
+        self.rflags
+    }
     #[must_use]
-    pub const fn resolved_fixup(self) -> u64 { self.resolved_fixup }
+    pub const fn resolved_fixup(self) -> u64 {
+        self.resolved_fixup
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,15 +161,25 @@ pub struct UsercopyTerminalFrame {
 
 impl UsercopyTerminalFrame {
     #[must_use]
-    pub const fn rip(self) -> u64 { self.rip }
+    pub const fn rip(self) -> u64 {
+        self.rip
+    }
     #[must_use]
-    pub const fn cs(self) -> u64 { self.cs }
+    pub const fn cs(self) -> u64 {
+        self.cs
+    }
     #[must_use]
-    pub const fn rflags(self) -> u64 { self.rflags }
+    pub const fn rflags(self) -> u64 {
+        self.rflags
+    }
     #[must_use]
-    pub const fn rsp(self) -> u64 { self.rsp }
+    pub const fn rsp(self) -> u64 {
+        self.rsp
+    }
     #[must_use]
-    pub const fn ss(self) -> u64 { self.ss }
+    pub const fn ss(self) -> u64 {
+        self.ss
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,55 +210,105 @@ pub struct FaultSafeUsercopyGuestResult {
 
 impl FaultSafeUsercopyGuestResult {
     #[must_use]
-    pub fn io_exits(&self) -> &[PortIoExit] { &self.io_exits }
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
     #[must_use]
-    pub fn proof(&self) -> &[u8] { &self.proof }
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
     #[must_use]
-    pub const fn report(&self) -> VmExitReport { self.report }
+    pub const fn report(&self) -> VmExitReport {
+        self.report
+    }
     #[must_use]
-    pub const fn good_return(&self) -> u64 { self.good_return }
+    pub const fn good_return(&self) -> u64 {
+        self.good_return
+    }
     #[must_use]
-    pub const fn bad_source_return(&self) -> u64 { self.bad_source_return }
+    pub const fn bad_source_return(&self) -> u64 {
+        self.bad_source_return
+    }
     #[must_use]
-    pub const fn bad_destination_return(&self) -> u64 { self.bad_destination_return }
+    pub const fn bad_destination_return(&self) -> u64 {
+        self.bad_destination_return
+    }
     #[must_use]
-    pub const fn user_readback(&self) -> u64 { self.user_readback }
+    pub const fn user_readback(&self) -> u64 {
+        self.user_readback
+    }
     #[must_use]
-    pub const fn source_value(&self) -> u8 { self.source_value }
+    pub const fn source_value(&self) -> u8 {
+        self.source_value
+    }
     #[must_use]
-    pub const fn destination_value(&self) -> u8 { self.destination_value }
+    pub const fn destination_value(&self) -> u8 {
+        self.destination_value
+    }
     #[must_use]
-    pub const fn read_fault(&self) -> UsercopyFaultObservation { self.read_fault }
+    pub const fn read_fault(&self) -> UsercopyFaultObservation {
+        self.read_fault
+    }
     #[must_use]
-    pub const fn write_fault(&self) -> UsercopyFaultObservation { self.write_fault }
+    pub const fn write_fault(&self) -> UsercopyFaultObservation {
+        self.write_fault
+    }
     #[must_use]
-    pub const fn fixup_entries(&self) -> &[UsercopyFixupEntry; 2] { &self.fixup_entries }
+    pub const fn fixup_entries(&self) -> &[UsercopyFixupEntry; 2] {
+        &self.fixup_entries
+    }
     #[must_use]
-    pub const fn terminal_frame(&self) -> UsercopyTerminalFrame { self.terminal_frame }
+    pub const fn terminal_frame(&self) -> UsercopyTerminalFrame {
+        self.terminal_frame
+    }
     #[must_use]
-    pub const fn terminal_rsp(&self) -> u64 { self.terminal_rsp }
+    pub const fn terminal_rsp(&self) -> u64 {
+        self.terminal_rsp
+    }
     #[must_use]
-    pub const fn terminal_cs(&self) -> u16 { self.terminal_cs }
+    pub const fn terminal_cs(&self) -> u16 {
+        self.terminal_cs
+    }
     #[must_use]
-    pub const fn terminal_rflags(&self) -> u64 { self.terminal_rflags }
+    pub const fn terminal_rflags(&self) -> u64 {
+        self.terminal_rflags
+    }
     #[must_use]
-    pub const fn final_cr2(&self) -> u64 { self.final_cr2 }
+    pub const fn final_cr2(&self) -> u64 {
+        self.final_cr2
+    }
     #[must_use]
-    pub const fn efer(&self) -> u64 { self.msrs[0] }
+    pub const fn efer(&self) -> u64 {
+        self.msrs[0]
+    }
     #[must_use]
-    pub const fn star(&self) -> u64 { self.msrs[1] }
+    pub const fn star(&self) -> u64 {
+        self.msrs[1]
+    }
     #[must_use]
-    pub const fn lstar(&self) -> u64 { self.msrs[2] }
+    pub const fn lstar(&self) -> u64 {
+        self.msrs[2]
+    }
     #[must_use]
-    pub const fn sfmask(&self) -> u64 { self.msrs[3] }
+    pub const fn sfmask(&self) -> u64 {
+        self.msrs[3]
+    }
     #[must_use]
-    pub const fn user_page_pte(&self) -> u64 { self.user_page_pte }
+    pub const fn user_page_pte(&self) -> u64 {
+        self.user_page_pte
+    }
     #[must_use]
-    pub const fn fault_handler_pte(&self) -> u64 { self.fault_handler_pte }
+    pub const fn fault_handler_pte(&self) -> u64 {
+        self.fault_handler_pte
+    }
     #[must_use]
-    pub const fn fault_metadata_pte(&self) -> u64 { self.fault_metadata_pte }
+    pub const fn fault_metadata_pte(&self) -> u64 {
+        self.fault_metadata_pte
+    }
     #[must_use]
-    pub const fn bad_pd_entry(&self) -> u64 { self.bad_pd_entry }
+    pub const fn bad_pd_entry(&self) -> u64 {
+        self.bad_pd_entry
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -302,10 +334,20 @@ struct RuntimeState {
     bad_pd_entry: u64,
 }
 
-pub fn run_fault_safe_usercopy_guest(config: VmConfig) -> Result<FaultSafeUsercopyGuestResult, Error> {
-    let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &KERNEL_BOOT_BYTES)?;
+pub fn run_fault_safe_usercopy_guest(
+    config: VmConfig,
+) -> Result<FaultSafeUsercopyGuestResult, Error> {
+    let kernel = FlatGuestImage::new(
+        PRIVILEGE_KERNEL_ENTRY,
+        PRIVILEGE_KERNEL_ENTRY,
+        &KERNEL_BOOT_BYTES,
+    )?;
     let user = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &USER_BYTES)?;
-    let service = FlatGuestImage::new(SYSCALL_KERNEL_ENTRY, SYSCALL_KERNEL_ENTRY, &USERCOPY_HANDLER_BYTES)?;
+    let service = FlatGuestImage::new(
+        SYSCALL_KERNEL_ENTRY,
+        SYSCALL_KERNEL_ENTRY,
+        &USERCOPY_HANDLER_BYTES,
+    )?;
     let page_fault_handler = FlatGuestImage::new(
         USERCOPY_PAGE_FAULT_HANDLER,
         USERCOPY_PAGE_FAULT_HANDLER,
@@ -331,8 +373,14 @@ pub fn run_fault_safe_usercopy_guest(config: VmConfig) -> Result<FaultSafeUserco
     terminal_handler.load(&mut memory)?;
     memory.write(GuestPhysAddr::new(USERCOPY_SOURCE), &[USERCOPY_VALUE, 0])?;
     memory.write(USERCOPY_RESULT_ADDR, &[0; 32])?;
-    memory.write(USERCOPY_READ_FAULT_OBSERVATION_ADDR, &[0; FAULT_OBSERVATION_BYTES])?;
-    memory.write(USERCOPY_WRITE_FAULT_OBSERVATION_ADDR, &[0; FAULT_OBSERVATION_BYTES])?;
+    memory.write(
+        USERCOPY_READ_FAULT_OBSERVATION_ADDR,
+        &[0; FAULT_OBSERVATION_BYTES],
+    )?;
+    memory.write(
+        USERCOPY_WRITE_FAULT_OBSERVATION_ADDR,
+        &[0; FAULT_OBSERVATION_BYTES],
+    )?;
     memory.write(USERCOPY_FIXUP_TABLE_ADDR, &encoded_fixup_table())?;
     vm.register_guest_memory(memory)?;
 
@@ -708,30 +756,48 @@ mod tests {
 
     #[test]
     fn page_fault_handler_matches_only_table_sites_and_fails_closed_otherwise() {
-        assert_eq!(&PAGE_FAULT_HANDLER_BYTES[15..20], &[0x49, 0x3b, 0x01, 0x74, 0x0b]);
-        assert_eq!(&PAGE_FAULT_HANDLER_BYTES[20..26], &[0x49, 0x3b, 0x41, 0x18, 0x74, 0x0f]);
-        assert_eq!(&PAGE_FAULT_HANDLER_BYTES[26..31], &[0xb0, b'X', 0xe6, 0xe9, 0xf4]);
-        assert_eq!(&PAGE_FAULT_HANDLER_BYTES[106..110], &[0x48, 0x83, 0xc4, 0x08]);
+        assert_eq!(
+            &PAGE_FAULT_HANDLER_BYTES[15..20],
+            &[0x49, 0x3b, 0x01, 0x74, 0x0b]
+        );
+        assert_eq!(
+            &PAGE_FAULT_HANDLER_BYTES[20..26],
+            &[0x49, 0x3b, 0x41, 0x18, 0x74, 0x0f]
+        );
+        assert_eq!(
+            &PAGE_FAULT_HANDLER_BYTES[26..31],
+            &[0xb0, b'X', 0xe6, 0xe9, 0xf4]
+        );
+        assert_eq!(
+            &PAGE_FAULT_HANDLER_BYTES[106..110],
+            &[0x48, 0x83, 0xc4, 0x08]
+        );
         assert_eq!(&PAGE_FAULT_HANDLER_BYTES[110..112], &[0x48, 0xcf]);
     }
 
     #[test]
     fn page_fault_gate_is_dpl0_and_terminal_gate_remains_dpl3() {
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let layout = layout();
         layout.install_tables(&mut memory).unwrap();
         install_page_fault_gate(&mut memory).unwrap();
         let mut gate = [0_u8; 16];
         memory
             .read(
-                GuestPhysAddr::new(PRIVILEGE_IDT_ADDR.get() + u64::from(USERCOPY_PAGE_FAULT_VECTOR) * 16),
+                GuestPhysAddr::new(
+                    PRIVILEGE_IDT_ADDR.get() + u64::from(USERCOPY_PAGE_FAULT_VECTOR) * 16,
+                ),
                 &mut gate,
             )
             .unwrap();
         assert_eq!(gate[5], 0x8e);
         let mut terminal_gate = [0_u8; 16];
         memory
-            .read(GuestPhysAddr::new(PRIVILEGE_IDT_ADDR.get() + 0x81 * 16), &mut terminal_gate)
+            .read(
+                GuestPhysAddr::new(PRIVILEGE_IDT_ADDR.get() + 0x81 * 16),
+                &mut terminal_gate,
+            )
             .unwrap();
         assert_eq!(terminal_gate[5], 0xee);
     }
@@ -739,14 +805,21 @@ mod tests {
     #[test]
     fn user_data_is_writable_metadata_is_supervisor_and_bad_pointer_is_unmapped() {
         assert_eq!(USERCOPY_BAD_POINTER, 2 * LONG_MODE_IDENTITY_MAP_SIZE);
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let layout = layout();
         layout.install_tables(&mut memory).unwrap();
         let user_pte = read_pte(&memory, USERCOPY_SOURCE).unwrap();
         let metadata_pte = read_pte(&memory, USERCOPY_FIXUP_TABLE_ADDR.get()).unwrap();
-        assert_eq!(user_pte & (X86_PAGE_USER | X86_PAGE_WRITE), X86_PAGE_USER | X86_PAGE_WRITE);
+        assert_eq!(
+            user_pte & (X86_PAGE_USER | X86_PAGE_WRITE),
+            X86_PAGE_USER | X86_PAGE_WRITE
+        );
         assert_eq!(metadata_pte & X86_PAGE_USER, 0);
-        assert_eq!(read_bad_pointer_pd_entry(&memory).unwrap() & X86_PAGE_PRESENT, 0);
+        assert_eq!(
+            read_bad_pointer_pd_entry(&memory).unwrap() & X86_PAGE_PRESENT,
+            0
+        );
     }
 
     #[test]
