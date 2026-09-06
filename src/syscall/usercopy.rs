@@ -736,7 +736,7 @@ mod tests {
     fn guest_sequence_runs_good_bad_source_bad_destination_then_terminal() {
         assert_eq!(&USER_BYTES[20..22], &[0x0f, 0x05]);
         assert_eq!(&USER_BYTES[62..64], &[0x0f, 0x05]);
-        assert_eq!(&USER_BYTES[90..92], &[0x0f, 0x05]);
+        assert_eq!(&USER_BYTES[88..90], &[0x0f, 0x05]);
         assert_eq!(&USER_BYTES[94..96], &[0xcd, 0x81]);
         assert_eq!(USERCOPY_TERMINAL_RETURN_RIP, 0x11060);
     }
