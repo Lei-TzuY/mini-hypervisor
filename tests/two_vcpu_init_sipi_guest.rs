@@ -12,6 +12,11 @@ fn guest_init_sipi_starts_uninitialized_ap_at_real_mode_trampoline() {
             assert_eq!(SIPI_VECTOR, 0x08);
             assert_eq!(u64::from(SIPI_VECTOR) << 12, 0x8000);
             assert_eq!(result.initial_mp_state(), 1);
+            assert_eq!(result.startup_mp_state(), 0);
+            assert_eq!(result.startup_rip(), 0);
+            assert_eq!(result.startup_cs_selector(), 0x0800);
+            assert_eq!(result.startup_cs_base(), 0x8000);
+            assert_eq!(result.startup_cr0() & 1, 0);
             assert_eq!(result.final_mp_state(), 0);
             assert_eq!(result.shared_marker(), b'K');
             assert_eq!(result.first_proof(), FIRST_PROOF);
