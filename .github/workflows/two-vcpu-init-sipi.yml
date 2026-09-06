@@ -1,0 +1,48 @@
+name: Strict KVM two-vCPU INIT SIPI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/portio.rs'
+      - 'src/portio/two_vcpu_init_sipi_fixture.rs'
+      - 'src/bin/two-vcpu-init-sipi.rs'
+      - 'tests/two_vcpu_init_sipi_guest.rs'
+      - 'src/mmio/long_mode.rs'
+      - 'src/kvm/irqchip.rs'
+      - 'src/kvm/mp_state.rs'
+      - 'src/vcpu/mp_state.rs'
+      - 'src/interrupt.rs'
+      - '.github/workflows/two-vcpu-init-sipi.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  init-sipi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM guest INIT/SIPI AP startup proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin two-vcpu-init-sipi)"
+          printf '%s\n' "$output"
+          grep -F 'INIT/SIPI vector: 0x8' <<<"$output"
+          grep -F 'INIT/SIPI trampoline GPA: 0x8000' <<<"$output"
+          grep -F 'INIT/SIPI initial AP mp-state: 1' <<<"$output"
+          grep -F 'INIT/SIPI final AP mp-state: 0' <<<"$output"
+          grep -F 'INIT/SIPI shared marker: 0x4b' <<<"$output"
+          grep -F 'INIT/SIPI BSP proof: [48, 73, 68, 83, 77, 68]' <<<"$output"
+          grep -F 'INIT/SIPI AP proof: [65, 80, 68]' <<<"$output"
+
+          line="$(grep -F 'INIT/SIPI AP completion rflags:' <<<"$output")"
+          hex="${line##*: }"
+          [[ "$hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((hex))
+          (( (rflags & 0x2) == 0x2 ))
+          (( (rflags & 0x200) == 0 ))
