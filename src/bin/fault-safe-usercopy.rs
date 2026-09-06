@@ -28,29 +28,48 @@ fn main() -> ExitCode {
             for (index, entry) in result.fixup_entries().iter().enumerate() {
                 println!(
                     "usercopy fixup[{index}]: fault={:#x} fixup={:#x} observation={:#x}",
-                    entry.fault_rip(), entry.fixup_rip(), entry.observation_addr()
+                    entry.fault_rip(),
+                    entry.fixup_rip(),
+                    entry.observation_addr()
                 );
             }
             let frame = result.terminal_frame();
             println!(
                 "usercopy terminal frame: rip={:#x} cs={:#x} rflags={:#x} rsp={:#x} ss={:#x}",
-                frame.rip(), frame.cs(), frame.rflags(), frame.rsp(), frame.ss()
+                frame.rip(),
+                frame.cs(),
+                frame.rflags(),
+                frame.rsp(),
+                frame.ss()
             );
             println!(
                 "usercopy terminal: rsp={:#x} cs={:#x} rflags={:#x} cr2={:#x}",
-                result.terminal_rsp(), result.terminal_cs(), result.terminal_rflags(), result.final_cr2()
+                result.terminal_rsp(),
+                result.terminal_cs(),
+                result.terminal_rflags(),
+                result.final_cr2()
             );
             println!(
                 "usercopy MSRs: efer={:#x} star={:#x} lstar={:#x} sfmask={:#x}",
-                result.efer(), result.star(), result.lstar(), result.sfmask()
+                result.efer(),
+                result.star(),
+                result.lstar(),
+                result.sfmask()
             );
             println!("usercopy user page PTE: {:#x}", result.user_page_pte());
-            println!("usercopy fault handler PTE: {:#x}", result.fault_handler_pte());
-            println!("usercopy fault metadata PTE: {:#x}", result.fault_metadata_pte());
+            println!(
+                "usercopy fault handler PTE: {:#x}",
+                result.fault_handler_pte()
+            );
+            println!(
+                "usercopy fault metadata PTE: {:#x}",
+                result.fault_metadata_pte()
+            );
             println!("usercopy bad PD entry: {:#x}", result.bad_pd_entry());
             println!(
                 "usercopy terminal report: rip={:#x} rflags={:#x}",
-                result.report().rip(), result.report().rflags()
+                result.report().rip(),
+                result.report().rflags()
             );
             ExitCode::SUCCESS
         }
