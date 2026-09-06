@@ -5,10 +5,7 @@ use crate::loader::FlatGuestImage;
 use crate::long_mode::LONG_MODE_IDENTITY_MAP_SIZE;
 use crate::memory::{GuestMemory, GuestPhysAddr};
 use crate::mmio::long_mode::{LongModeMmioBootLayout, LongModeMmioPageMapping};
-use crate::vcpu::{
-    PortIoDirection, PortIoExit, Vcpu, VcpuExit, VcpuId, KVM_MP_STATE_INIT_RECEIVED,
-    KVM_MP_STATE_RUNNABLE, KVM_MP_STATE_UNINITIALIZED,
-};
+use crate::vcpu::{PortIoDirection, PortIoExit, Vcpu, VcpuExit, VcpuId};
 use std::io;
 
 const RAM_BASE: GuestPhysAddr = GuestPhysAddr::new(0);
@@ -20,6 +17,9 @@ const SHARED_MARKER_VALUE: u8 = b'K';
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 const X86_RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
 const X86_CR0_PROTECTED_MODE_ENABLE: u64 = 1;
+const KVM_MP_STATE_RUNNABLE: u32 = 0;
+const KVM_MP_STATE_UNINITIALIZED: u32 = 1;
+const KVM_MP_STATE_INIT_RECEIVED: u32 = 2;
 
 pub const FIRST_VCPU_ID: VcpuId = VcpuId::BOOT;
 pub const SECOND_VCPU_ID: VcpuId = VcpuId::new(1);
@@ -487,18 +487,39 @@ mod tests {
         assert_eq!(INIT_ASSERT_VALUE, 0x0000_c500);
         assert_eq!(INIT_DEASSERT_VALUE, 0x0000_8500);
         assert_eq!(SIPI_VALUE, 0x0000_0608);
-        assert_eq!(&FIRST_GUEST_BYTES[15..25], &[0xc7, 0x83, 0x10, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
-        assert_eq!(&FIRST_GUEST_BYTES[25..35], &[0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x00, 0xc5, 0x00, 0x00]);
-        assert_eq!(&FIRST_GUEST_BYTES[39..49], &[0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x00, 0x85, 0x00, 0x00]);
-        assert_eq!(&FIRST_GUEST_BYTES[53..63], &[0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x08, 0x06, 0x00, 0x00]);
+        assert_eq!(KVM_MP_STATE_UNINITIALIZED, 1);
+        assert_eq!(KVM_MP_STATE_INIT_RECEIVED, 2);
+        assert_eq!(KVM_MP_STATE_RUNNABLE, 0);
+        assert_eq!(
+            &FIRST_GUEST_BYTES[15..25],
+            &[0xc7, 0x83, 0x10, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
+        );
+        assert_eq!(
+            &FIRST_GUEST_BYTES[25..35],
+            &[0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x00, 0xc5, 0x00, 0x00]
+        );
+        assert_eq!(
+            &FIRST_GUEST_BYTES[39..49],
+            &[0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x00, 0x85, 0x00, 0x00]
+        );
+        assert_eq!(
+            &FIRST_GUEST_BYTES[53..63],
+            &[0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x08, 0x06, 0x00, 0x00]
+        );
     }
 
     #[test]
     fn ap_trampoline_is_real_mode_and_writes_shared_marker() {
         assert_eq!(AP_TRAMPOLINE.get(), 0x8000);
         assert_eq!(SHARED_MARKER.get(), 0x9000);
-        assert_eq!(&AP_TRAMPOLINE_BYTES[..9], &[0xfa, 0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0, 0x8e, 0xd0]);
-        assert_eq!(&AP_TRAMPOLINE_BYTES[13..18], &[0xb0, SHARED_MARKER_VALUE, 0xa2, 0x00, 0x90]);
+        assert_eq!(
+            &AP_TRAMPOLINE_BYTES[..9],
+            &[0xfa, 0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0, 0x8e, 0xd0]
+        );
+        assert_eq!(
+            &AP_TRAMPOLINE_BYTES[13..18],
+            &[0xb0, SHARED_MARKER_VALUE, 0xa2, 0x00, 0x90]
+        );
         assert_eq!(SECOND_PROOF, b"APD");
     }
 
@@ -506,7 +527,10 @@ mod tests {
     fn bsp_proof_covers_init_deassert_sipi_and_shared_handoff() {
         assert_eq!(FIRST_PROOF, b"0IDSMD");
         assert_eq!(&FIRST_GUEST_BYTES[81..83], &[0x75, 0x09]);
-        assert_eq!(&FIRST_GUEST_BYTES[83..91], &[0xb0, b'M', 0xe6, 0xe9, 0xb0, b'D', 0xe6, 0xe9]);
+        assert_eq!(
+            &FIRST_GUEST_BYTES[83..91],
+            &[0xb0, b'M', 0xe6, 0xe9, 0xb0, b'D', 0xe6, 0xe9]
+        );
         assert_eq!(&FIRST_GUEST_BYTES[92..96], &[0xb0, b'F', 0xe6, 0xe9]);
     }
 }
