@@ -134,43 +134,81 @@ pub struct ApLocalTimerState {
 
 impl ApLocalTimerState {
     #[must_use]
-    pub const fn startup_mp_state(self) -> u32 { self.startup_mp_state }
+    pub const fn startup_mp_state(self) -> u32 {
+        self.startup_mp_state
+    }
     #[must_use]
-    pub const fn startup_rip(self) -> u64 { self.startup_rip }
+    pub const fn startup_rip(self) -> u64 {
+        self.startup_rip
+    }
     #[must_use]
-    pub const fn startup_cs_selector(self) -> u16 { self.startup_cs_selector }
+    pub const fn startup_cs_selector(self) -> u16 {
+        self.startup_cs_selector
+    }
     #[must_use]
-    pub const fn startup_cs_base(self) -> u64 { self.startup_cs_base }
+    pub const fn startup_cs_base(self) -> u64 {
+        self.startup_cs_base
+    }
     #[must_use]
-    pub const fn ready_rflags(self) -> u64 { self.ready_rflags }
+    pub const fn ready_rflags(self) -> u64 {
+        self.ready_rflags
+    }
     #[must_use]
-    pub const fn armed_rflags(self) -> u64 { self.armed_rflags }
+    pub const fn armed_rflags(self) -> u64 {
+        self.armed_rflags
+    }
     #[must_use]
-    pub const fn completion_rflags(self) -> u64 { self.completion_rflags }
+    pub const fn completion_rflags(self) -> u64 {
+        self.completion_rflags
+    }
     #[must_use]
-    pub const fn rsp(self) -> u64 { self.rsp }
+    pub const fn rsp(self) -> u64 {
+        self.rsp
+    }
     #[must_use]
-    pub const fn cs_selector(self) -> u16 { self.cs_selector }
+    pub const fn cs_selector(self) -> u16 {
+        self.cs_selector
+    }
     #[must_use]
-    pub const fn cs_long(self) -> u8 { self.cs_long }
+    pub const fn cs_long(self) -> u8 {
+        self.cs_long
+    }
     #[must_use]
-    pub const fn ss_selector(self) -> u16 { self.ss_selector }
+    pub const fn ss_selector(self) -> u16 {
+        self.ss_selector
+    }
     #[must_use]
-    pub const fn gdt_base(self) -> u64 { self.gdt_base }
+    pub const fn gdt_base(self) -> u64 {
+        self.gdt_base
+    }
     #[must_use]
-    pub const fn gdt_limit(self) -> u16 { self.gdt_limit }
+    pub const fn gdt_limit(self) -> u16 {
+        self.gdt_limit
+    }
     #[must_use]
-    pub const fn idt_base(self) -> u64 { self.idt_base }
+    pub const fn idt_base(self) -> u64 {
+        self.idt_base
+    }
     #[must_use]
-    pub const fn idt_limit(self) -> u16 { self.idt_limit }
+    pub const fn idt_limit(self) -> u16 {
+        self.idt_limit
+    }
     #[must_use]
-    pub const fn cr0(self) -> u64 { self.cr0 }
+    pub const fn cr0(self) -> u64 {
+        self.cr0
+    }
     #[must_use]
-    pub const fn cr3(self) -> u64 { self.cr3 }
+    pub const fn cr3(self) -> u64 {
+        self.cr3
+    }
     #[must_use]
-    pub const fn cr4(self) -> u64 { self.cr4 }
+    pub const fn cr4(self) -> u64 {
+        self.cr4
+    }
     #[must_use]
-    pub const fn efer(self) -> u64 { self.efer }
+    pub const fn efer(self) -> u64 {
+        self.efer
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,21 +225,37 @@ pub struct TwoVcpuApLocalTimerResult {
 
 impl TwoVcpuApLocalTimerResult {
     #[must_use]
-    pub fn bsp_io_exits(&self) -> &[PortIoExit] { &self.bsp_io_exits }
+    pub fn bsp_io_exits(&self) -> &[PortIoExit] {
+        &self.bsp_io_exits
+    }
     #[must_use]
-    pub fn ap_io_exits(&self) -> &[PortIoExit] { &self.ap_io_exits }
+    pub fn ap_io_exits(&self) -> &[PortIoExit] {
+        &self.ap_io_exits
+    }
     #[must_use]
-    pub fn bsp_proof(&self) -> &[u8] { &self.bsp_proof }
+    pub fn bsp_proof(&self) -> &[u8] {
+        &self.bsp_proof
+    }
     #[must_use]
-    pub fn ap_proof(&self) -> &[u8] { &self.ap_proof }
+    pub fn ap_proof(&self) -> &[u8] {
+        &self.ap_proof
+    }
     #[must_use]
-    pub const fn initial_ap_mp_state(&self) -> u32 { self.initial_ap_mp_state }
+    pub const fn initial_ap_mp_state(&self) -> u32 {
+        self.initial_ap_mp_state
+    }
     #[must_use]
-    pub const fn ap_state(&self) -> ApLocalTimerState { self.ap_state }
+    pub const fn ap_state(&self) -> ApLocalTimerState {
+        self.ap_state
+    }
     #[must_use]
-    pub const fn shared_marker(&self) -> u8 { self.shared_marker }
+    pub const fn shared_marker(&self) -> u8 {
+        self.shared_marker
+    }
     #[must_use]
-    pub const fn watchdog_fired(&self) -> bool { self.watchdog_fired }
+    pub const fn watchdog_fired(&self) -> bool {
+        self.watchdog_fired
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -340,7 +394,9 @@ pub fn run_two_vcpu_ap_local_timer() -> Result<TwoVcpuApLocalTimerResult, Error>
                 "AP-local-timer readiness IDT",
                 format!(
                     "expected IDT {:#x}/{AP_LOCAL_TIMER_IDT_LIMIT:#x}, got {:#x}/{:#x}",
-                    LONG_MODE_INTERRUPT_IDT_ADDR.get(), idt.base(), idt.limit()
+                    LONG_MODE_INTERRUPT_IDT_ADDR.get(),
+                    idt.base(),
+                    idt.limit()
                 ),
             ));
         }
@@ -407,17 +463,27 @@ pub fn run_two_vcpu_ap_local_timer() -> Result<TwoVcpuApLocalTimerResult, Error>
                 "BSP thread dropped completion receiver",
             )
         })?;
-        Ok(ApWorkerResult { io_exits, proof, state })
+        Ok(ApWorkerResult {
+            io_exits,
+            proof,
+            state,
+        })
     });
 
     if armed_rx.recv().is_err() {
-        return worker.join().map_err(|_| {
-            verification_error(
+        return match worker.join() {
+            Ok(Ok(_)) => Err(verification_error(
+                SECOND_VCPU_ID.get(),
+                "AP-local-timer armed channel",
+                "AP worker exited before reporting timer armed",
+            )),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(verification_error(
                 SECOND_VCPU_ID.get(),
                 "AP-local-timer worker join before armed state",
                 "AP worker panicked before reporting timer armed",
-            )
-        })?;
+            )),
+        };
     }
 
     let watchdog_fired = match completion_rx.recv_timeout(Duration::from_secs(WATCHDOG_SECONDS)) {
@@ -426,7 +492,10 @@ pub fn run_two_vcpu_ap_local_timer() -> Result<TwoVcpuApLocalTimerResult, Error>
         Err(mpsc::RecvTimeoutError::Timeout) => {
             let address = APIC_MSI_ADDRESS_BASE
                 | ((u64::from(SECOND_VCPU_ID.get())) << APIC_MSI_DESTINATION_SHIFT);
-            vm.signal_msi(KvmMsiMessage::new(address, u32::from(AP_LOCAL_TIMER_VECTOR)))?;
+            vm.signal_msi(KvmMsiMessage::new(
+                address,
+                u32::from(AP_LOCAL_TIMER_VECTOR),
+            ))?;
             true
         }
     };
@@ -510,7 +579,10 @@ fn require_init_sipi_startup_state(vcpu: &mut Vcpu) -> Result<ApStartupState, Er
             "AP-local-timer AP startup state",
             format!(
                 "expected MP={KVM_MP_STATE_RUNNABLE}, RIP=0, CS={SIPI_CS_SELECTOR:#x} base={SIPI_CS_BASE:#x}, CR0.PE=0; got MP={mp_state}, RIP={:#x}, CS={:#x} base={:#x}, CR0={:#x}",
-                registers.rip, cs.selector(), cs.base(), special.cr0()
+                registers.rip,
+                cs.selector(),
+                cs.base(),
+                special.cr0()
             ),
         ));
     }
@@ -672,26 +744,39 @@ mod tests {
     #[test]
     fn timer_machine_code_preserves_startup_and_programs_one_shot_lapic() {
         assert_eq!(AP_TIMER_GUEST_BYTES.len(), 178);
-        assert_eq!(&AP_TIMER_GUEST_BYTES[..73], &[
-            0xfa, 0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0, 0x8e, 0xd0, 0xb0, 0x41, 0xe6,
-            0xe9, 0x0f, 0x01, 0x16, 0x20, 0x70, 0x0f, 0x20, 0xe0, 0x66, 0x83, 0xc8,
-            0x20, 0x0f, 0x22, 0xe0, 0x66, 0xb8, 0x00, 0x10, 0x00, 0x00, 0x0f, 0x22,
-            0xd8, 0x66, 0xb9, 0x80, 0x00, 0x00, 0xc0, 0x0f, 0x32, 0x66, 0x0d, 0x00,
-            0x01, 0x00, 0x00, 0x0f, 0x30, 0x0f, 0x20, 0xc0, 0x66, 0x0d, 0x01, 0x00,
-            0x00, 0x80, 0x0f, 0x22, 0xc0, 0x66, 0xea, 0x49, 0x80, 0x00, 0x00, 0x08,
-            0x00,
-        ]);
-        assert!(AP_TIMER_GUEST_BYTES.windows(10).any(|window| window == [
-            0xc7, 0x83, 0xe0, 0x03, 0, 0,
-            AP_LOCAL_TIMER_DIVIDE_CONFIGURATION as u8, 0, 0, 0,
-        ]));
-        assert!(AP_TIMER_GUEST_BYTES.windows(10).any(|window| window == [
-            0xc7, 0x83, 0x20, 0x03, 0, 0, AP_LOCAL_TIMER_VECTOR, 0, 0, 0,
-        ]));
-        assert!(AP_TIMER_GUEST_BYTES.windows(10).any(|window| window == [
-            0xc7, 0x83, 0x80, 0x03, 0, 0, 0, 0, 0x10, 0,
-        ]));
-        assert!(AP_TIMER_GUEST_BYTES.windows(2).any(|window| window == [0xfb, 0xf4]));
+        assert_eq!(
+            &AP_TIMER_GUEST_BYTES[..73],
+            &[
+                0xfa, 0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0, 0x8e, 0xd0, 0xb0, 0x41, 0xe6, 0xe9, 0x0f,
+                0x01, 0x16, 0x20, 0x70, 0x0f, 0x20, 0xe0, 0x66, 0x83, 0xc8, 0x20, 0x0f, 0x22, 0xe0,
+                0x66, 0xb8, 0x00, 0x10, 0x00, 0x00, 0x0f, 0x22, 0xd8, 0x66, 0xb9, 0x80, 0x00, 0x00,
+                0xc0, 0x0f, 0x32, 0x66, 0x0d, 0x00, 0x01, 0x00, 0x00, 0x0f, 0x30, 0x0f, 0x20, 0xc0,
+                0x66, 0x0d, 0x01, 0x00, 0x00, 0x80, 0x0f, 0x22, 0xc0, 0x66, 0xea, 0x49, 0x80, 0x00,
+                0x00, 0x08, 0x00,
+            ]
+        );
+        assert!(AP_TIMER_GUEST_BYTES.windows(10).any(|window| window
+            == [
+                0xc7,
+                0x83,
+                0xe0,
+                0x03,
+                0,
+                0,
+                AP_LOCAL_TIMER_DIVIDE_CONFIGURATION as u8,
+                0,
+                0,
+                0,
+            ]));
+        assert!(AP_TIMER_GUEST_BYTES.windows(10).any(
+            |window| window == [0xc7, 0x83, 0x20, 0x03, 0, 0, AP_LOCAL_TIMER_VECTOR, 0, 0, 0,]
+        ));
+        assert!(AP_TIMER_GUEST_BYTES
+            .windows(10)
+            .any(|window| window == [0xc7, 0x83, 0x80, 0x03, 0, 0, 0, 0, 0x10, 0,]));
+        assert!(AP_TIMER_GUEST_BYTES
+            .windows(2)
+            .any(|window| window == [0xfb, 0xf4]));
         assert_eq!(AP_TIMER_HANDLER_BYTES[..4], [0xb0, b'T', 0xe6, 0xe9]);
         assert_eq!(AP_LOCAL_TIMER_VECTOR, 0x53);
         assert_eq!(AP_LOCAL_TIMER_IDT_LIMIT, 0x53f);
@@ -699,7 +784,10 @@ mod tests {
         assert_ne!(AP_LOCAL_TIMER_INITIAL_COUNT, 0);
         assert_eq!(AP_LOCAL_TIMER_VECTOR as u32 & APIC_LVT_MASKED, 0);
         assert_eq!(AP_LOCAL_TIMER_VECTOR as u32 & APIC_LVT_TIMER_MODE_MASK, 0);
-        assert_eq!(0x1ff & APIC_SPIV_SOFTWARE_ENABLE, APIC_SPIV_SOFTWARE_ENABLE);
+        assert_eq!(
+            0x1ff & APIC_SPIV_SOFTWARE_ENABLE,
+            APIC_SPIV_SOFTWARE_ENABLE
+        );
     }
 
     #[test]
