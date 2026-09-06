@@ -32,23 +32,19 @@ pub const SIPI_VALUE: u32 = 0x0000_0600 | SIPI_VECTOR as u32;
 pub const FIRST_PROOF: &[u8; 6] = b"0IDSMD";
 pub const SECOND_PROOF: &[u8; 3] = b"APD";
 
+#[rustfmt::skip]
 const FIRST_GUEST_BYTES: [u8; 97] = [
     0xfa, // cli: keep BSP interrupt state out of the AP-startup proof
     0x48, 0xbb, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs LAPIC alias, %rbx
     0xb0, b'0', 0xe6, 0xe9, // pre-INIT synchronization barrier
-    0xc7, 0x83, 0x10, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x01, // ICR high: destination APIC ID 1
-    0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x00, 0xc5, 0x00,
-    0x00, // ICR low: INIT assert, level-triggered
+    0xc7, 0x83, 0x10, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // ICR high: destination APIC ID 1
+    0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x00, 0xc5, 0x00, 0x00, // ICR low: INIT assert
     0xb0, b'I', 0xe6, 0xe9, // INIT-assert command completion barrier
-    0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x00, 0x85, 0x00,
-    0x00, // ICR low: INIT deassert, level-triggered
+    0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x00, 0x85, 0x00, 0x00, // ICR low: INIT deassert
     0xb0, b'D', 0xe6, 0xe9, // INIT-deassert command completion barrier
-    0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, SIPI_VECTOR, 0x06, 0x00,
-    0x00, // ICR low: STARTUP IPI vector 0x08
+    0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, SIPI_VECTOR, 0x06, 0x00, 0x00, // STARTUP IPI vector 0x08
     0xb0, b'S', 0xe6, 0xe9, // SIPI command completion barrier
-    0x48, 0xb9, 0x00, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, // movabs shared marker GPA 0x9000, %rcx
+    0x48, 0xb9, 0x00, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs marker 0x9000, %rcx
     0x8a, 0x01, // mov (%rcx), %al
     0x3c, SHARED_MARKER_VALUE, // cmp $'K', %al
     0x75, 0x09, // jne failure
@@ -58,6 +54,7 @@ const FIRST_GUEST_BYTES: [u8; 97] = [
     0xb0, b'F', 0xe6, 0xe9, 0xf4, // failure path
 ];
 
+#[rustfmt::skip]
 const AP_TRAMPOLINE_BYTES: [u8; 27] = [
     0xfa, // cli
     0x31, 0xc0, // xor ax, ax
@@ -160,9 +157,9 @@ pub fn run_two_vcpu_init_sipi() -> Result<TwoVcpuInitSipiResult, Error> {
     first_vcpu.initialize_long_mode(layout.boot_layout())?;
     let _ = first_vcpu.configure_legacy_pic_extint()?;
 
-    // Userspace observes only the state that is architecturally available before the AP runs.
-    // KVM accepts pending INIT/SIPI events on the target-vCPU execution path, so this fixture does
-    // not pretend that KVM_GET_MP_STATE synchronously processes LAPIC startup events.
+    // KVM_GET_MP_STATE does not process pending LAPIC startup events. Only claim the state that is
+    // architecturally observable before the target vCPU runs; actual INIT/SIPI acceptance is proven
+    // below by executing the SIPI-selected real-mode trampoline.
     let initial_mp_state = require_mp_state(
         &second_vcpu,
         KVM_MP_STATE_UNINITIALIZED,
@@ -201,10 +198,9 @@ pub fn run_two_vcpu_init_sipi() -> Result<TwoVcpuInitSipiResult, Error> {
         "INIT/SIPI BSP SIPI barrier",
     )?;
 
-    // No userspace register initialization and no KVM_SET_MP_STATE shortcut is performed for the
-    // AP. Its first KVM_RUN must consume pending INIT then SIPI in KVM's LAPIC event path and reach
-    // the real-mode trampoline at SIPI_VECTOR << 12. Reaching A is therefore executable evidence of
-    // the startup state machine rather than a host-side prediction of an unprocessed MP state.
+    // vCPU1 has never been initialized or forced RUNNABLE by userspace. Its first KVM_RUN must
+    // consume pending INIT then SIPI in KVM's target-vCPU LAPIC path and reach 0x8000. Unique Vcpu
+    // ownership moves into one worker thread only after all three guest startup commands committed.
     let worker = std::thread::spawn(move || -> Result<ApWorkerResult, Error> {
         let mut second_vcpu = second_vcpu;
         let mut port_io = PortIoBus::with_debug_port();
