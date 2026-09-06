@@ -8,9 +8,9 @@ use mini_hypervisor::portio::two_vcpu_init_sipi_fixture::{
     AP_LONG_MODE_GDT_LIMIT, AP_LONG_MODE_STACK,
 };
 use mini_hypervisor::portio::two_vcpu_tlb_shootdown_fixture::{
-    run_two_vcpu_tlb_shootdown, AP_TLB_PROOF, BSP_TLB_PROOF, TLB_PAGE_A, TLB_PAGE_A_VALUE,
-    TLB_PAGE_B, TLB_PAGE_B_VALUE, TLB_SHOOTDOWN_IDT_LIMIT, TLB_SHOOTDOWN_VECTOR, TLB_TARGET_PTE,
-    TLB_TARGET_VIRTUAL_PAGE,
+    run_two_vcpu_tlb_shootdown, AP_TLB_PROOF, BSP_TLB_PROOF, TLB_FINAL_PTE, TLB_PAGE_A,
+    TLB_PAGE_A_VALUE, TLB_PAGE_B, TLB_PAGE_B_VALUE, TLB_SHOOTDOWN_IDT_LIMIT,
+    TLB_SHOOTDOWN_VECTOR, TLB_TARGET_PTE, TLB_TARGET_VIRTUAL_PAGE,
 };
 use mini_hypervisor::portio::DEBUG_PORT;
 use mini_hypervisor::vcpu::PortIoDirection;
@@ -19,6 +19,8 @@ const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 const X86_RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
 const KVM_MP_STATE_UNINITIALIZED: u32 = 1;
 const PAGE_TABLE_ENTRY_FLAGS: u64 = 0x3;
+const PAGE_TABLE_ENTRY_ACCESSED: u64 = 1 << 5;
+const PAGE_TABLE_ENTRY_DIRTY: u64 = 1 << 6;
 
 #[test]
 fn sipi_started_ap_invalidates_shared_alias_after_remote_shootdown() {
@@ -64,10 +66,14 @@ fn sipi_started_ap_invalidates_shared_alias_after_remote_shootdown() {
             assert_eq!(TLB_TARGET_VIRTUAL_PAGE, 0x50_1000);
             assert_eq!(TLB_TARGET_PTE.get(), 0x4808);
             assert_eq!(TLB_SHOOTDOWN_VECTOR, 0x54);
+            assert_eq!(TLB_PAGE_B.get() | PAGE_TABLE_ENTRY_FLAGS, 0x1_9003);
             assert_eq!(
-                result.final_pte(),
-                TLB_PAGE_B.get() | PAGE_TABLE_ENTRY_FLAGS
+                TLB_PAGE_B.get() | PAGE_TABLE_ENTRY_FLAGS | PAGE_TABLE_ENTRY_ACCESSED,
+                TLB_FINAL_PTE
             );
+            assert_eq!(result.final_pte(), TLB_FINAL_PTE);
+            assert_eq!(result.final_pte() & PAGE_TABLE_ENTRY_ACCESSED, PAGE_TABLE_ENTRY_ACCESSED);
+            assert_eq!(result.final_pte() & PAGE_TABLE_ENTRY_DIRTY, 0);
             assert_eq!(result.final_ack(), 0);
             assert_eq!(result.page_a(), TLB_PAGE_A_VALUE);
             assert_eq!(result.page_b(), TLB_PAGE_B_VALUE);
