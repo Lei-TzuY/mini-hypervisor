@@ -54,7 +54,7 @@ jobs:
           lstar=$((lstar_hex))
           sfmask=$((sfmask_hex))
           (( (efer & 0x1) == 0x1 ))
-          (( star == 0x0010000800000000 ))
+          (( star == 0x0013000800000000 ))
           (( lstar == 0x12000 ))
           (( sfmask == 0x200 ))
 
