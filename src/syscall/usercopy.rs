@@ -11,7 +11,7 @@ use crate::privilege::{
     PRIVILEGE_TERMINAL_HANDLER, PRIVILEGE_TSS_RSP0, PRIVILEGE_USER_CODE_SELECTOR,
     PRIVILEGE_USER_DATA_SELECTOR, PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_STACK,
 };
-use crate::vcpu::{PortIoDirection, PortIoExit, Vcpu, VcpuExit, VcpuId};
+use crate::vcpu::{PortIoDirection, PortIoExit, VcpuExit, VcpuId};
 use crate::vmexit::VmExitReport;
 use std::io;
 
