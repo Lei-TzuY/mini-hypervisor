@@ -5,8 +5,7 @@ use mini_hypervisor::long_mode::{
 };
 use mini_hypervisor::portio::two_vcpu_init_sipi_fixture::{
     run_two_vcpu_ap_long_mode, AP_LONG_MODE_CODE_SELECTOR, AP_LONG_MODE_DATA_SELECTOR,
-    AP_LONG_MODE_GDT, AP_LONG_MODE_GDT_LIMIT, AP_LONG_MODE_PROOF, AP_LONG_MODE_STACK,
-    FIRST_PROOF,
+    AP_LONG_MODE_GDT, AP_LONG_MODE_GDT_LIMIT, AP_LONG_MODE_PROOF, AP_LONG_MODE_STACK, FIRST_PROOF,
 };
 use mini_hypervisor::portio::DEBUG_PORT;
 use mini_hypervisor::vcpu::PortIoDirection;
@@ -53,10 +52,19 @@ fn sipi_started_ap_enters_long_mode_from_guest_trampoline() {
             assert_eq!(state.ss_selector(), AP_LONG_MODE_DATA_SELECTOR);
             assert_eq!(state.gdt_base(), AP_LONG_MODE_GDT.get());
             assert_eq!(state.gdt_limit(), AP_LONG_MODE_GDT_LIMIT);
-            assert_eq!(state.cr0() & LONG_MODE_CR0_REQUIRED_BITS, LONG_MODE_CR0_REQUIRED_BITS);
+            assert_eq!(
+                state.cr0() & LONG_MODE_CR0_REQUIRED_BITS,
+                LONG_MODE_CR0_REQUIRED_BITS
+            );
             assert_eq!(state.cr3(), LONG_MODE_PML4_ADDR.get());
-            assert_eq!(state.cr4() & LONG_MODE_CR4_REQUIRED_BITS, LONG_MODE_CR4_REQUIRED_BITS);
-            assert_eq!(state.efer() & LONG_MODE_EFER_REQUIRED_BITS, LONG_MODE_EFER_REQUIRED_BITS);
+            assert_eq!(
+                state.cr4() & LONG_MODE_CR4_REQUIRED_BITS,
+                LONG_MODE_CR4_REQUIRED_BITS
+            );
+            assert_eq!(
+                state.efer() & LONG_MODE_EFER_REQUIRED_BITS,
+                LONG_MODE_EFER_REQUIRED_BITS
+            );
             assert_eq!(result.ap_completion_rflags() & 0x2, 0x2);
             assert_eq!(result.ap_completion_rflags() & 0x200, 0);
         }
