@@ -8,7 +8,7 @@ use crate::long_mode::{
     LongModeBootLayout, LONG_MODE_CR0_REQUIRED_BITS, LONG_MODE_CR4_REQUIRED_BITS,
     LONG_MODE_EFER_REQUIRED_BITS,
 };
-use std::os::fd::AsRawFd;
+use std::{io, os::fd::AsRawFd};
 
 const LONG_MODE_CODE_SELECTOR: u16 = 1 << 3;
 const LONG_MODE_DATA_SELECTOR: u16 = 2 << 3;
@@ -163,6 +163,10 @@ fn configure_long_mode_sregs(sregs: &mut sys::KvmSregs, layout: &LongModeBootLay
     sregs.efer |= LONG_MODE_EFER_REQUIRED_BITS;
 }
 
+const fn efer_with_required_bits(current: u64, required_bits: u64) -> u64 {
+    current | required_bits
+}
+
 fn long_mode_regs(layout: &LongModeBootLayout) -> sys::KvmRegs {
     sys::KvmRegs {
         rsp: layout.stack_pointer(),
@@ -184,6 +188,30 @@ impl Vcpu {
         sys::set_regs(self.fd.as_raw_fd(), &regs)
             .map_err(|source| vcpu_operation(self.id, "KVM_SET_REGS", source))?;
         Ok(())
+    }
+
+    pub(crate) fn enable_efer_bits_preserving(&self, required_bits: u64) -> Result<u64, Error> {
+        let mut sregs = sys::get_sregs(self.fd.as_raw_fd())
+            .map_err(|source| vcpu_operation(self.id, "KVM_GET_SREGS EFER", source))?;
+        let expected = efer_with_required_bits(sregs.efer, required_bits);
+        sregs.efer = expected;
+        sys::set_sregs(self.fd.as_raw_fd(), &sregs)
+            .map_err(|source| vcpu_operation(self.id, "KVM_SET_SREGS EFER", source))?;
+
+        let observed = sys::get_sregs(self.fd.as_raw_fd())
+            .map_err(|source| vcpu_operation(self.id, "KVM_GET_SREGS EFER readback", source))?
+            .efer;
+        if observed != expected {
+            return Err(vcpu_operation(
+                self.id,
+                "verify KVM_SET_SREGS EFER readback",
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("expected EFER {expected:#x}, got {observed:#x}"),
+                ),
+            ));
+        }
+        Ok(observed)
     }
 
     pub fn restore_special_register_snapshot(
@@ -296,6 +324,17 @@ mod tests {
             LONG_MODE_EFER_REQUIRED_BITS
         );
         assert_eq!(sregs.efer & 1, 1);
+    }
+
+    #[test]
+    fn efer_bit_enabling_preserves_every_existing_bit() {
+        let current = 0x5aa5_55aa_8000_0500;
+        let required = 0x1;
+        let updated = efer_with_required_bits(current, required);
+
+        assert_eq!(updated, current | required);
+        assert_eq!(updated & !required, current & !required);
+        assert_eq!(updated & required, required);
     }
 
     #[test]
