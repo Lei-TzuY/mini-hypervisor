@@ -1,5 +1,5 @@
 use mini_hypervisor::portio::two_vcpu_init_sipi_fixture::{
-    run_two_vcpu_init_sipi, FIRST_PROOF, SECOND_PROOF, SHARED_MARKER_VALUE, SIPI_VECTOR,
+    run_two_vcpu_init_sipi, FIRST_PROOF, SECOND_PROOF, SIPI_VECTOR,
 };
 use std::process::ExitCode;
 
@@ -20,7 +20,7 @@ fn main() -> ExitCode {
 
             if result.first_proof() == FIRST_PROOF
                 && result.second_proof() == SECOND_PROOF
-                && result.shared_marker() == SHARED_MARKER_VALUE
+                && result.shared_marker() == b'K'
             {
                 ExitCode::SUCCESS
             } else {
