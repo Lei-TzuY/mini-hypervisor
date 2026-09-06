@@ -4,53 +4,47 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `b119c069a5578b624a709253115ef745dec89a51` through PR #107 (`Shoot down a remote vCPU TLB entry`). The repository integrates the Phase 73 foundation, x86-64/ELF64 execution, userspace and virtual MMIO, controller-backed interrupts, direct and irqfd/eventfd asynchronous delivery, PCI/virtio-rng/virtio-blk paths, and a bounded two-vCPU SMP control/data plane.
+`main` is `198adb9eee082fb2370a0b739ea000714240f53c` through PR #108 (`Enter ring3 through a guest-loaded TSS privilege boundary`). The repository integrates the Phase 73 foundation, x86-64/ELF64 execution, userspace and virtual MMIO, controller-backed interrupts, direct and irqfd/eventfd asynchronous delivery, PCI/virtio-rng/virtio-blk paths, a bounded two-vCPU SMP control/data plane, guest-originated xAPIC IPIs, targeted MSI, an AP-owned local LAPIC timer, one fixed cross-vCPU TLB shootdown, and one guest-owned ring3/TSS privilege boundary.
 
-The SMP path includes guest-owned INIT/SIPI AP startup, AP real-mode-to-long-mode transition, guest-originated xAPIC IPIs, shared mailbox work dispatch, targeted MSI delivery, an AP-owned local LAPIC timer, and one fixed cross-vCPU TLB shootdown. PR #107 proves that the AP establishes one shared alias translation, the BSP mutates the shared PTE and sends vector `0x54`, the AP handler executes `invlpg`, acknowledges completion, and then observes the replacement page through the same VA with exact Accessed/Dirty semantics.
+The ring3/TSS phase proves a real x86-64 CPL3→CPL0 boundary with guest-backed GDT/IDT/TSS state, guest `ltr`, user/supervisor page ownership, TSS RSP0 stack switching, DPL3 interrupt gates, `iretq` return to ring3, and a second terminal privilege transition. Its permanent hosted-KVM workflow and exact merged-main ordinary CI are green.
 
-Exact merged-main ordinary CI and every permanent hosted-KVM workflow for `b119c069a5578b624a709253115ef745dec89a51` are green. The fixed one-target shootdown is sealed. Do not farm extra target pages, vectors, AP clones, or stale-read timing variants merely to extend the phase number.
+That fixed one-user-context ring3/TSS phase is sealed. Do not farm extra DPL3 vectors, selector variants, or duplicate user-context fixtures merely to extend the phase number.
 
-## Selected milestone — bounded x86-64 ring3/TSS privilege transition
+## Selected milestone — bounded x86-64 SYSCALL/SYSRET ring3 ABI
 
-The next architecture boundary is privilege separation. The guest must own the descriptor state that makes a hardware CPL3→CPL0 transition possible: guest-backed GDT, IDT, and 64-bit TSS; user/supervisor page permissions; guest `ltr`; a five-word `iretq` entry frame; and DPL3 interrupt gates that force a TSS RSP0 stack switch.
+The next architecture boundary is a real fast system-call privilege path. This milestone reuses the integrated guest-owned ring3 address space and descriptor state, but exercises the architecturally different `SYSCALL`/`SYSRETQ` mechanism: EFER.SCE, STAR/LSTAR/SFMASK, RCX/R11 transfer, an explicit software kernel-stack switch because `SYSCALL` does not consult TSS RSP0, and return to the existing CPL3 context.
 
-This is deliberately one user context and one vCPU. It proves the privilege boundary, stack ownership, descriptor transition, and return path without claiming a process model, syscall ABI, per-process CR3, or general user fault recovery.
+This remains deliberately one vCPU and one user context. It proves the privilege-entry ABI and return contract without claiming a process model, syscall-number dispatcher, scheduler, per-process CR3, signal delivery, or general user-pointer recovery.
 
 Acceptance contract:
 
-- preserve ordinary CI, Rust 1.74 shipped-target MSRV, and every permanent hosted-KVM workflow already green on merged `main`;
-- reuse the integrated long-mode CR0/CR4/EFER setup while explicitly installing guest GDT/IDT bases and limits for the privilege fixture;
-- install ring0 code/data descriptors, ring3 code/data descriptors, and one 64-bit TSS descriptor at selector `0x28`;
-- do not pre-load TR from userspace: guest code must execute `ltr 0x28`, and runtime readback must prove selector `0x28`, base `0x7000`, limit `0x67`, busy TSS type `0x0b`, and descriptor access byte transition to `0x8b`;
-- map only the user code page, selector-observation page, and user stack page with the U/S bit; ring0 handlers and kernel stacks remain supervisor-only;
-- enter CPL3 through an explicit five-word `iretq` frame with CS `0x23`, SS `0x1b`, RSP `0x1fd000`, RFLAGS `0x202`, and user RIP `0x11000`;
-- vector `0x80` is a DPL3 interrupt gate to ring0 handler `0x12000`; hardware must switch to TSS RSP0 `0x1fe000`, the handler emits `K`, and `iretq` returns to ring3;
-- ring3 must observe CS/SS as `0x23/0x1b` before and after that return, proving privilege restoration rather than only one-way entry;
-- vector `0x81` is a second DPL3 interrupt gate to ring0 handler `0x13000`; it must traverse the same TSS ownership, emit `D`, and terminate in ring0;
-- exact debug-port proof is `KD` across two byte-wide OUT exits followed by HLT at RIP `0x13005`;
-- the first hardware privilege frame at `RSP0-40` must contain RIP `0x11025`, CS `0x23`, RFLAGS `0x202`, RSP `0x1fd000`, SS `0x1b`;
-- terminal ring0 state must use RSP `0x1fdfd8`, CS `0x08`, architectural RFLAGS bit1 set and IF clear;
-- KVM-aware integration must independently validate both port-I/O exits, selector observations, privilege frame, terminal ring0 state, TR state, TSS busy bit, and user/supervisor PTE semantics;
-- deterministic regressions must validate GDT/TSS encoding, DPL3 IDT gates, user/supervisor PTE ownership, reserved-table separation, guest `ltr`, and the fixed privilege-frame layout;
-- executable evidence must expose exact proof, selector observations, privilege frame, terminal ring0 state, TR selector/base/limit/type, TSS access byte, page-permission PTEs, and terminal HLT report;
-- permanent workflow `Strict KVM ring3 TSS privilege transition` must run independently on hosted KVM with a bounded timeout and require the executable evidence above; it may not skip `/dev/kvm` or convert a privilege failure into success;
-- formatter, Clippy, MSRV, descriptor encoding, page permissions, `ltr`, CPL transition, stack switch, `iretq`, proof, or architectural-state failures remain hard failures and must not be hidden by changed expectations, retries-to-success, or weakened permanent gates.
+- preserve ordinary CI, Rust 1.74 shipped-target MSRV, and every permanent hosted-KVM workflow already green on exact merged `main`;
+- preserve the integrated EFER value and set only SCE, then program exact STAR/LSTAR/SFMASK through the existing policy-bound bounded `KVM_SET_MSRS` path and require exact readback;
+- fixed STAR must select kernel CS/SS `0x08/0x10` and SYSRET user CS/SS `0x23/0x1b`; fixed LSTAR is `0x12000`; fixed SFMASK clears IF only;
+- enter the existing CPL3 context with user RIP `0x11000`, RSP `0x1fd000`, CS `0x23`, SS `0x1b`, and RFLAGS `0x202`;
+- user `SYSCALL` must place return RIP `0x11017` in RCX and user RFLAGS `0x202` in R11 while leaving the user RSP unchanged;
+- the LSTAR handler must preserve the user RSP, switch explicitly to supervisor-only kernel stack `0x1fe000`, observe CS/SS `0x08/0x10` and RFLAGS `0x2`, emit `S`, restore the user RSP, and execute `SYSRETQ`;
+- after SYSRET the user must again observe CS/SS `0x23/0x1b`, then enter the existing DPL3 terminal gate;
+- the terminal five-word hardware frame must independently prove user RIP `0x1102f`, CS `0x23`, RFLAGS `0x202`, RSP `0x1fd000`, and SS `0x1b`;
+- the terminal kernel handler emits `D` and halts; exact debug-port proof is `SD` across two byte-wide OUT exits, ending at HLT RIP `0x13005`;
+- user code and user stack PTEs remain U/S, while the LSTAR handler and syscall observation page remain supervisor-only;
+- KVM-aware integration must independently validate MSR state, pre/post-SYSRET selectors, RCX/R11/RSP observation, kernel stack state, terminal user frame, page permissions, terminal ring0 state, and exact proof;
+- permanent workflow `Strict KVM SYSCALL SYSRET privilege ABI` must execute the standalone proof on hosted KVM with a bounded timeout and may not skip `/dev/kvm`, weaken selectors/MSRs/page-permission checks, or retry a failed privilege transition into success;
+- formatter, Clippy, MSRV, MSR policy/readback, selector, stack, page-permission, execution-order, proof, and hosted-KVM failures remain hard failures.
 
-The implementation is in progress on `milestone/ring3-tss-privilege-transition` / PR #108. The pre-governance candidate `0bfc4734b16fcf3e2edbdbd4815a83caa6e9118e` passed the existing ordinary and permanent workflow set, including the KVM-aware ring3 integration test. ROADMAP synchronization and the dedicated permanent ring3/TSS workflow are now part of this same coherent slice. No capability is considered integrated until the final exact candidate passes all applicable checks, remains current with `main`, completes the normal review/merge audit, and the merged-main permanent ring3 workflow succeeds.
+Implementation is in progress on `milestone/syscall-sysret-abi` / PR #109. The pre-governance candidate `1c152e2120e4b2b68c60141855389827962066ac` passed ordinary CI #682 and all currently applicable permanent hosted-KVM workflows after formatter and Clippy construction issues were fixed without changing runtime semantics. The dedicated permanent SYSCALL/SYSRET workflow and this roadmap synchronization are part of the same coherent milestone; no capability is considered integrated until the final exact candidate passes every applicable workflow, remains current with `main`, completes the normal review/merge audit, and the merged-main permanent SYSCALL/SYSRET workflow succeeds.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- `SYSCALL/SYSRET`, SYSENTER/SYSEXIT, a syscall table, user ABI, or kernel service layer;
-- TSS I/O-bitmap permissions, user-mode port-I/O enablement, IOPL policy, or per-task TSS switching;
-- user #PF/#GP recovery, exception-to-user signal delivery, demand paging, copyin/copyout, or fault-safe user pointers;
-- process CR3 switching, per-process address spaces, PCID, ASIDs, scheduler/context switching, multiple user tasks, or executable loading into ring3;
-- SMP privilege transitions, per-vCPU TSS ownership across multiple CPUs, cross-vCPU user tasks, or migration of privilege state;
-- new timer, MMIO, PCI/virtio, storage, DMA/IOMMU, performance, latency, persistence, or durability claims.
+- a syscall-number dispatch table, kernel service layer, process/task model, scheduler, multiple user contexts, or per-process CR3/address spaces;
+- SYSENTER/SYSEXIT, arbitrary STAR layouts, per-vCPU TSS refactoring, SMP user tasks, or multi-vCPU syscall delivery;
+- SMEP/SMAP, TSS I/O-bitmap policy, user-mode port-I/O, signal delivery, #PF/#GP recovery, copyin/copyout, demand paging, or fault-safe user pointers;
+- new MMIO, timer, PCI/virtio, storage, DMA/IOMMU, migration, performance, latency, persistence, or durability claims.
 
 ## Promotion rule
 
-After the bounded ring3/TSS transition is integrated and exact merged-`main` ordinary CI plus every permanent workflow are green, seal the fixed one-user-context proof rather than adding extra vectors, selector variants, or additional identical ring3 tasks.
+After the bounded SYSCALL/SYSRET path is integrated and exact merged-`main` ordinary CI plus every permanent workflow are green, seal this fixed one-syscall entry/return proof rather than adding syscall-number or STAR-selector variants.
 
-The next architecture audit should select a genuinely higher-order boundary. Strong candidates are a minimal `SYSCALL/SYSRET` system-call ABI that reuses the integrated privilege ownership, or a reusable per-vCPU privilege/TSS model only if it introduces real multi-vCPU execution evidence. More fixed DPL3 trap variants are not a promotion.
+The next architecture audit should select a genuinely higher-order boundary. Strong candidates are a bounded fault-safe user-memory/copyin boundary that can prove recovery from a bad ring3 pointer without corrupting kernel execution, or a reusable per-vCPU privilege/TSS model only if it is exercised by real multi-vCPU ring3 execution. A syscall dispatch table is worthwhile only when it introduces a second executable service with a materially different data/validation path rather than naming inflation.
