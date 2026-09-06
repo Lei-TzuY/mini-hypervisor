@@ -31,6 +31,7 @@ Acceptance contract:
 - preserve semantic LAPIC state: SPIV software-enable remains set and LINT0 remains unmasked ExtINT; arm RFLAGS requires architectural bit 1 with IF clear and completion requires bit 1 with IF set;
 - KVM-aware integration must independently execute the irqfd transport and validate GSI/vector, LAPIC state, arm/completion RFLAGS, all five byte-wide debug-port exits, and exact `RATWD` proof;
 - stable CI must retain all eleven integrated strict real-KVM gates unchanged and add an independent twelfth irqfd timer gate requiring the `KVM_CAP_IRQFD` executable, GSI0/vector0x40, semantic LAPIC state, IF-clear arm point, IF-enabled completion, and proof bytes `[82, 65, 84, 87, 68]`;
+- final candidate evidence must come from an exact PR run whose recorded job steps actually include and pass the twelfth irqfd gate; an earlier green run that omits that step is not sufficient merge evidence;
 - capability failure, eventfd creation/duplication/signal failure, irqfd assign/deassign failure, worker panic, watchdog intervention, watchdog failure, unexpected VM exit, wrong proof order, wrong PIC/LAPIC state, or wrong RFLAGS remain hard failures and must not be swallowed, retried into success, or hidden by changed expectations.
 
 ## Scope boundary
