@@ -33,6 +33,8 @@ const X86_CR0_PROTECTED_MODE_ENABLE: u64 = 1;
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 const X86_RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
 const PAGE_TABLE_ENTRY_FLAGS: u64 = 0x3;
+const PAGE_TABLE_ENTRY_ACCESSED: u64 = 1 << 5;
+const PAGE_TABLE_ENTRY_DIRTY: u64 = 1 << 6;
 
 pub const TLB_TARGET_VIRTUAL_PAGE: u64 = 0x50_1000;
 pub const TLB_TARGET_PTE: GuestPhysAddr = GuestPhysAddr::new(0x4808);
@@ -43,6 +45,7 @@ pub const TLB_PAGE_B_VALUE: u8 = b'B';
 pub const TLB_SHOOTDOWN_VECTOR: u8 = 0x54;
 pub const TLB_SHOOTDOWN_HANDLER: GuestPhysAddr = GuestPhysAddr::new(0x1_4000);
 pub const TLB_SHOOTDOWN_IDT_LIMIT: u16 = 0x054f;
+pub const TLB_FINAL_PTE: u64 = 0x1_9023;
 pub const BSP_TLB_PROOF: &[u8; 8] = b"0IDSPXAD";
 pub const AP_TLB_PROOF: &[u8; 6] = b"ALRIBD";
 
@@ -553,7 +556,7 @@ pub fn run_two_vcpu_tlb_shootdown() -> Result<TwoVcpuTlbShootdownResult, Error> 
     guest_memory.read(SHOOTDOWN_ACK, &mut ack)?;
     guest_memory.read(TLB_PAGE_A, &mut page_a)?;
     guest_memory.read(TLB_PAGE_B, &mut page_b)?;
-    if final_pte != TLB_PAGE_B.get() | PAGE_TABLE_ENTRY_FLAGS
+    if final_pte != TLB_FINAL_PTE
         || ack[0] != 0
         || page_a[0] != TLB_PAGE_A_VALUE
         || page_b[0] != TLB_PAGE_B_VALUE
@@ -750,6 +753,12 @@ mod tests {
         assert_ne!(TLB_TARGET_VIRTUAL_PAGE, LAPIC_VIRTUAL_PAGE);
         assert_eq!(TLB_PAGE_A.get() | PAGE_TABLE_ENTRY_FLAGS, 0x1_8003);
         assert_eq!(TLB_PAGE_B.get() | PAGE_TABLE_ENTRY_FLAGS, 0x1_9003);
+        assert_eq!(
+            TLB_PAGE_B.get() | PAGE_TABLE_ENTRY_FLAGS | PAGE_TABLE_ENTRY_ACCESSED,
+            TLB_FINAL_PTE
+        );
+        assert_eq!(TLB_FINAL_PTE, 0x1_9023);
+        assert_eq!(TLB_FINAL_PTE & PAGE_TABLE_ENTRY_DIRTY, 0);
     }
 
     #[test]
