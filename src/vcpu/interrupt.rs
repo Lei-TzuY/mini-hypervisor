@@ -2,6 +2,7 @@ use super::{vcpu_operation, Vcpu};
 use crate::error::{Error, VmExitError};
 use crate::interrupt::LongModeInterruptLayout;
 use crate::kvm::sys;
+use crate::privilege::LongModePrivilegeLayout;
 use std::io;
 use std::os::fd::AsRawFd;
 
@@ -39,6 +40,28 @@ impl Vcpu {
         let mut sregs = sys::get_sregs(self.fd.as_raw_fd())
             .map_err(|source| vcpu_operation(self.id, "KVM_GET_SREGS", source))?;
         configure_interrupt_tables(&mut sregs, layout);
+        sys::set_sregs(self.fd.as_raw_fd(), &sregs)
+            .map_err(|source| vcpu_operation(self.id, "KVM_SET_SREGS", source))
+    }
+
+    pub fn initialize_long_mode_privilege(
+        &self,
+        layout: &LongModePrivilegeLayout,
+    ) -> Result<(), Error> {
+        self.initialize_long_mode(layout.boot_layout())?;
+
+        let mut sregs = sys::get_sregs(self.fd.as_raw_fd())
+            .map_err(|source| vcpu_operation(self.id, "KVM_GET_SREGS", source))?;
+        sregs.gdt = sys::KvmDtable {
+            base: layout.gdt_base().get(),
+            limit: layout.gdt_limit(),
+            padding: [0; 3],
+        };
+        sregs.idt = sys::KvmDtable {
+            base: layout.idt_base().get(),
+            limit: layout.idt_limit(),
+            padding: [0; 3],
+        };
         sys::set_sregs(self.fd.as_raw_fd(), &sregs)
             .map_err(|source| vcpu_operation(self.id, "KVM_SET_SREGS", source))
     }
