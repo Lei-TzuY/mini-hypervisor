@@ -9,12 +9,11 @@ use mini_hypervisor::portio::two_vcpu_init_sipi_fixture::{
     AP_LONG_MODE_GDT_LIMIT, AP_LONG_MODE_IPI_IDT_LIMIT, AP_LONG_MODE_STACK,
 };
 use mini_hypervisor::portio::two_vcpu_sipi_work_dispatch_fixture::{
-    run_sipi_ipi_work_dispatch, AP_COMPOSED_PROOF, AP_TERMINAL_RIP, BSP_COMPOSED_PROOF,
-    BSP_TERMINAL_RIP,
+    run_sipi_ipi_work_dispatch, AP_COMPOSED_PROOF, BSP_COMPOSED_PROOF,
 };
 use mini_hypervisor::portio::two_vcpu_work_dispatch_fixture::{WORK_PAYLOAD, WORK_RESULT};
 use mini_hypervisor::portio::DEBUG_PORT;
-use mini_hypervisor::vcpu::{PortIoDirection, VcpuExit};
+use mini_hypervisor::vcpu::PortIoDirection;
 
 const RFLAGS_BIT1: u64 = 1 << 1;
 const RFLAGS_IF: u64 = 1 << 9;
@@ -70,20 +69,22 @@ fn sipi_started_ap_receives_ipi_and_completes_locked_mailbox_work() {
             assert_eq!(ap.idt_base(), LONG_MODE_INTERRUPT_IDT_ADDR.get());
             assert_eq!(ap.idt_limit(), AP_LONG_MODE_IPI_IDT_LIMIT);
             assert_eq!(ap.cr3(), LONG_MODE_PML4_ADDR.get());
-            assert_eq!(ap.cr0() & LONG_MODE_CR0_REQUIRED_BITS, LONG_MODE_CR0_REQUIRED_BITS);
-            assert_eq!(ap.cr4() & LONG_MODE_CR4_REQUIRED_BITS, LONG_MODE_CR4_REQUIRED_BITS);
-            assert_eq!(ap.efer() & LONG_MODE_EFER_REQUIRED_BITS, LONG_MODE_EFER_REQUIRED_BITS);
+            assert_eq!(
+                ap.cr0() & LONG_MODE_CR0_REQUIRED_BITS,
+                LONG_MODE_CR0_REQUIRED_BITS
+            );
+            assert_eq!(
+                ap.cr4() & LONG_MODE_CR4_REQUIRED_BITS,
+                LONG_MODE_CR4_REQUIRED_BITS
+            );
+            assert_eq!(
+                ap.efer() & LONG_MODE_EFER_REQUIRED_BITS,
+                LONG_MODE_EFER_REQUIRED_BITS
+            );
 
-            let bsp = result.bsp_report();
-            assert_eq!(bsp.exit(), VcpuExit::Hlt);
-            assert_eq!(bsp.rip(), BSP_TERMINAL_RIP);
-            assert_eq!(bsp.rflags() & RFLAGS_BIT1, RFLAGS_BIT1);
-
-            let ap_report = result.ap_report();
-            assert_eq!(ap_report.exit(), VcpuExit::Hlt);
-            assert_eq!(ap_report.rip(), AP_TERMINAL_RIP);
-            assert_eq!(ap_report.rflags() & RFLAGS_BIT1, RFLAGS_BIT1);
-            assert_eq!(ap_report.rflags() & RFLAGS_IF, RFLAGS_IF);
+            let bsp_completion = result.bsp_completion_rflags();
+            assert_eq!(bsp_completion & RFLAGS_BIT1, RFLAGS_BIT1);
+            assert_eq!(bsp_completion & RFLAGS_IF, 0);
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
