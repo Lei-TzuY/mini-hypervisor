@@ -8,10 +8,9 @@ use crate::long_mode::{LONG_MODE_IDENTITY_MAP_SIZE, LONG_MODE_PAGE_SIZE};
 use crate::memory::{GuestMemory, GuestPhysAddr};
 use crate::portio::PortIoBus;
 use crate::privilege::{
-    LongModePrivilegeLayout, PRIVILEGE_GDT_ADDR, PRIVILEGE_KERNEL_ENTRY,
-    PRIVILEGE_OBSERVATION_ADDR, PRIVILEGE_PT_ADDR, PRIVILEGE_TERMINAL_HANDLER, PRIVILEGE_TSS_RSP0,
-    PRIVILEGE_USER_CODE_SELECTOR, PRIVILEGE_USER_DATA_SELECTOR, PRIVILEGE_USER_ENTRY,
-    PRIVILEGE_USER_STACK,
+    LongModePrivilegeLayout, PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_OBSERVATION_ADDR, PRIVILEGE_PT_ADDR,
+    PRIVILEGE_TERMINAL_HANDLER, PRIVILEGE_TSS_RSP0, PRIVILEGE_USER_CODE_SELECTOR,
+    PRIVILEGE_USER_DATA_SELECTOR, PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_STACK,
 };
 use crate::vcpu::{PortIoExit, Vcpu, VcpuId};
 use crate::vmexit::VmExitReport;
@@ -84,9 +83,9 @@ const SYSCALL_HANDLER_BYTES: [u8; 66] = [
     0x58, // pop rax
     0x48, 0x89, 0x47, 0x18, // mov [rdi+24], rax
     0x8c, 0xc8, // mov ax, cs
-    0x66, 0x89, 0x47, 0x20, // mov [rdi+32], ax
+    0x66, 0x89, 0x47, 0x20, // mov ax, [rdi+32]
     0x8c, 0xd0, // mov ax, ss
-    0x66, 0x89, 0x47, 0x22, // mov [rdi+34], ax
+    0x66, 0x89, 0x47, 0x22, // mov ax, [rdi+34]
     0x48, 0x89, 0x67, 0x28, // mov [rdi+40], rsp
     0xb0, b'S', // mov al, 'S'
     0xe6, 0xe9, // out 0xe9, al
@@ -608,15 +607,18 @@ fn verification_error(operation: &'static str, detail: impl Into<String>) -> Err
     })
 }
 
+#[cfg(test)]
 const fn star_kernel_cs(star: u64) -> u16 {
     ((star >> 32) & 0xffff) as u16
 }
 
+#[cfg(test)]
 const fn star_sysret_cs(star: u64) -> u16 {
     let base = ((star >> 48) & 0xffff) as u16;
     (base.wrapping_add(16) & !3) | 3
 }
 
+#[cfg(test)]
 const fn star_sysret_ss(star: u64) -> u16 {
     let base = ((star >> 48) & 0xffff) as u16;
     (base.wrapping_add(8) & !3) | 3
@@ -625,6 +627,7 @@ const fn star_sysret_ss(star: u64) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::privilege::PRIVILEGE_GDT_ADDR;
 
     #[test]
     fn star_encodes_exact_kernel_and_sysret_selectors() {
