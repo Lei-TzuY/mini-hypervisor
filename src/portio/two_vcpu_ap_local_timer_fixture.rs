@@ -631,7 +631,7 @@ fn capture_ap_state(
         startup_mp_state: startup.mp_state,
         startup_rip: startup.rip,
         startup_cs_selector: startup.cs_selector,
-        startup_cs_base: startup.cs_base,
+        startup_cs_base: startup.cs.base,
         ready_rflags,
         armed_rflags,
         completion_rflags,
@@ -784,10 +784,7 @@ mod tests {
         assert_ne!(AP_LOCAL_TIMER_INITIAL_COUNT, 0);
         assert_eq!(AP_LOCAL_TIMER_VECTOR as u32 & APIC_LVT_MASKED, 0);
         assert_eq!(AP_LOCAL_TIMER_VECTOR as u32 & APIC_LVT_TIMER_MODE_MASK, 0);
-        assert_eq!(
-            0x1ff & APIC_SPIV_SOFTWARE_ENABLE,
-            APIC_SPIV_SOFTWARE_ENABLE
-        );
+        assert_eq!(0x1ff & APIC_SPIV_SOFTWARE_ENABLE, APIC_SPIV_SOFTWARE_ENABLE);
     }
 
     #[test]
