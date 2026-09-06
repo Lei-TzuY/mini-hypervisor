@@ -107,14 +107,20 @@ impl fmt::Display for PrivilegeConfigurationError {
         match self {
             Self::Boot(error) => error.fmt(f),
             Self::AddressOutsideIdentityMap { role, address } => {
-                write!(f, "{role} address {address:#x} is outside the 2 MiB privilege identity map")
+                write!(
+                    f,
+                    "{role} address {address:#x} is outside the 2 MiB privilege identity map"
+                )
             }
             Self::AddressOverlapsTables { role, address } => write!(
                 f,
                 "{role} address {address:#x} overlaps privilege page-table/GDT/IDT/TSS storage"
             ),
             Self::StackOutsideIdentityMap { role, stack } => {
-                write!(f, "{role} stack pointer {stack:#x} is outside the privilege identity map")
+                write!(
+                    f,
+                    "{role} stack pointer {stack:#x} is outside the privilege identity map"
+                )
             }
             Self::KernelAddressSharesUserPage { role, address } => write!(
                 f,
@@ -249,15 +255,25 @@ pub struct PrivilegeStackFrame {
 
 impl PrivilegeStackFrame {
     #[must_use]
-    pub const fn rip(self) -> u64 { self.rip }
+    pub const fn rip(self) -> u64 {
+        self.rip
+    }
     #[must_use]
-    pub const fn cs(self) -> u64 { self.cs }
+    pub const fn cs(self) -> u64 {
+        self.cs
+    }
     #[must_use]
-    pub const fn rflags(self) -> u64 { self.rflags }
+    pub const fn rflags(self) -> u64 {
+        self.rflags
+    }
     #[must_use]
-    pub const fn rsp(self) -> u64 { self.rsp }
+    pub const fn rsp(self) -> u64 {
+        self.rsp
+    }
     #[must_use]
-    pub const fn ss(self) -> u64 { self.ss }
+    pub const fn ss(self) -> u64 {
+        self.ss
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,45 +299,83 @@ pub struct PrivilegeTransitionGuestResult {
 
 impl PrivilegeTransitionGuestResult {
     #[must_use]
-    pub fn io_exits(&self) -> &[PortIoExit] { &self.io_exits }
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
     #[must_use]
-    pub fn proof(&self) -> &[u8] { &self.proof }
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
     #[must_use]
-    pub const fn report(&self) -> VmExitReport { self.report }
+    pub const fn report(&self) -> VmExitReport {
+        self.report
+    }
     #[must_use]
-    pub const fn user_selectors(&self) -> [u16; 4] { self.user_selectors }
+    pub const fn user_selectors(&self) -> [u16; 4] {
+        self.user_selectors
+    }
     #[must_use]
-    pub const fn frame(&self) -> PrivilegeStackFrame { self.frame }
+    pub const fn frame(&self) -> PrivilegeStackFrame {
+        self.frame
+    }
     #[must_use]
-    pub const fn terminal_rsp(&self) -> u64 { self.terminal_rsp }
+    pub const fn terminal_rsp(&self) -> u64 {
+        self.terminal_rsp
+    }
     #[must_use]
-    pub const fn terminal_cs(&self) -> u16 { self.terminal_cs }
+    pub const fn terminal_cs(&self) -> u16 {
+        self.terminal_cs
+    }
     #[must_use]
-    pub const fn terminal_rflags(&self) -> u64 { self.terminal_rflags }
+    pub const fn terminal_rflags(&self) -> u64 {
+        self.terminal_rflags
+    }
     #[must_use]
-    pub const fn tr_selector(&self) -> u16 { self.tr_selector }
+    pub const fn tr_selector(&self) -> u16 {
+        self.tr_selector
+    }
     #[must_use]
-    pub const fn tr_base(&self) -> u64 { self.tr_base }
+    pub const fn tr_base(&self) -> u64 {
+        self.tr_base
+    }
     #[must_use]
-    pub const fn tr_limit(&self) -> u32 { self.tr_limit }
+    pub const fn tr_limit(&self) -> u32 {
+        self.tr_limit
+    }
     #[must_use]
-    pub const fn tr_type(&self) -> u8 { self.tr_type }
+    pub const fn tr_type(&self) -> u8 {
+        self.tr_type
+    }
     #[must_use]
-    pub const fn tss_descriptor_access(&self) -> u8 { self.tss_descriptor_access }
+    pub const fn tss_descriptor_access(&self) -> u8 {
+        self.tss_descriptor_access
+    }
     #[must_use]
-    pub const fn user_code_pte(&self) -> u64 { self.user_code_pte }
+    pub const fn user_code_pte(&self) -> u64 {
+        self.user_code_pte
+    }
     #[must_use]
-    pub const fn observation_pte(&self) -> u64 { self.observation_pte }
+    pub const fn observation_pte(&self) -> u64 {
+        self.observation_pte
+    }
     #[must_use]
-    pub const fn user_stack_pte(&self) -> u64 { self.user_stack_pte }
+    pub const fn user_stack_pte(&self) -> u64 {
+        self.user_stack_pte
+    }
     #[must_use]
-    pub const fn kernel_handler_pte(&self) -> u64 { self.kernel_handler_pte }
+    pub const fn kernel_handler_pte(&self) -> u64 {
+        self.kernel_handler_pte
+    }
 }
 
 pub fn run_privilege_transition_guest(
     config: VmConfig,
 ) -> Result<PrivilegeTransitionGuestResult, Error> {
-    let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &KERNEL_BOOT_BYTES)?;
+    let kernel = FlatGuestImage::new(
+        PRIVILEGE_KERNEL_ENTRY,
+        PRIVILEGE_KERNEL_ENTRY,
+        &KERNEL_BOOT_BYTES,
+    )?;
     let user = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &USER_BYTES)?;
     let return_handler = FlatGuestImage::new(
         PRIVILEGE_RETURN_HANDLER,
@@ -377,7 +431,10 @@ pub fn run_privilege_transition_guest(
         .expect("registered privilege-transition memory remains VM-owned");
     let user_selectors = read_user_selectors(guest_memory)?;
     let frame = read_stack_frame(guest_memory)?;
-    let tss_descriptor_access = read_byte(guest_memory, GuestPhysAddr::new(PRIVILEGE_GDT_ADDR.get() + 45))?;
+    let tss_descriptor_access = read_byte(
+        guest_memory,
+        GuestPhysAddr::new(PRIVILEGE_GDT_ADDR.get() + 45),
+    )?;
     let user_code_pte = read_pte(guest_memory, PRIVILEGE_USER_ENTRY.get())?;
     let observation_pte = read_pte(guest_memory, PRIVILEGE_OBSERVATION_ADDR.get())?;
     let user_stack_pte = read_pte(guest_memory, PRIVILEGE_USER_STACK - 1)?;
@@ -436,7 +493,11 @@ fn install_privilege_page_tables(memory: &mut GuestMemory) -> Result<(), Error> 
         let address = index * LONG_MODE_PAGE_SIZE;
         let flags = X86_PAGE_PRESENT
             | X86_PAGE_WRITABLE
-            | if is_user_page(address) { X86_PAGE_USER } else { 0 };
+            | if is_user_page(address) {
+                X86_PAGE_USER
+            } else {
+                0
+            };
         write_u64(
             memory,
             GuestPhysAddr::new(PRIVILEGE_PT_ADDR.get() + index * 8),
@@ -524,7 +585,11 @@ fn read_stack_frame(memory: &GuestMemory) -> Result<PrivilegeStackFrame, Error> 
     let mut bytes = [0_u8; PRIVILEGE_FRAME_BYTES as usize];
     memory.read(start, &mut bytes)?;
     let value = |offset: usize| {
-        u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("8-byte frame field"))
+        u64::from_le_bytes(
+            bytes[offset..offset + 8]
+                .try_into()
+                .expect("8-byte frame field"),
+        )
     };
     Ok(PrivilegeStackFrame {
         rip: value(0),
@@ -538,7 +603,10 @@ fn read_stack_frame(memory: &GuestMemory) -> Result<PrivilegeStackFrame, Error> 
 fn read_pte(memory: &GuestMemory, address: u64) -> Result<u64, Error> {
     let index = page_start(address) / LONG_MODE_PAGE_SIZE;
     let mut bytes = [0_u8; 8];
-    memory.read(GuestPhysAddr::new(PRIVILEGE_PT_ADDR.get() + index * 8), &mut bytes)?;
+    memory.read(
+        GuestPhysAddr::new(PRIVILEGE_PT_ADDR.get() + index * 8),
+        &mut bytes,
+    )?;
     Ok(u64::from_le_bytes(bytes))
 }
 
@@ -576,7 +644,13 @@ fn validate_runtime_state(
     user_stack_pte: u64,
     kernel_handler_pte: u64,
 ) -> Result<(), Error> {
-    if selectors != [PRIVILEGE_USER_CODE_SELECTOR, PRIVILEGE_USER_DATA_SELECTOR, PRIVILEGE_USER_CODE_SELECTOR, PRIVILEGE_USER_DATA_SELECTOR]
+    if selectors
+        != [
+            PRIVILEGE_USER_CODE_SELECTOR,
+            PRIVILEGE_USER_DATA_SELECTOR,
+            PRIVILEGE_USER_CODE_SELECTOR,
+            PRIVILEGE_USER_DATA_SELECTOR,
+        ]
         || frame.rip != PRIVILEGE_USER_RETURN_RIP
         || frame.cs != u64::from(PRIVILEGE_USER_CODE_SELECTOR)
         || frame.rflags != X86_RFLAGS_RESERVED | X86_RFLAGS_IF
@@ -634,7 +708,8 @@ mod tests {
 
     #[test]
     fn installs_ring3_gdt_dpl3_gates_tss_and_user_page_permissions() {
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         layout().install_tables(&mut memory).unwrap();
 
         let mut gdt = [0_u8; 56];
@@ -644,7 +719,10 @@ mod tests {
         assert_eq!(gdt[29], 0xf3);
         assert_eq!(gdt[37], 0xfb);
         assert_eq!(gdt[45], 0x89);
-        assert_eq!(&gdt[40..56], &encode_tss_descriptor(PRIVILEGE_TSS_ADDR.get()));
+        assert_eq!(
+            &gdt[40..56],
+            &encode_tss_descriptor(PRIVILEGE_TSS_ADDR.get())
+        );
 
         let mut first_gate = [0_u8; 16];
         memory
@@ -654,7 +732,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(first_gate[5], 0xee);
-        assert_eq!(first_gate, encode_user_interrupt_gate(PRIVILEGE_RETURN_HANDLER.get()));
+        assert_eq!(
+            first_gate,
+            encode_user_interrupt_gate(PRIVILEGE_RETURN_HANDLER.get())
+        );
 
         let mut second_gate = [0_u8; 16];
         memory
@@ -663,11 +744,17 @@ mod tests {
                 &mut second_gate,
             )
             .unwrap();
-        assert_eq!(second_gate, encode_user_interrupt_gate(PRIVILEGE_TERMINAL_HANDLER.get()));
+        assert_eq!(
+            second_gate,
+            encode_user_interrupt_gate(PRIVILEGE_TERMINAL_HANDLER.get())
+        );
 
         let mut tss = [0_u8; TSS_BYTES];
         memory.read(PRIVILEGE_TSS_ADDR, &mut tss).unwrap();
-        assert_eq!(u64::from_le_bytes(tss[4..12].try_into().unwrap()), PRIVILEGE_TSS_RSP0);
+        assert_eq!(
+            u64::from_le_bytes(tss[4..12].try_into().unwrap()),
+            PRIVILEGE_TSS_RSP0
+        );
         assert_eq!(u16::from_le_bytes(tss[102..104].try_into().unwrap()), 104);
 
         let user_code = read_pte(&memory, PRIVILEGE_USER_ENTRY.get()).unwrap();
@@ -682,19 +769,39 @@ mod tests {
 
     #[test]
     fn guest_machine_code_uses_ltr_iretq_and_two_user_callable_traps() {
-        assert!(KERNEL_BOOT_BYTES.windows(3).any(|window| window == [0x0f, 0x00, 0xd8]));
-        assert_eq!(&KERNEL_BOOT_BYTES[KERNEL_BOOT_BYTES.len() - 2..], &[0x48, 0xcf]);
+        assert!(KERNEL_BOOT_BYTES
+            .windows(3)
+            .any(|window| window == [0x0f, 0x00, 0xd8]));
+        assert_eq!(
+            &KERNEL_BOOT_BYTES[KERNEL_BOOT_BYTES.len() - 2..],
+            &[0x48, 0xcf]
+        );
         assert!(USER_BYTES.windows(2).any(|window| window == [0xcd, 0x80]));
         assert!(USER_BYTES.windows(2).any(|window| window == [0xcd, 0x81]));
-        assert_eq!(PRIVILEGE_USER_ENTRY.get() + USER_BYTES.len() as u64, PRIVILEGE_USER_RETURN_RIP);
-        assert_eq!(RETURN_HANDLER_BYTES[RETURN_HANDLER_BYTES.len() - 2..], [0x48, 0xcf]);
-        assert_eq!(TERMINAL_HANDLER_BYTES[TERMINAL_HANDLER_BYTES.len() - 1], 0xf4);
+        assert_eq!(
+            PRIVILEGE_USER_ENTRY.get() + USER_BYTES.len() as u64,
+            PRIVILEGE_USER_RETURN_RIP
+        );
+        assert_eq!(
+            RETURN_HANDLER_BYTES[RETURN_HANDLER_BYTES.len() - 2..],
+            [0x48, 0xcf]
+        );
+        assert_eq!(
+            TERMINAL_HANDLER_BYTES[TERMINAL_HANDLER_BYTES.len() - 1],
+            0xf4
+        );
     }
 
     #[test]
     fn user_and_supervisor_pages_are_distinct_and_observation_writes_can_set_ad_bits() {
-        assert_ne!(page_start(PRIVILEGE_USER_ENTRY.get()), page_start(PRIVILEGE_KERNEL_ENTRY.get()));
-        assert_ne!(page_start(PRIVILEGE_USER_STACK - 1), page_start(PRIVILEGE_TSS_RSP0 - 1));
+        assert_ne!(
+            page_start(PRIVILEGE_USER_ENTRY.get()),
+            page_start(PRIVILEGE_KERNEL_ENTRY.get())
+        );
+        assert_ne!(
+            page_start(PRIVILEGE_USER_STACK - 1),
+            page_start(PRIVILEGE_TSS_RSP0 - 1)
+        );
         assert_eq!(X86_PAGE_ACCESSED, 0x20);
         assert_eq!(X86_PAGE_DIRTY, 0x40);
         assert_eq!(KERNEL_DATA_SELECTOR, 0x10);
