@@ -14,6 +14,7 @@ pub mod model;
 pub mod portio;
 pub mod privilege;
 pub mod state_snapshot;
+pub mod syscall;
 pub mod vcpu;
 pub mod vmexit;
 
