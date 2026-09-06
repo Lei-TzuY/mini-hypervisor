@@ -1,0 +1,69 @@
+name: Strict KVM ring3 TSS privilege transition
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/privilege.rs'
+      - 'src/bin/ring3-tss-privilege.rs'
+      - 'tests/ring3_tss_privilege_guest.rs'
+      - 'src/vcpu/interrupt.rs'
+      - 'src/vcpu.rs'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/lib.rs'
+      - '.github/workflows/ring3-tss-privilege.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ring3-tss-privilege:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM ring3/TSS privilege proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin ring3-tss-privilege)"
+          printf '%s\n' "$output"
+
+          grep -F 'ring3 proof: [75, 68]' <<<"$output"
+          grep -F 'ring3 user selectors: [35, 27, 35, 27]' <<<"$output"
+          grep -F 'ring3 frame: rip=0x11025 cs=0x23 rflags=0x202 rsp=0x1fd000 ss=0x1b' <<<"$output"
+          grep -F 'ring3 terminal: rsp=0x1fdfd8 cs=0x8 rflags=' <<<"$output"
+          grep -F 'ring3 TR: selector=0x28 base=0x7000 limit=0x67 type=0xb' <<<"$output"
+          grep -F 'ring3 TSS access: 0x8b' <<<"$output"
+          grep -F 'ring3 terminal report: rip=0x13005 rflags=' <<<"$output"
+
+          terminal="$(grep -F 'ring3 terminal: rsp=0x1fdfd8 cs=0x8 rflags=' <<<"$output")"
+          terminal_hex="${terminal##*rflags=}"
+          [[ "$terminal_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          terminal_flags=$((terminal_hex))
+          (( (terminal_flags & 0x2) == 0x2 ))
+          (( (terminal_flags & 0x200) == 0 ))
+
+          report="$(grep -F 'ring3 terminal report: rip=0x13005 rflags=' <<<"$output")"
+          report_hex="${report##*rflags=}"
+          [[ "$report_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          report_flags=$((report_hex))
+          (( (report_flags & 0x2) == 0x2 ))
+
+          user_code="$(grep -F 'ring3 user code PTE:' <<<"$output")"
+          observation="$(grep -F 'ring3 observation PTE:' <<<"$output")"
+          user_stack="$(grep -F 'ring3 user stack PTE:' <<<"$output")"
+          kernel_handler="$(grep -F 'ring3 kernel handler PTE:' <<<"$output")"
+          for line in "$user_code" "$observation" "$user_stack"; do
+            pte_hex="${line##*: }"
+            [[ "$pte_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            pte=$((pte_hex))
+            (( (pte & 0x4) == 0x4 ))
+          done
+          kernel_hex="${kernel_handler##*: }"
+          [[ "$kernel_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          kernel_pte=$((kernel_hex))
+          (( (kernel_pte & 0x4) == 0 ))
