@@ -27,7 +27,10 @@ fn sipi_started_long_mode_ap_handles_guest_originated_ipi() {
             assert_eq!(result.shared_marker(), b'K');
             assert_eq!(result.first_proof(), AP_LONG_MODE_IPI_BSP_PROOF);
             assert_eq!(result.second_proof(), AP_LONG_MODE_IPI_PROOF);
-            assert_eq!(result.first_io_exits().len(), AP_LONG_MODE_IPI_BSP_PROOF.len());
+            assert_eq!(
+                result.first_io_exits().len(),
+                AP_LONG_MODE_IPI_BSP_PROOF.len()
+            );
             assert_eq!(result.second_io_exits().len(), AP_LONG_MODE_IPI_PROOF.len());
 
             for (io, expected) in result
