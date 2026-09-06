@@ -1,6 +1,14 @@
 const KVM_GET_MP_STATE: libc::c_ulong = 0x8004_AE98;
 const KVM_SET_MP_STATE: libc::c_ulong = 0x4004_AE99;
 
+pub(crate) const KVM_MP_STATE_RUNNABLE: u32 = 0;
+pub(crate) const KVM_MP_STATE_UNINITIALIZED: u32 = 1;
+pub(crate) const KVM_MP_STATE_INIT_RECEIVED: u32 = 2;
+#[cfg(test)]
+const KVM_MP_STATE_HALTED: u32 = 3;
+#[cfg(test)]
+const KVM_MP_STATE_SIPI_RECEIVED: u32 = 4;
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KvmMpState {
@@ -11,14 +19,8 @@ struct KvmMpState {
 struct VcpuMpState(u32);
 
 impl VcpuMpState {
-    const RUNNABLE: Self = Self(0);
-    const UNINITIALIZED: Self = Self(1);
-    #[cfg(test)]
-    const INIT_RECEIVED: Self = Self(2);
-    #[cfg(test)]
-    const HALTED: Self = Self(3);
-    #[cfg(test)]
-    const SIPI_RECEIVED: Self = Self(4);
+    const RUNNABLE: Self = Self(KVM_MP_STATE_RUNNABLE);
+    const UNINITIALIZED: Self = Self(KVM_MP_STATE_UNINITIALIZED);
 
     const fn raw(self) -> u32 {
         self.0
@@ -64,6 +66,14 @@ impl Vcpu {
             ));
         }
         Ok(())
+    }
+
+    /// Read the current Linux KVM MP state without mutating vCPU startup state.
+    ///
+    /// In particular, INIT/SIPI execution uses this to prove the secondary vCPU transitions from
+    /// UNINITIALIZED to INIT_RECEIVED and finally RUNNABLE without a userspace RUNNABLE shortcut.
+    pub(crate) fn multiprocessing_state_raw(&self) -> Result<u32, Error> {
+        Ok(self.multiprocessing_state()?.raw())
     }
 
     pub(crate) fn ensure_runnable_mp_state(&mut self) -> Result<u32, Error> {
@@ -118,10 +128,10 @@ mod mp_state_tests {
 
     #[test]
     fn x86_mp_state_values_match_linux_kvm() {
-        assert_eq!(VcpuMpState::RUNNABLE.raw(), 0);
-        assert_eq!(VcpuMpState::UNINITIALIZED.raw(), 1);
-        assert_eq!(VcpuMpState::INIT_RECEIVED.raw(), 2);
-        assert_eq!(VcpuMpState::HALTED.raw(), 3);
-        assert_eq!(VcpuMpState::SIPI_RECEIVED.raw(), 4);
+        assert_eq!(KVM_MP_STATE_RUNNABLE, 0);
+        assert_eq!(KVM_MP_STATE_UNINITIALIZED, 1);
+        assert_eq!(KVM_MP_STATE_INIT_RECEIVED, 2);
+        assert_eq!(KVM_MP_STATE_HALTED, 3);
+        assert_eq!(KVM_MP_STATE_SIPI_RECEIVED, 4);
     }
 }
