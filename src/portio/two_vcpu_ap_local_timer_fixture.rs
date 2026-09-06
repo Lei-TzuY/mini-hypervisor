@@ -35,8 +35,11 @@ const SIPI_CS_BASE: u64 = 0x8000;
 const X86_CR0_PROTECTED_MODE_ENABLE: u64 = 1;
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 const X86_RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
+#[cfg(test)]
 const APIC_SPIV_SOFTWARE_ENABLE: u32 = 1 << 8;
+#[cfg(test)]
 const APIC_LVT_MASKED: u32 = 1 << 16;
+#[cfg(test)]
 const APIC_LVT_TIMER_MODE_MASK: u32 = 0x3 << 17;
 const APIC_MSI_ADDRESS_BASE: u64 = 0xfee0_0000;
 const APIC_MSI_DESTINATION_SHIFT: u32 = 12;
