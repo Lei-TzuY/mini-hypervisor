@@ -13,8 +13,14 @@ fn main() -> ExitCode {
         Ok(result) => {
             let state = result.long_mode_state();
             println!("AP long-mode SIPI vector: {SIPI_VECTOR:#x}");
-            println!("AP long-mode startup CS selector: {:#x}", result.startup_cs_selector());
-            println!("AP long-mode startup CS base: {:#x}", result.startup_cs_base());
+            println!(
+                "AP long-mode startup CS selector: {:#x}",
+                result.startup_cs_selector()
+            );
+            println!(
+                "AP long-mode startup CS base: {:#x}",
+                result.startup_cs_base()
+            );
             println!("AP long-mode startup CR0: {:#x}", result.startup_cr0());
             println!("AP long-mode stack: {:#x}", state.rsp());
             println!("AP long-mode CS selector: {:#x}", state.cs_selector());
@@ -28,7 +34,10 @@ fn main() -> ExitCode {
             println!("AP long-mode EFER: {:#x}", state.efer());
             println!("AP long-mode final mp-state: {}", result.final_mp_state());
             println!("AP long-mode marker: {:#x}", result.shared_marker());
-            println!("AP long-mode completion rflags: {:#x}", result.ap_completion_rflags());
+            println!(
+                "AP long-mode completion rflags: {:#x}",
+                result.ap_completion_rflags()
+            );
             println!("AP long-mode BSP proof: {:?}", result.first_proof());
             println!("AP long-mode AP proof: {:?}", result.second_proof());
 
