@@ -4,49 +4,52 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` contains the Phase 73 foundation, deterministic x86-64 execution, ELF64 loading/mapping, userspace and virtual MMIO, controller-backed interrupts, async timer delivery through direct GSI and irqfd/eventfd, ioeventfd signaling, guest-discovered PCI BAR MMIO, bounded virtio-rng/virtio-blk execution, and the two-vCPU SMP control plane through guest-driven INIT/SIPI, AP-owned real-mode-to-long-mode transition, and guest-originated xAPIC IPI delivery into the running long-mode AP.
+`main` contains the Phase 73 foundation, deterministic x86-64 execution, ELF64 loading/mapping, userspace and virtual MMIO, controller-backed interrupts, async timer delivery through direct GSI and irqfd/eventfd, ioeventfd signaling, guest-discovered PCI BAR MMIO, bounded virtio-rng/virtio-blk execution, and the two-vCPU SMP control plane through guest-driven INIT/SIPI, AP-owned real-mode-to-long-mode transition, guest-originated xAPIC IPI delivery, plus a separate bounded two-vCPU shared-memory work-dispatch data plane.
 
-Current `main` is `bfc8200c256ed2218cd9b1110d0ec71d6f194d53` through PR #103. The AP begins `KVM_MP_STATE_UNINITIALIZED`, is started by BSP guest xAPIC INIT assert/deassert plus SIPI vector `0x08`, performs its own transition to 64-bit mode, owns a bounded IDT gate, reports readiness with IF clear, receives guest-originated vector `0x52`, executes its handler with LAPIC EOI and `iretq`, resumes mainline, and completes with IF set. Main CI #625 and the applicable permanent hosted-KVM workflows are green at this boundary.
+Current `main` is `815de7e06b388c64cdffe719816ed4144e5efcf1` through PR #104. The fixed INIT/SIPI/AP-long-mode/vector-`0x52` control plane from PRs #101–#103 remains independently integrated, and PR #104 added a distinct directly-initialized two-long-mode-vCPU mailbox protocol at GPA `0x9000` using locked byte `XCHG` command/acknowledgement ownership. Exact merged-main CI and the applicable permanent hosted-KVM workflows are green at this boundary.
 
-The fixed AP-startup/vector-`0x52` control-plane phase is sealed. Do not farm alternate SIPI vectors, APIC IDs, IDT addresses, repeated INIT/SIPI cycles, or vCPU2/vCPU3 clones merely to extend the phase number.
+The isolated one-item `0x21→0x42` work-dispatch phase is sealed. Do not farm another payload, polling constant, directly-initialized AP clone, alternate SIPI vector, alternate IPI vector, APIC ID, or vCPU2/vCPU3 merely to extend the phase number.
 
-## Selected milestone — bounded concurrent two-vCPU shared-memory work dispatch
+## Selected milestone — SIPI-started AP executes IPI-notified mailbox work
 
-The next data-plane boundary is one executable shared-memory synchronization/work-dispatch protocol that requires both running vCPUs to make progress. This slice deliberately extends the existing directly initialized two-long-mode-vCPU data-plane fixture rather than claiming to be the SIPI-started AP from PRs #101–#103. The startup/control-plane proofs remain independent and must not regress.
+The next boundary is a cross-layer composition that removes the artificial separation between the integrated AP startup/control plane and the integrated mailbox data plane. In one VM and one execution, the BSP must start vCPU1 from `KVM_MP_STATE_UNINITIALIZED` through the existing guest xAPIC INIT/SIPI path, the AP must perform its existing guest-owned real-mode-to-long-mode transition, and the BSP must use the already integrated fixed vector `0x52` IPI to notify the running AP that one locked-`XCHG` mailbox work item is ready.
 
-BSP and vCPU1 run concurrently on distinct host threads in one VM and coordinate through a guest-RAM mailbox at GPA `0x9000`. The concrete protocol uses implicitly locked byte `XCHG` operations for command and acknowledgement ownership. This is evidence for this exact x86 mailbox handoff only, not a formal C/C++/Rust memory model, generic atomics library, scheduler, or scalable work queue.
+This is a composition of existing bounded contracts, not a third startup policy, general scheduler, scalable queue, or new interrupt-routing model. The fixed SIPI vector `0x08`, APIC ID `1`, LAPIC mapping, AP long-mode GDT/IDT layout, vector `0x52`, mailbox GPA `0x9000`, payload `0x21`, result `0x42`, and locked byte `XCHG` ownership transitions remain unchanged.
 
 Acceptance contract:
 
-- preserve ordinary CI, Rust 1.74 MSRV, all existing strict KVM gates, and the permanent INIT/SIPI/AP-long-mode/AP-IPI workflows;
-- retain one VM with exactly two directly initialized long-mode vCPUs for this isolated data-plane fixture; do not describe vCPU1 as the SIPI-started AP;
-- run BSP and vCPU1 concurrently on distinct host threads after an explicit vCPU1 readiness barrier;
-- mailbox GPA is `0x9000`; payload is byte `0x21` at offset `0x00`, command at `0x08`, result at `0x10`, and acknowledgement at `0x18`;
-- BSP stores payload before publishing command `1` with memory `XCHG`; vCPU1 uses a bounded poll loop, claims command with memory `XCHG`, doubles payload to result `0x42`, then publishes acknowledgement `1` with memory `XCHG`;
-- BSP uses a bounded poll loop, consumes acknowledgement with memory `XCHG`, then validates result; command and ack must both finish cleared to zero;
-- bounded poll exhaustion or ownership/value mismatch emits byte `F` and halts instead of spinning indefinitely or being retried into success;
-- exact BSP proof is `BCVD`; exact vCPU1 proof is `RPD`; every byte-wide debug-port exit must match direction, size, port and payload;
-- exact final mailbox state is payload `0x21`, command `0`, result `0x42`, ack `0`;
-- exact terminal reports are BSP `KVM_EXIT_HLT` at RIP `0x10043` and vCPU1 `KVM_EXIT_HLT` at RIP `0x1103c`, with architectural RFLAGS bit1 set on both;
-- KVM-aware integration independently validates both proof streams, every debug-port exit, final mailbox state and both terminal reports;
-- permanent workflow `Strict KVM two-vCPU work dispatch` must run independently from ordinary CI and require the exact proofs, mailbox values and terminal RIP/RFLAGS contract;
-- generated assembler/linker artifacts, temporary construction scripts and alternative duplicate runtime paths are not committed;
-- mailbox ownership, proof, terminal-state, MSRV or real-KVM failures remain hard failures and must not be skipped, retried into success, or hidden by changed expectations.
+- preserve ordinary CI, Rust 1.74 MSRV and every existing permanent hosted-KVM workflow, especially the independent INIT/SIPI, AP-long-mode, AP-long-mode-IPI and directly-initialized work-dispatch proofs;
+- use one VM with exactly two vCPUs; vCPU1 begins `KVM_MP_STATE_UNINITIALIZED` and must be started by the guest BSP with the existing xAPIC INIT assert/deassert plus SIPI vector `0x08` sequence;
+- after SIPI, vCPU1 must report the existing startup architectural state: MP runnable, RIP `0`, CS selector `0x0800`, CS base `0x8000`, CR0.PE clear, then perform its own PAE/CR3/EFER/CR0 transition into 64-bit mode;
+- AP long-mode architectural state remains the integrated contract: stack `0x1ef000`, CS selector `0x08` with L=1, SS selector `0x10`, GDT `0x7000/0x17`, CR3 `0x1000`, required CR0/CR4/EFER bits, IDT `0x6000/0x52f`, and readiness with RFLAGS bit1 set and IF clear;
+- mailbox GPA remains `0x9000`: payload at offset `0x00`, command at `0x08`, result at `0x10`, acknowledgement at `0x18`; payload is `0x21` and expected result is `0x42`;
+- after AP readiness, BSP stores payload then publishes command `1` with a locked memory `XCHG`; old command ownership must be `0`, otherwise the guest follows its explicit `F` failure path;
+- only after command publication may BSP send the existing guest-originated fixed xAPIC IPI vector `0x52` to APIC ID `1`;
+- the AP must enter the existing vector-`0x52` handler, emit handler proof, issue LAPIC EOI and `iretq`; after return it claims command with locked `XCHG`, doubles payload, stores result `0x42`, publishes acknowledgement `1` with locked `XCHG`, and requires previous acknowledgement ownership `0`;
+- BSP uses a bounded poll, consumes acknowledgement with locked `XCHG`, requires old acknowledgement `1`, validates result `0x42`, and leaves command and acknowledgement both cleared to zero;
+- bounded poll exhaustion, ownership mismatch, startup/long-mode/IDT mismatch, IPI sequencing failure, mailbox mismatch, proof mismatch or completion-state mismatch remain hard failures and must not be retried into success or hidden by changed expectations;
+- exact BSP debug proof is `0IDSCXVD`; exact AP proof is `ALRIPD`; every byte-wide port-I/O exit must have exact direction, size, debug port, count and payload;
+- exact final mailbox is payload `0x21`, command `0`, result `0x42`, acknowledgement `0`;
+- the final `D` byte on each vCPU is the userspace-visible completion barrier. After servicing that `KVM_EXIT_IO`, userspace must capture architectural state and must not re-enter `KVM_RUN` merely to observe the following guest `HLT`: with the in-kernel LAPIC/irqchip, HLT is allowed to remain inside KVM waiting for another event and is not a portable userspace terminal-exit contract;
+- BSP completion after `D` requires architectural RFLAGS bit1 set and IF clear; AP completion after `D` requires architectural RFLAGS bit1 and IF set. The HLT bytes that follow `D` remain in the deterministic guest images only as fail-safe stops if a caller erroneously re-enters execution, not as acceptance evidence;
+- KVM-aware integration independently validates both proof streams, all debug-port exits, initial/startup AP MP state, AP long-mode/IDT state, ready/completion RFLAGS, mailbox state and both userspace completion barriers;
+- permanent workflow `Strict KVM SIPI IPI work dispatch` must run independently on hosted KVM and require this exact composition while all previous permanent workflows remain unchanged;
+- locally generated assembler/linker artifacts and construction scripts are not committed.
 
-Executable evidence has been established before this roadmap synchronization on implementation head `259ecdbef5a3420549650a647f7c6f0e6bff348d`. Ordinary CI #628 passed Format, Clippy, full tests, build, rustdoc, Rust 1.74 MSRV and all current standard strict KVM gates. Permanent `Strict KVM two-vCPU work dispatch` run #3 completed successfully on hosted KVM and produced BSP proof `BCVD`, vCPU1 proof `RPD`, mailbox `0x21/0/0x42/0`, BSP HLT RIP `0x10043` with RFLAGS `0x46`, and vCPU1 HLT RIP `0x1103c` with RFLAGS `0x6`. Because this roadmap commit changes the candidate head, the final exact candidate must rerun all applicable CI/permanent workflows before integration.
+The implementation is currently in progress on `milestone/sipi-ipi-work-dispatch`. No capability is considered integrated until the exact candidate passes ordinary CI plus the new permanent hosted-KVM workflow, remains current with `main`, and completes the repository's normal review/merge audit.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- a general scheduler, job queue, multi-producer/multi-consumer protocol, futex, lock library or formal language-level memory model;
-- a third vCPU, AP hotplug, repeated INIT/SIPI, new fixed IPI vectors or a replacement AP-startup flow;
-- AP-local timer ownership, periodic scheduling, cross-vCPU TLB shootdown, per-CPU TSS, ring transitions or SYSCALL/SYSRET;
-- additional virtio/storage behavior, persistence/durability, DMA/IOMMU or migration;
+- a general scheduler, queue, multiple work items, multi-producer/multi-consumer protocol, futex/lock library or formal language-level memory model;
+- alternate SIPI/IPI vectors, APIC IDs, repeated startup cycles, a third vCPU, CPU hotplug or a replacement startup path;
+- AP-local periodic timer ownership, cross-vCPU TLB shootdown, per-CPU TSS, ring transitions or SYSCALL/SYSRET;
+- new interrupt routing, MSI/MSI-X behavior, additional virtio/storage behavior, persistence/durability, DMA/IOMMU or migration;
 - performance, latency, fairness, scalability or benchmark claims.
 
 ## Promotion rule
 
-After the bounded work-dispatch primitive is integrated and exact merged-`main` ordinary CI plus the new permanent work-dispatch workflow are green, seal the one-item `0x21→0x42` mailbox proof rather than adding a second payload or another polling constant.
+After the SIPI/IPI/mailbox composition is integrated and exact merged-`main` ordinary CI plus all permanent workflows are green, seal this fixed one-work-item composition rather than adding a second payload or alternate vector.
 
-The preferred next SMP promotion is a cross-layer composition that carries this locked-`XCHG` work protocol through the already integrated SIPI-started, guest-owned long-mode AP lifecycle, ideally using the established guest-originated IPI control plane to signal work readiness. That slice should retire the current separation between the isolated data-plane fixture and the AP-startup/control-plane fixture rather than create a third startup path. If that composition is not the highest-value feasible step after audit, choose another workload that genuinely requires both processors to make progress. Persistent storage durability remains a separate frontier.
+The next architecture audit should choose a genuinely new SMP capability that requires the now-unified startup/control/data plane. Strong candidates include AP-local timer ownership, a bounded cross-vCPU TLB-shootdown protocol after adding a meaningful shared virtual-memory invalidation need, or a privileged execution boundary such as per-CPU TSS/ring transition only when backed by an executable end-to-end proof. Persistent storage durability remains a separate frontier.
