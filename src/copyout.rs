@@ -706,10 +706,7 @@ mod tests {
 
     #[test]
     fn copyout_handler_has_one_store_fault_site_and_one_fixup() {
-        assert_eq!(
-            &COPYOUT_HANDLER_BYTES[13..16],
-            &[0xc6, 0x07, COPYOUT_VALUE]
-        );
+        assert_eq!(&COPYOUT_HANDLER_BYTES[13..16], &[0xc6, 0x07, COPYOUT_VALUE]);
         assert_eq!(COPYOUT_FAULT_RIP, SYSCALL_KERNEL_ENTRY.get() + 13);
         assert_eq!(&COPYOUT_HANDLER_BYTES[26..29], &[0x4c, 0x89, 0xd4]);
         assert_eq!(COPYOUT_FIXUP_RIP, SYSCALL_KERNEL_ENTRY.get() + 26);
