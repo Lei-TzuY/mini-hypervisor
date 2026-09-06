@@ -9,8 +9,8 @@ use mini_hypervisor::portio::two_vcpu_init_sipi_fixture::{
 };
 use mini_hypervisor::portio::two_vcpu_tlb_shootdown_fixture::{
     run_two_vcpu_tlb_shootdown, AP_TLB_PROOF, BSP_TLB_PROOF, TLB_FINAL_PTE, TLB_PAGE_A,
-    TLB_PAGE_A_VALUE, TLB_PAGE_B, TLB_PAGE_B_VALUE, TLB_SHOOTDOWN_IDT_LIMIT,
-    TLB_SHOOTDOWN_VECTOR, TLB_TARGET_PTE, TLB_TARGET_VIRTUAL_PAGE,
+    TLB_PAGE_A_VALUE, TLB_PAGE_B, TLB_PAGE_B_VALUE, TLB_SHOOTDOWN_IDT_LIMIT, TLB_SHOOTDOWN_VECTOR,
+    TLB_TARGET_PTE, TLB_TARGET_VIRTUAL_PAGE,
 };
 use mini_hypervisor::portio::DEBUG_PORT;
 use mini_hypervisor::vcpu::PortIoDirection;
@@ -72,7 +72,10 @@ fn sipi_started_ap_invalidates_shared_alias_after_remote_shootdown() {
                 TLB_FINAL_PTE
             );
             assert_eq!(result.final_pte(), TLB_FINAL_PTE);
-            assert_eq!(result.final_pte() & PAGE_TABLE_ENTRY_ACCESSED, PAGE_TABLE_ENTRY_ACCESSED);
+            assert_eq!(
+                result.final_pte() & PAGE_TABLE_ENTRY_ACCESSED,
+                PAGE_TABLE_ENTRY_ACCESSED
+            );
             assert_eq!(result.final_pte() & PAGE_TABLE_ENTRY_DIRTY, 0);
             assert_eq!(result.final_ack(), 0);
             assert_eq!(result.page_a(), TLB_PAGE_A_VALUE);
