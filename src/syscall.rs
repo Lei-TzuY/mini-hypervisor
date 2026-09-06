@@ -13,7 +13,7 @@ use crate::privilege::{
     PRIVILEGE_TSS_RSP0, PRIVILEGE_USER_CODE_SELECTOR, PRIVILEGE_USER_DATA_SELECTOR,
     PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_STACK,
 };
-use crate::vcpu::{PortIoExit, VcpuId};
+use crate::vcpu::{PortIoExit, Vcpu, VcpuId};
 use crate::vmexit::VmExitReport;
 use std::io;
 
@@ -22,6 +22,7 @@ pub const SYSCALL_OBSERVATION_ADDR: GuestPhysAddr = GuestPhysAddr::new(0xb000);
 pub const SYSCALL_KERNEL_STACK: u64 = PRIVILEGE_TSS_RSP0;
 pub const SYSCALL_USER_RETURN_RIP: u64 = 0x1_1017;
 pub const SYSCALL_TERMINAL_RETURN_RIP: u64 = 0x1_102f;
+pub const SYSCALL_TERMINAL_HLT_RIP: u64 = 0x1_3005;
 pub const SYSCALL_PROOF: &[u8; 2] = b"SD";
 
 pub const MSR_EFER: MsrIndex = MsrIndex::new(0xc000_0080);
@@ -73,29 +74,29 @@ const USER_BYTES: [u8; 47] = [
 ];
 
 const SYSCALL_HANDLER_BYTES: [u8; 66] = [
-    0x49, 0x89, 0xe2, // mov rsp, r10 (preserve user RSP)
-    0x48, 0xbc, 0x00, 0xe0, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs kernel RSP, rsp
-    0x48, 0xbf, 0x00, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs kernel obs, rdi
-    0x48, 0x89, 0x0f, // mov rcx, [rdi]
-    0x4c, 0x89, 0x5f, 0x08, // mov r11, [rdi+8]
-    0x4c, 0x89, 0x57, 0x10, // mov r10, [rdi+16]
+    0x49, 0x89, 0xe2, // mov r10, rsp: preserve the user stack
+    0x48, 0xbc, 0x00, 0xe0, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs rsp, 0x1fe000
+    0x48, 0xbf, 0x00, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs rdi, 0xb000
+    0x48, 0x89, 0x0f, // mov [rdi], rcx
+    0x4c, 0x89, 0x5f, 0x08, // mov [rdi+8], r11
+    0x4c, 0x89, 0x57, 0x10, // mov [rdi+16], r10
     0x9c, // pushfq
     0x58, // pop rax
-    0x48, 0x89, 0x47, 0x18, // mov rax, [rdi+24]
-    0x8c, 0xc8, // mov cs, ax
-    0x66, 0x89, 0x47, 0x20, // mov ax, [rdi+32]
-    0x8c, 0xd0, // mov ss, ax
-    0x66, 0x89, 0x47, 0x22, // mov ax, [rdi+34]
-    0x48, 0x89, 0x67, 0x28, // mov rsp, [rdi+40]
+    0x48, 0x89, 0x47, 0x18, // mov [rdi+24], rax
+    0x8c, 0xc8, // mov ax, cs
+    0x66, 0x89, 0x47, 0x20, // mov [rdi+32], ax
+    0x8c, 0xd0, // mov ax, ss
+    0x66, 0x89, 0x47, 0x22, // mov [rdi+34], ax
+    0x48, 0x89, 0x67, 0x28, // mov [rdi+40], rsp
     0xb0, b'S', // mov al, 'S'
-    0xe6, 0xe9, // out al, 0xe9
-    0x4c, 0x89, 0xd4, // mov r10, rsp (restore user RSP)
+    0xe6, 0xe9, // out 0xe9, al
+    0x4c, 0x89, 0xd4, // mov rsp, r10: restore the user stack
     0x48, 0x0f, 0x07, // sysretq
 ];
 
 const TERMINAL_HANDLER_BYTES: [u8; 5] = [
     0xb0, b'D', // mov al, 'D'
-    0xe6, 0xe9, // out al, 0xe9
+    0xe6, 0xe9, // out 0xe9, al
     0xf4, // hlt in ring0
 ];
 
@@ -115,26 +116,32 @@ impl SyscallObservation {
     pub const fn user_return_rip(self) -> u64 {
         self.user_return_rip
     }
+
     #[must_use]
     pub const fn user_rflags(self) -> u64 {
         self.user_rflags
     }
+
     #[must_use]
     pub const fn user_rsp(self) -> u64 {
         self.user_rsp
     }
+
     #[must_use]
     pub const fn kernel_rflags(self) -> u64 {
         self.kernel_rflags
     }
+
     #[must_use]
     pub const fn kernel_cs(self) -> u16 {
         self.kernel_cs
     }
+
     #[must_use]
     pub const fn kernel_ss(self) -> u16 {
         self.kernel_ss
     }
+
     #[must_use]
     pub const fn kernel_rsp(self) -> u64 {
         self.kernel_rsp
@@ -152,15 +159,29 @@ pub struct SyscallReturnFrame {
 
 impl SyscallReturnFrame {
     #[must_use]
-    pub const fn rip(self) -> u64 { self.rip }
+    pub const fn rip(self) -> u64 {
+        self.rip
+    }
+
     #[must_use]
-    pub const fn cs(self) -> u64 { self.cs }
+    pub const fn cs(self) -> u64 {
+        self.cs
+    }
+
     #[must_use]
-    pub const fn rflags(self) -> u64 { self.rflags }
+    pub const fn rflags(self) -> u64 {
+        self.rflags
+    }
+
     #[must_use]
-    pub const fn rsp(self) -> u64 { self.rsp }
+    pub const fn rsp(self) -> u64 {
+        self.rsp
+    }
+
     #[must_use]
-    pub const fn ss(self) -> u64 { self.ss }
+    pub const fn ss(self) -> u64 {
+        self.ss
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,27 +206,110 @@ pub struct SyscallSysretGuestResult {
 }
 
 impl SyscallSysretGuestResult {
-    #[must_use] pub fn io_exits(&self) -> &[PortIoExit] { &self.io_exits }
-    #[must_use] pub fn proof(&self) -> &[u8] { &self.proof }
-    #[must_use] pub const fn report(&self) -> VmExitReport { self.report }
-    #[must_use] pub const fn user_selectors(&self) -> [u16; 4] { self.user_selectors }
-    #[must_use] pub const fn observation(&self) -> SyscallObservation { self.observation }
-    #[must_use] pub const fn terminal_frame(&self) -> SyscallReturnFrame { self.terminal_frame }
-    #[must_use] pub const fn terminal_rsp(&self) -> u64 { self.terminal_rsp }
-    #[must_use] pub const fn terminal_cs(&self) -> u16 { self.terminal_cs }
-    #[must_use] pub const fn terminal_rflags(&self) -> u64 { self.terminal_rflags }
-    #[must_use] pub const fn efer(&self) -> u64 { self.efer }
-    #[must_use] pub const fn star(&self) -> u64 { self.star }
-    #[must_use] pub const fn lstar(&self) -> u64 { self.lstar }
-    #[must_use] pub const fn sfmask(&self) -> u64 { self.sfmask }
-    #[must_use] pub const fn user_code_pte(&self) -> u64 { self.user_code_pte }
-    #[must_use] pub const fn user_stack_pte(&self) -> u64 { self.user_stack_pte }
-    #[must_use] pub const fn syscall_handler_pte(&self) -> u64 { self.syscall_handler_pte }
-    #[must_use] pub const fn syscall_observation_pte(&self) -> u64 { self.syscall_observation_pte }
+    #[must_use]
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
+
+    #[must_use]
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
+
+    #[must_use]
+    pub const fn report(&self) -> VmExitReport {
+        self.report
+    }
+
+    #[must_use]
+    pub const fn user_selectors(&self) -> [u16; 4] {
+        self.user_selectors
+    }
+
+    #[must_use]
+    pub const fn observation(&self) -> SyscallObservation {
+        self.observation
+    }
+
+    #[must_use]
+    pub const fn terminal_frame(&self) -> SyscallReturnFrame {
+        self.terminal_frame
+    }
+
+    #[must_use]
+    pub const fn terminal_rsp(&self) -> u64 {
+        self.terminal_rsp
+    }
+
+    #[must_use]
+    pub const fn terminal_cs(&self) -> u16 {
+        self.terminal_cs
+    }
+
+    #[must_use]
+    pub const fn terminal_rflags(&self) -> u64 {
+        self.terminal_rflags
+    }
+
+    #[must_use]
+    pub const fn efer(&self) -> u64 {
+        self.efer
+    }
+
+    #[must_use]
+    pub const fn star(&self) -> u64 {
+        self.star
+    }
+
+    #[must_use]
+    pub const fn lstar(&self) -> u64 {
+        self.lstar
+    }
+
+    #[must_use]
+    pub const fn sfmask(&self) -> u64 {
+        self.sfmask
+    }
+
+    #[must_use]
+    pub const fn user_code_pte(&self) -> u64 {
+        self.user_code_pte
+    }
+
+    #[must_use]
+    pub const fn user_stack_pte(&self) -> u64 {
+        self.user_stack_pte
+    }
+
+    #[must_use]
+    pub const fn syscall_handler_pte(&self) -> u64 {
+        self.syscall_handler_pte
+    }
+
+    #[must_use]
+    pub const fn syscall_observation_pte(&self) -> u64 {
+        self.syscall_observation_pte
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RuntimeState {
+    selectors: [u16; 4],
+    observation: SyscallObservation,
+    terminal_frame: SyscallReturnFrame,
+    terminal_rsp: u64,
+    terminal_cs: u16,
+    terminal_rflags: u64,
+    msrs: [u64; 4],
+    ptes: [u64; 4],
 }
 
 pub fn run_syscall_sysret_guest(config: VmConfig) -> Result<SyscallSysretGuestResult, Error> {
-    let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &KERNEL_BOOT_BYTES)?;
+    let kernel = FlatGuestImage::new(
+        PRIVILEGE_KERNEL_ENTRY,
+        PRIVILEGE_KERNEL_ENTRY,
+        &KERNEL_BOOT_BYTES,
+    )?;
     let user = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &USER_BYTES)?;
     let syscall_handler = FlatGuestImage::new(
         SYSCALL_KERNEL_ENTRY,
@@ -235,7 +339,7 @@ pub fn run_syscall_sysret_guest(config: VmConfig) -> Result<SyscallSysretGuestRe
     debug_assert_eq!(config.vcpu_count(), 1);
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
     vcpu.initialize_long_mode_privilege(&layout)?;
-    let [efer, star, lstar, sfmask] = configure_syscall_msrs(&backend, &vcpu)?;
+    let msrs = configure_syscall_msrs(&backend, &vcpu)?;
 
     let mut port_io = PortIoBus::with_debug_port();
     let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, SYSCALL_EXIT_BUDGET)?;
@@ -254,59 +358,51 @@ pub fn run_syscall_sysret_guest(config: VmConfig) -> Result<SyscallSysretGuestRe
         ));
     }
 
-    let regs = vcpu.registers()?;
-    let register_snapshot = vcpu.capture_register_snapshot()?;
+    let registers = vcpu.capture_register_snapshot()?;
+    let terminal_regs = vcpu.registers()?;
     let special = vcpu.capture_special_register_snapshot()?;
     let guest_memory = vm
         .guest_memory()
         .expect("registered syscall guest memory remains VM-owned");
-    let user_selectors = read_user_selectors(guest_memory)?;
-    let observation = read_syscall_observation(guest_memory)?;
-    let terminal_frame = read_terminal_frame(guest_memory)?;
-    let user_code_pte = read_pte(guest_memory, PRIVILEGE_USER_ENTRY.get())?;
-    let user_stack_pte = read_pte(guest_memory, PRIVILEGE_USER_STACK - 1)?;
-    let syscall_handler_pte = read_pte(guest_memory, SYSCALL_KERNEL_ENTRY.get())?;
-    let syscall_observation_pte = read_pte(guest_memory, SYSCALL_OBSERVATION_ADDR.get())?;
-
-    validate_runtime_state(
-        user_selectors,
-        observation,
-        terminal_frame,
-        register_snapshot.rsp(),
-        special.cs().selector(),
-        regs.rflags,
-        efer,
-        star,
-        lstar,
-        sfmask,
-        user_code_pte,
-        user_stack_pte,
-        syscall_handler_pte,
-        syscall_observation_pte,
-    )?;
+    let state = RuntimeState {
+        selectors: read_user_selectors(guest_memory)?,
+        observation: read_syscall_observation(guest_memory)?,
+        terminal_frame: read_terminal_frame(guest_memory)?,
+        terminal_rsp: registers.rsp(),
+        terminal_cs: special.cs().selector(),
+        terminal_rflags: terminal_regs.rflags,
+        msrs,
+        ptes: [
+            read_pte(guest_memory, PRIVILEGE_USER_ENTRY.get())?,
+            read_pte(guest_memory, PRIVILEGE_USER_STACK - 1)?,
+            read_pte(guest_memory, SYSCALL_KERNEL_ENTRY.get())?,
+            read_pte(guest_memory, SYSCALL_OBSERVATION_ADDR.get())?,
+        ],
+    };
+    validate_runtime_state(state)?;
 
     Ok(SyscallSysretGuestResult {
         io_exits: execution.io_exits().to_vec(),
         proof,
         report: execution.report(),
-        user_selectors,
-        observation,
-        terminal_frame,
-        terminal_rsp: register_snapshot.rsp(),
-        terminal_cs: special.cs().selector(),
-        terminal_rflags: regs.rflags,
-        efer,
-        star,
-        lstar,
-        sfmask,
-        user_code_pte,
-        user_stack_pte,
-        syscall_handler_pte,
-        syscall_observation_pte,
+        user_selectors: state.selectors,
+        observation: state.observation,
+        terminal_frame: state.terminal_frame,
+        terminal_rsp: state.terminal_rsp,
+        terminal_cs: state.terminal_cs,
+        terminal_rflags: state.terminal_rflags,
+        efer: state.msrs[0],
+        star: state.msrs[1],
+        lstar: state.msrs[2],
+        sfmask: state.msrs[3],
+        user_code_pte: state.ptes[0],
+        user_stack_pte: state.ptes[1],
+        syscall_handler_pte: state.ptes[2],
+        syscall_observation_pte: state.ptes[3],
     })
 }
 
-fn configure_syscall_msrs(backend: &KvmBackend, vcpu: &crate::vcpu::Vcpu) -> Result<[u64; 4], Error> {
+fn configure_syscall_msrs(backend: &KvmBackend, vcpu: &Vcpu) -> Result<[u64; 4], Error> {
     let initial = vcpu.msrs(&[MSR_EFER])?;
     let initial_efer = initial
         .values()
@@ -325,30 +421,38 @@ fn configure_syscall_msrs(backend: &KvmBackend, vcpu: &crate::vcpu::Vcpu) -> Res
     let values = GuestMsrValueSet::from_policy(&policy, &requested)
         .map_err(|error| verification_error("syscall MSR values", error.to_string()))?;
     vcpu.set_msrs(&values)?;
+
     let observed = vcpu.msrs(&indices)?;
     if observed.values().len() != indices.len() {
         return Err(verification_error(
             "syscall MSR readback",
-            format!("expected {} values, got {}", indices.len(), observed.values().len()),
+            format!(
+                "expected {} values, got {}",
+                indices.len(),
+                observed.values().len()
+            ),
         ));
     }
-    let values = [
+    let readback = [
         observed.values()[0].value(),
         observed.values()[1].value(),
         observed.values()[2].value(),
         observed.values()[3].value(),
     ];
-    if values[0] != initial_efer | EFER_SYSCALL_ENABLE
-        || values[1] != SYSCALL_STAR_VALUE
-        || values[2] != SYSCALL_LSTAR_VALUE
-        || values[3] != SYSCALL_SFMASK_VALUE
+    if readback
+        != [
+            initial_efer | EFER_SYSCALL_ENABLE,
+            SYSCALL_STAR_VALUE,
+            SYSCALL_LSTAR_VALUE,
+            SYSCALL_SFMASK_VALUE,
+        ]
     {
         return Err(verification_error(
             "syscall MSR readback",
-            format!("unexpected readback {values:#x?}"),
+            format!("unexpected readback {readback:#x?}"),
         ));
     }
-    Ok(values)
+    Ok(readback)
 }
 
 fn read_user_selectors(memory: &GuestMemory) -> Result<[u16; 4], Error> {
@@ -408,24 +512,8 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn validate_runtime_state(
-    selectors: [u16; 4],
-    observation: SyscallObservation,
-    terminal_frame: SyscallReturnFrame,
-    terminal_rsp: u64,
-    terminal_cs: u16,
-    terminal_rflags: u64,
-    efer: u64,
-    star: u64,
-    lstar: u64,
-    sfmask: u64,
-    user_code_pte: u64,
-    user_stack_pte: u64,
-    syscall_handler_pte: u64,
-    syscall_observation_pte: u64,
-) -> Result<(), Error> {
-    if selectors
+fn validate_runtime_state(state: RuntimeState) -> Result<(), Error> {
+    if state.selectors
         != [
             PRIVILEGE_USER_CODE_SELECTOR,
             PRIVILEGE_USER_DATA_SELECTOR,
@@ -435,59 +523,62 @@ fn validate_runtime_state(
     {
         return Err(verification_error(
             "syscall user selectors",
-            format!("unexpected selectors {selectors:?}"),
+            format!("unexpected selectors {:?}", state.selectors),
         ));
     }
-    if observation.user_return_rip != SYSCALL_USER_RETURN_RIP
-        || observation.user_rflags != X86_RFLAGS_RESERVED | X86_RFLAGS_IF
-        || observation.user_rsp != PRIVILEGE_USER_STACK
-        || observation.kernel_rflags != X86_RFLAGS_RESERVED
-        || observation.kernel_cs != KERNEL_CODE_SELECTOR
-        || observation.kernel_ss != KERNEL_DATA_SELECTOR
-        || observation.kernel_rsp != SYSCALL_KERNEL_STACK
+    if state.observation.user_return_rip != SYSCALL_USER_RETURN_RIP
+        || state.observation.user_rflags != X86_RFLAGS_RESERVED | X86_RFLAGS_IF
+        || state.observation.user_rsp != PRIVILEGE_USER_STACK
+        || state.observation.kernel_rflags != X86_RFLAGS_RESERVED
+        || state.observation.kernel_cs != KERNEL_CODE_SELECTOR
+        || state.observation.kernel_ss != KERNEL_DATA_SELECTOR
+        || state.observation.kernel_rsp != SYSCALL_KERNEL_STACK
     {
         return Err(verification_error(
             "syscall entry observation",
-            format!("unexpected observation {observation:?}"),
+            format!("unexpected observation {:?}", state.observation),
         ));
     }
-    if terminal_frame
-        != (SyscallReturnFrame {
-            rip: SYSCALL_TERMINAL_RETURN_RIP,
-            cs: u64::from(PRIVILEGE_USER_CODE_SELECTOR),
-            rflags: X86_RFLAGS_RESERVED | X86_RFLAGS_IF,
-            rsp: PRIVILEGE_USER_STACK,
-            ss: u64::from(PRIVILEGE_USER_DATA_SELECTOR),
-        })
-    {
+    let expected_frame = SyscallReturnFrame {
+        rip: SYSCALL_TERMINAL_RETURN_RIP,
+        cs: u64::from(PRIVILEGE_USER_CODE_SELECTOR),
+        rflags: X86_RFLAGS_RESERVED | X86_RFLAGS_IF,
+        rsp: PRIVILEGE_USER_STACK,
+        ss: u64::from(PRIVILEGE_USER_DATA_SELECTOR),
+    };
+    if state.terminal_frame != expected_frame {
         return Err(verification_error(
             "SYSRET user return frame",
-            format!("unexpected terminal frame {terminal_frame:?}"),
+            format!("unexpected terminal frame {:?}", state.terminal_frame),
         ));
     }
-    if terminal_rsp != PRIVILEGE_TSS_RSP0 - PRIVILEGE_FRAME_BYTES
-        || terminal_cs != KERNEL_CODE_SELECTOR
-        || terminal_rflags & X86_RFLAGS_RESERVED != X86_RFLAGS_RESERVED
-        || terminal_rflags & X86_RFLAGS_IF != 0
+    if state.terminal_rsp != PRIVILEGE_TSS_RSP0 - PRIVILEGE_FRAME_BYTES
+        || state.terminal_cs != KERNEL_CODE_SELECTOR
+        || state.terminal_rflags & X86_RFLAGS_RESERVED != X86_RFLAGS_RESERVED
+        || state.terminal_rflags & X86_RFLAGS_IF != 0
     {
         return Err(verification_error(
             "syscall terminal kernel state",
             format!(
-                "unexpected terminal rsp={terminal_rsp:#x} cs={terminal_cs:#x} rflags={terminal_rflags:#x}"
+                "unexpected terminal rsp={:#x} cs={:#x} rflags={:#x}",
+                state.terminal_rsp, state.terminal_cs, state.terminal_rflags
             ),
         ));
     }
-    if efer & EFER_SYSCALL_ENABLE != EFER_SYSCALL_ENABLE
-        || star != SYSCALL_STAR_VALUE
-        || lstar != SYSCALL_LSTAR_VALUE
-        || sfmask != SYSCALL_SFMASK_VALUE
+    if state.msrs[0] & EFER_SYSCALL_ENABLE != EFER_SYSCALL_ENABLE
+        || state.msrs[1] != SYSCALL_STAR_VALUE
+        || state.msrs[2] != SYSCALL_LSTAR_VALUE
+        || state.msrs[3] != SYSCALL_SFMASK_VALUE
     {
         return Err(verification_error(
             "syscall MSR state",
-            format!("unexpected EFER={efer:#x} STAR={star:#x} LSTAR={lstar:#x} SFMASK={sfmask:#x}"),
+            format!(
+                "unexpected EFER={:#x} STAR={:#x} LSTAR={:#x} SFMASK={:#x}",
+                state.msrs[0], state.msrs[1], state.msrs[2], state.msrs[3]
+            ),
         ));
     }
-    for (role, pte) in [("user code", user_code_pte), ("user stack", user_stack_pte)] {
+    for (role, pte) in [("user code", state.ptes[0]), ("user stack", state.ptes[1])] {
         if pte & X86_PAGE_USER == 0 {
             return Err(verification_error(
                 "syscall page permissions",
@@ -496,8 +587,8 @@ fn validate_runtime_state(
         }
     }
     for (role, pte) in [
-        ("syscall handler", syscall_handler_pte),
-        ("syscall observation", syscall_observation_pte),
+        ("syscall handler", state.ptes[2]),
+        ("syscall observation", state.ptes[3]),
     ] {
         if pte & X86_PAGE_USER != 0 {
             return Err(verification_error(
@@ -522,11 +613,13 @@ const fn star_kernel_cs(star: u64) -> u16 {
 }
 
 const fn star_sysret_cs(star: u64) -> u16 {
-    ((((star >> 48) & 0xffff) as u16).wrapping_add(16)) & !3) | 3
+    let base = ((star >> 48) & 0xffff) as u16;
+    (base.wrapping_add(16) & !3) | 3
 }
 
 const fn star_sysret_ss(star: u64) -> u16 {
-    ((((star >> 48) & 0xffff) as u16).wrapping_add(8)) & !3) | 3
+    let base = ((star >> 48) & 0xffff) as u16;
+    (base.wrapping_add(8) & !3) | 3
 }
 
 #[cfg(test)]
@@ -536,8 +629,14 @@ mod tests {
     #[test]
     fn star_encodes_exact_kernel_and_sysret_selectors() {
         assert_eq!(star_kernel_cs(SYSCALL_STAR_VALUE), KERNEL_CODE_SELECTOR);
-        assert_eq!(star_sysret_cs(SYSCALL_STAR_VALUE), PRIVILEGE_USER_CODE_SELECTOR);
-        assert_eq!(star_sysret_ss(SYSCALL_STAR_VALUE), PRIVILEGE_USER_DATA_SELECTOR);
+        assert_eq!(
+            star_sysret_cs(SYSCALL_STAR_VALUE),
+            PRIVILEGE_USER_CODE_SELECTOR
+        );
+        assert_eq!(
+            star_sysret_ss(SYSCALL_STAR_VALUE),
+            PRIVILEGE_USER_DATA_SELECTOR
+        );
     }
 
     #[test]
@@ -545,20 +644,29 @@ mod tests {
         assert_eq!(&USER_BYTES[21..23], &[0x0f, 0x05]);
         assert_eq!(PRIVILEGE_USER_ENTRY.get() + 23, SYSCALL_USER_RETURN_RIP);
         assert_eq!(&USER_BYTES[45..47], &[0xcd, 0x81]);
-        assert_eq!(PRIVILEGE_USER_ENTRY.get() + USER_BYTES.len() as u64, SYSCALL_TERMINAL_RETURN_RIP);
+        assert_eq!(
+            PRIVILEGE_USER_ENTRY.get() + USER_BYTES.len() as u64,
+            SYSCALL_TERMINAL_RETURN_RIP
+        );
     }
 
     #[test]
     fn kernel_handler_switches_stack_before_observation_and_ends_in_sysretq() {
         assert_eq!(&SYSCALL_HANDLER_BYTES[..3], &[0x49, 0x89, 0xe2]);
-        assert_eq!(&SYSCALL_HANDLER_BYTES[3..13], &[0x48, 0xbc, 0x00, 0xe0, 0x1f, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            &SYSCALL_HANDLER_BYTES[3..13],
+            &[0x48, 0xbc, 0x00, 0xe0, 0x1f, 0, 0, 0, 0, 0]
+        );
         assert_eq!(&SYSCALL_HANDLER_BYTES[63..], &[0x48, 0x0f, 0x07]);
     }
 
     #[test]
     fn sfmask_clears_only_interrupt_enable_for_fixed_fixture() {
         assert_eq!(SYSCALL_SFMASK_VALUE, X86_RFLAGS_IF);
-        assert_eq!((X86_RFLAGS_RESERVED | X86_RFLAGS_IF) & !SYSCALL_SFMASK_VALUE, X86_RFLAGS_RESERVED);
+        assert_eq!(
+            (X86_RFLAGS_RESERVED | X86_RFLAGS_IF) & !SYSCALL_SFMASK_VALUE,
+            X86_RFLAGS_RESERVED
+        );
     }
 
     #[test]
