@@ -631,7 +631,7 @@ fn capture_ap_state(
         startup_mp_state: startup.mp_state,
         startup_rip: startup.rip,
         startup_cs_selector: startup.cs_selector,
-        startup_cs_base: startup.cs.base,
+        startup_cs_base: startup.cs_base,
         ready_rflags,
         armed_rflags,
         completion_rflags,
