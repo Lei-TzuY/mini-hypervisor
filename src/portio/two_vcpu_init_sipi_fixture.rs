@@ -1,5 +1,6 @@
 use super::{PortIoBus, PortIoService, DEBUG_PORT};
 use crate::error::{Error, HostEnvironmentError};
+use crate::interrupt::{LongModeInterruptLayout, LONG_MODE_INTERRUPT_IDT_ADDR};
 use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
 use crate::long_mode::{
@@ -10,6 +11,7 @@ use crate::memory::{GuestMemory, GuestPhysAddr};
 use crate::mmio::long_mode::{LongModeMmioBootLayout, LongModeMmioPageMapping};
 use crate::vcpu::{PortIoDirection, PortIoExit, Vcpu, VcpuExit, VcpuId};
 use std::io;
+use std::sync::mpsc;
 
 const RAM_BASE: GuestPhysAddr = GuestPhysAddr::new(0);
 const FIRST_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x1_0000);
@@ -38,18 +40,25 @@ pub const SIPI_VALUE: u32 = 0x0000_0600 | SIPI_VECTOR as u32;
 pub const FIRST_PROOF: &[u8; 6] = b"0IDSMD";
 pub const SECOND_PROOF: &[u8; 3] = b"APD";
 pub const AP_LONG_MODE_PROOF: &[u8; 4] = b"ALPD";
+pub const AP_LONG_MODE_IPI_BSP_PROOF: &[u8; 7] = b"0IDSXMD";
+pub const AP_LONG_MODE_IPI_PROOF: &[u8; 6] = b"ALRIMD";
 pub const AP_LONG_MODE_STACK: u64 = 0x1e_f000;
 pub const AP_LONG_MODE_GDT: GuestPhysAddr = GuestPhysAddr::new(0x7000);
 pub const AP_LONG_MODE_GDTR: GuestPhysAddr = GuestPhysAddr::new(0x7020);
+pub const AP_LONG_MODE_IPI_IDTR: GuestPhysAddr = GuestPhysAddr::new(0x7040);
 pub const AP_LONG_MODE_CODE_SELECTOR: u16 = 0x0008;
 pub const AP_LONG_MODE_DATA_SELECTOR: u16 = 0x0010;
 pub const AP_LONG_MODE_GDT_LIMIT: u16 = 23;
+pub const AP_LONG_MODE_IPI_VECTOR: u8 = 0x52;
+pub const AP_LONG_MODE_IPI_HANDLER: GuestPhysAddr = GuestPhysAddr::new(0x1_2000);
+pub const AP_LONG_MODE_IPI_IDT_LIMIT: u16 = 0x052f;
 
 const AP_LONG_MODE_GDT_BYTES: [u8; 24] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x9a, 0xaf, 0x00,
     0xff, 0xff, 0x00, 0x00, 0x00, 0x92, 0xcf, 0x00,
 ];
 const AP_LONG_MODE_GDTR_BYTES: [u8; 6] = [0x17, 0x00, 0x00, 0x70, 0x00, 0x00];
+const AP_LONG_MODE_IPI_IDTR_BYTES: [u8; 10] = [0x2f, 0x05, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 #[rustfmt::skip]
 const FIRST_GUEST_BYTES: [u8; 97] = [
@@ -63,6 +72,31 @@ const FIRST_GUEST_BYTES: [u8; 97] = [
     0xb0, b'D', 0xe6, 0xe9,
     0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, SIPI_VECTOR, 0x06, 0x00, 0x00,
     0xb0, b'S', 0xe6, 0xe9,
+    0x48, 0xb9, 0x00, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x8a, 0x01,
+    0x3c, SHARED_MARKER_VALUE,
+    0x75, 0x09,
+    0xb0, b'M', 0xe6, 0xe9,
+    0xb0, b'D', 0xe6, 0xe9,
+    0xf4,
+    0xb0, b'F', 0xe6, 0xe9, 0xf4,
+];
+
+#[rustfmt::skip]
+const FIRST_GUEST_IPI_BYTES: [u8; 121] = [
+    0xfa,
+    0x48, 0xbb, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xb0, b'0', 0xe6, 0xe9,
+    0xc7, 0x83, 0x10, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x00, 0xc5, 0x00, 0x00,
+    0xb0, b'I', 0xe6, 0xe9,
+    0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, 0x00, 0x85, 0x00, 0x00,
+    0xb0, b'D', 0xe6, 0xe9,
+    0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, SIPI_VECTOR, 0x06, 0x00, 0x00,
+    0xb0, b'S', 0xe6, 0xe9,
+    0xc7, 0x83, 0x10, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0xc7, 0x83, 0x00, 0x03, 0x00, 0x00, AP_LONG_MODE_IPI_VECTOR, 0x00, 0x00, 0x00,
+    0xb0, b'X', 0xe6, 0xe9,
     0x48, 0xb9, 0x00, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x8a, 0x01,
     0x3c, SHARED_MARKER_VALUE,
@@ -100,17 +134,53 @@ const AP_LONG_MODE_TRAMPOLINE_BYTES: [u8; 121] = [
     0xf4,
 ];
 
+// Assembled with GNU as/ld at VMA 0x8000. The AP performs the same guest-owned long-mode
+// transition as AP_LONG_MODE_TRAMPOLINE_BYTES, then software-enables its LAPIC, loads the IDT
+// installed at 0x6000, reports readiness while IF is clear, and uses adjacent STI;HLT for the
+// guest-originated BSP IPI handoff.
+#[rustfmt::skip]
+const AP_LONG_MODE_IPI_TRAMPOLINE_BYTES: [u8; 154] = [
+    0xfa, 0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xc0, 0x8e, 0xd0, 0xb0, 0x41, 0xe6,
+    0xe9, 0x0f, 0x01, 0x16, 0x20, 0x70, 0x0f, 0x20, 0xe0, 0x66, 0x83, 0xc8,
+    0x20, 0x0f, 0x22, 0xe0, 0x66, 0xb8, 0x00, 0x10, 0x00, 0x00, 0x0f, 0x22,
+    0xd8, 0x66, 0xb9, 0x80, 0x00, 0x00, 0xc0, 0x0f, 0x32, 0x66, 0x0d, 0x00,
+    0x01, 0x00, 0x00, 0x0f, 0x30, 0x0f, 0x20, 0xc0, 0x66, 0x0d, 0x01, 0x00,
+    0x00, 0x80, 0x0f, 0x22, 0xc0, 0x66, 0xea, 0x49, 0x80, 0x00, 0x00, 0x08,
+    0x00, 0x66, 0xb8, 0x10, 0x00, 0x8e, 0xd0, 0x8e, 0xd8, 0x8e, 0xc0, 0x48,
+    0xbc, 0x00, 0xf0, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x00, 0xb0, 0x4c, 0xe6,
+    0xe9, 0x48, 0xbb, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc7,
+    0x83, 0xf0, 0x00, 0x00, 0x00, 0xff, 0x01, 0x00, 0x00, 0x0f, 0x01, 0x1c,
+    0x25, 0x40, 0x70, 0x00, 0x00, 0xb0, 0x52, 0xe6, 0xe9, 0xfb, 0xf4, 0xb0,
+    0x4d, 0xe6, 0xe9, 0x48, 0xb9, 0x00, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0xb0, 0x4b, 0x88, 0x01, 0xb0, 0x44, 0xe6, 0xe9, 0xf4,
+];
+
+const AP_LONG_MODE_IPI_HANDLER_BYTES: [u8; 16] = [
+    0xb0, b'I', 0xe6, 0xe9,
+    0xc7, 0x83, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x48, 0xcf,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApExecutionMode {
     RealModeMarker,
     GuestLongMode,
+    GuestLongModeIpi,
 }
 
 impl ApExecutionMode {
+    const fn first_guest(self) -> &'static [u8] {
+        match self {
+            Self::GuestLongModeIpi => &FIRST_GUEST_IPI_BYTES,
+            Self::RealModeMarker | Self::GuestLongMode => &FIRST_GUEST_BYTES,
+        }
+    }
+
     const fn trampoline(self) -> &'static [u8] {
         match self {
             Self::RealModeMarker => &AP_TRAMPOLINE_BYTES,
             Self::GuestLongMode => &AP_LONG_MODE_TRAMPOLINE_BYTES,
+            Self::GuestLongModeIpi => &AP_LONG_MODE_IPI_TRAMPOLINE_BYTES,
         }
     }
 
@@ -118,7 +188,23 @@ impl ApExecutionMode {
         match self {
             Self::RealModeMarker => SECOND_PROOF,
             Self::GuestLongMode => AP_LONG_MODE_PROOF,
+            Self::GuestLongModeIpi => AP_LONG_MODE_IPI_PROOF,
         }
+    }
+
+    const fn first_proof(self) -> &'static [u8] {
+        match self {
+            Self::GuestLongModeIpi => AP_LONG_MODE_IPI_BSP_PROOF,
+            Self::RealModeMarker | Self::GuestLongMode => FIRST_PROOF,
+        }
+    }
+
+    const fn is_long_mode(self) -> bool {
+        matches!(self, Self::GuestLongMode | Self::GuestLongModeIpi)
+    }
+
+    const fn is_ipi(self) -> bool {
+        matches!(self, Self::GuestLongModeIpi)
     }
 }
 
@@ -147,45 +233,41 @@ pub struct ApLongModeState {
 
 impl ApLongModeState {
     #[must_use]
-    pub const fn rsp(self) -> u64 {
-        self.rsp
-    }
+    pub const fn rsp(self) -> u64 { self.rsp }
     #[must_use]
-    pub const fn cs_selector(self) -> u16 {
-        self.cs_selector
-    }
+    pub const fn cs_selector(self) -> u16 { self.cs_selector }
     #[must_use]
-    pub const fn cs_long(self) -> u8 {
-        self.cs_long
-    }
+    pub const fn cs_long(self) -> u8 { self.cs_long }
     #[must_use]
-    pub const fn ss_selector(self) -> u16 {
-        self.ss_selector
-    }
+    pub const fn ss_selector(self) -> u16 { self.ss_selector }
     #[must_use]
-    pub const fn gdt_base(self) -> u64 {
-        self.gdt_base
-    }
+    pub const fn gdt_base(self) -> u64 { self.gdt_base }
     #[must_use]
-    pub const fn gdt_limit(self) -> u16 {
-        self.gdt_limit
-    }
+    pub const fn gdt_limit(self) -> u16 { self.gdt_limit }
     #[must_use]
-    pub const fn cr0(self) -> u64 {
-        self.cr0
-    }
+    pub const fn cr0(self) -> u64 { self.cr0 }
     #[must_use]
-    pub const fn cr3(self) -> u64 {
-        self.cr3
-    }
+    pub const fn cr3(self) -> u64 { self.cr3 }
     #[must_use]
-    pub const fn cr4(self) -> u64 {
-        self.cr4
-    }
+    pub const fn cr4(self) -> u64 { self.cr4 }
     #[must_use]
-    pub const fn efer(self) -> u64 {
-        self.efer
-    }
+    pub const fn efer(self) -> u64 { self.efer }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApIpiState {
+    ready_rflags: u64,
+    idt_base: u64,
+    idt_limit: u16,
+}
+
+impl ApIpiState {
+    #[must_use]
+    pub const fn ready_rflags(self) -> u64 { self.ready_rflags }
+    #[must_use]
+    pub const fn idt_base(self) -> u64 { self.idt_base }
+    #[must_use]
+    pub const fn idt_limit(self) -> u16 { self.idt_limit }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,57 +289,31 @@ pub struct TwoVcpuInitSipiResult {
 
 impl TwoVcpuInitSipiResult {
     #[must_use]
-    pub fn first_io_exits(&self) -> &[PortIoExit] {
-        &self.first_io_exits
-    }
+    pub fn first_io_exits(&self) -> &[PortIoExit] { &self.first_io_exits }
     #[must_use]
-    pub fn second_io_exits(&self) -> &[PortIoExit] {
-        &self.second_io_exits
-    }
+    pub fn second_io_exits(&self) -> &[PortIoExit] { &self.second_io_exits }
     #[must_use]
-    pub fn first_proof(&self) -> &[u8] {
-        &self.first_proof
-    }
+    pub fn first_proof(&self) -> &[u8] { &self.first_proof }
     #[must_use]
-    pub fn second_proof(&self) -> &[u8] {
-        &self.second_proof
-    }
+    pub fn second_proof(&self) -> &[u8] { &self.second_proof }
     #[must_use]
-    pub const fn initial_mp_state(&self) -> u32 {
-        self.initial_mp_state
-    }
+    pub const fn initial_mp_state(&self) -> u32 { self.initial_mp_state }
     #[must_use]
-    pub const fn startup_mp_state(&self) -> u32 {
-        self.startup_mp_state
-    }
+    pub const fn startup_mp_state(&self) -> u32 { self.startup_mp_state }
     #[must_use]
-    pub const fn startup_rip(&self) -> u64 {
-        self.startup_rip
-    }
+    pub const fn startup_rip(&self) -> u64 { self.startup_rip }
     #[must_use]
-    pub const fn startup_cs_selector(&self) -> u16 {
-        self.startup_cs_selector
-    }
+    pub const fn startup_cs_selector(&self) -> u16 { self.startup_cs_selector }
     #[must_use]
-    pub const fn startup_cs_base(&self) -> u64 {
-        self.startup_cs_base
-    }
+    pub const fn startup_cs_base(&self) -> u64 { self.startup_cs_base }
     #[must_use]
-    pub const fn startup_cr0(&self) -> u64 {
-        self.startup_cr0
-    }
+    pub const fn startup_cr0(&self) -> u64 { self.startup_cr0 }
     #[must_use]
-    pub const fn final_mp_state(&self) -> u32 {
-        self.final_mp_state
-    }
+    pub const fn final_mp_state(&self) -> u32 { self.final_mp_state }
     #[must_use]
-    pub const fn ap_completion_rflags(&self) -> u64 {
-        self.ap_completion_rflags
-    }
+    pub const fn ap_completion_rflags(&self) -> u64 { self.ap_completion_rflags }
     #[must_use]
-    pub const fn shared_marker(&self) -> u8 {
-        self.shared_marker
-    }
+    pub const fn shared_marker(&self) -> u8 { self.shared_marker }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -280,62 +336,89 @@ pub struct TwoVcpuApLongModeResult {
 
 impl TwoVcpuApLongModeResult {
     #[must_use]
-    pub fn first_io_exits(&self) -> &[PortIoExit] {
-        &self.first_io_exits
-    }
+    pub fn first_io_exits(&self) -> &[PortIoExit] { &self.first_io_exits }
     #[must_use]
-    pub fn second_io_exits(&self) -> &[PortIoExit] {
-        &self.second_io_exits
-    }
+    pub fn second_io_exits(&self) -> &[PortIoExit] { &self.second_io_exits }
     #[must_use]
-    pub fn first_proof(&self) -> &[u8] {
-        &self.first_proof
-    }
+    pub fn first_proof(&self) -> &[u8] { &self.first_proof }
     #[must_use]
-    pub fn second_proof(&self) -> &[u8] {
-        &self.second_proof
-    }
+    pub fn second_proof(&self) -> &[u8] { &self.second_proof }
     #[must_use]
-    pub const fn initial_mp_state(&self) -> u32 {
-        self.initial_mp_state
-    }
+    pub const fn initial_mp_state(&self) -> u32 { self.initial_mp_state }
     #[must_use]
-    pub const fn startup_mp_state(&self) -> u32 {
-        self.startup_mp_state
-    }
+    pub const fn startup_mp_state(&self) -> u32 { self.startup_mp_state }
     #[must_use]
-    pub const fn startup_rip(&self) -> u64 {
-        self.startup_rip
-    }
+    pub const fn startup_rip(&self) -> u64 { self.startup_rip }
     #[must_use]
-    pub const fn startup_cs_selector(&self) -> u16 {
-        self.startup_cs_selector
-    }
+    pub const fn startup_cs_selector(&self) -> u16 { self.startup_cs_selector }
     #[must_use]
-    pub const fn startup_cs_base(&self) -> u64 {
-        self.startup_cs_base
-    }
+    pub const fn startup_cs_base(&self) -> u64 { self.startup_cs_base }
     #[must_use]
-    pub const fn startup_cr0(&self) -> u64 {
-        self.startup_cr0
-    }
+    pub const fn startup_cr0(&self) -> u64 { self.startup_cr0 }
     #[must_use]
-    pub const fn final_mp_state(&self) -> u32 {
-        self.final_mp_state
-    }
+    pub const fn final_mp_state(&self) -> u32 { self.final_mp_state }
     #[must_use]
-    pub const fn ap_completion_rflags(&self) -> u64 {
-        self.ap_completion_rflags
-    }
+    pub const fn ap_completion_rflags(&self) -> u64 { self.ap_completion_rflags }
     #[must_use]
-    pub const fn shared_marker(&self) -> u8 {
-        self.shared_marker
-    }
+    pub const fn shared_marker(&self) -> u8 { self.shared_marker }
     #[must_use]
-    pub const fn long_mode_state(&self) -> ApLongModeState {
-        self.long_mode
-    }
+    pub const fn long_mode_state(&self) -> ApLongModeState { self.long_mode }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TwoVcpuApIpiResult {
+    first_io_exits: Vec<PortIoExit>,
+    second_io_exits: Vec<PortIoExit>,
+    first_proof: Vec<u8>,
+    second_proof: Vec<u8>,
+    initial_mp_state: u32,
+    startup_mp_state: u32,
+    startup_rip: u64,
+    startup_cs_selector: u16,
+    startup_cs_base: u64,
+    startup_cr0: u64,
+    final_mp_state: u32,
+    ap_completion_rflags: u64,
+    shared_marker: u8,
+    long_mode: ApLongModeState,
+    interrupt: ApIpiState,
+}
+
+impl TwoVcpuApIpiResult {
+    #[must_use]
+    pub fn first_io_exits(&self) -> &[PortIoExit] { &self.first_io_exits }
+    #[must_use]
+    pub fn second_io_exits(&self) -> &[PortIoExit] { &self.second_io_exits }
+    #[must_use]
+    pub fn first_proof(&self) -> &[u8] { &self.first_proof }
+    #[must_use]
+    pub fn second_proof(&self) -> &[u8] { &self.second_proof }
+    #[must_use]
+    pub const fn initial_mp_state(&self) -> u32 { self.initial_mp_state }
+    #[must_use]
+    pub const fn startup_mp_state(&self) -> u32 { self.startup_mp_state }
+    #[must_use]
+    pub const fn startup_rip(&self) -> u64 { self.startup_rip }
+    #[must_use]
+    pub const fn startup_cs_selector(&self) -> u16 { self.startup_cs_selector }
+    #[must_use]
+    pub const fn startup_cs_base(&self) -> u64 { self.startup_cs_base }
+    #[must_use]
+    pub const fn startup_cr0(&self) -> u64 { self.startup_cr0 }
+    #[must_use]
+    pub const fn final_mp_state(&self) -> u32 { self.final_mp_state }
+    #[must_use]
+    pub const fn ap_completion_rflags(&self) -> u64 { self.ap_completion_rflags }
+    #[must_use]
+    pub const fn shared_marker(&self) -> u8 { self.shared_marker }
+    #[must_use]
+    pub const fn long_mode_state(&self) -> ApLongModeState { self.long_mode }
+    #[must_use]
+    pub const fn interrupt_state(&self) -> ApIpiState { self.interrupt }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApWorkerCommand { Continue, Abort }
 
 #[derive(Debug)]
 struct ApWorkerResult {
@@ -345,6 +428,7 @@ struct ApWorkerResult {
     final_mp_state: u32,
     completion_rflags: u64,
     long_mode: Option<ApLongModeState>,
+    interrupt: Option<ApIpiState>,
 }
 
 #[derive(Debug)]
@@ -377,13 +461,11 @@ pub fn run_two_vcpu_init_sipi() -> Result<TwoVcpuInitSipiResult, Error> {
 
 pub fn run_two_vcpu_ap_long_mode() -> Result<TwoVcpuApLongModeResult, Error> {
     let outcome = run_two_vcpu_startup(ApExecutionMode::GuestLongMode)?;
-    let long_mode = outcome.second.long_mode.ok_or_else(|| {
-        verification_error(
-            SECOND_VCPU_ID,
-            "AP long-mode result",
-            "guest long-mode execution did not produce a validated long-mode state",
-        )
-    })?;
+    let long_mode = outcome.second.long_mode.ok_or_else(|| verification_error(
+        SECOND_VCPU_ID,
+        "AP long-mode result",
+        "guest long-mode execution did not produce a validated long-mode state",
+    ))?;
     Ok(TwoVcpuApLongModeResult {
         first_io_exits: outcome.first_io_exits,
         second_io_exits: outcome.second.io_exits,
@@ -402,9 +484,49 @@ pub fn run_two_vcpu_ap_long_mode() -> Result<TwoVcpuApLongModeResult, Error> {
     })
 }
 
+pub fn run_two_vcpu_ap_long_mode_ipi() -> Result<TwoVcpuApIpiResult, Error> {
+    let outcome = run_two_vcpu_startup(ApExecutionMode::GuestLongModeIpi)?;
+    let long_mode = outcome.second.long_mode.ok_or_else(|| verification_error(
+        SECOND_VCPU_ID,
+        "AP long-mode IPI result",
+        "guest long-mode IPI execution did not produce a validated long-mode state",
+    ))?;
+    let interrupt = outcome.second.interrupt.ok_or_else(|| verification_error(
+        SECOND_VCPU_ID,
+        "AP long-mode IPI result",
+        "guest long-mode IPI execution did not produce a validated interrupt state",
+    ))?;
+    Ok(TwoVcpuApIpiResult {
+        first_io_exits: outcome.first_io_exits,
+        second_io_exits: outcome.second.io_exits,
+        first_proof: outcome.first_proof,
+        second_proof: outcome.second.proof,
+        initial_mp_state: outcome.initial_mp_state,
+        startup_mp_state: outcome.second.startup.mp_state,
+        startup_rip: outcome.second.startup.rip,
+        startup_cs_selector: outcome.second.startup.cs_selector,
+        startup_cs_base: outcome.second.startup.cs_base,
+        startup_cr0: outcome.second.startup.cr0,
+        final_mp_state: outcome.second.final_mp_state,
+        ap_completion_rflags: outcome.second.completion_rflags,
+        shared_marker: outcome.shared_marker,
+        long_mode,
+        interrupt,
+    })
+}
+
 fn run_two_vcpu_startup(mode: ApExecutionMode) -> Result<StartupOutcome, Error> {
-    let first_image = FlatGuestImage::new(FIRST_ENTRY, FIRST_ENTRY, &FIRST_GUEST_BYTES)?;
+    let first_image = FlatGuestImage::new(FIRST_ENTRY, FIRST_ENTRY, mode.first_guest())?;
     let trampoline = FlatGuestImage::new(AP_TRAMPOLINE, AP_TRAMPOLINE, mode.trampoline())?;
+    let handler = if mode.is_ipi() {
+        Some(FlatGuestImage::new(
+            AP_LONG_MODE_IPI_HANDLER,
+            AP_LONG_MODE_IPI_HANDLER,
+            &AP_LONG_MODE_IPI_HANDLER_BYTES,
+        )?)
+    } else {
+        None
+    };
     let backend = KvmBackend::open()?;
     backend.require_mp_state_capability()?;
     let mut vm = backend.create_vm_with_irqchip()?;
@@ -416,10 +538,39 @@ fn run_two_vcpu_startup(mode: ApExecutionMode) -> Result<StartupOutcome, Error> 
         vec![LongModeMmioPageMapping::new(LAPIC_VIRTUAL_PAGE, LAPIC_GPA)],
     )
     .expect("fixed INIT/SIPI BSP LAPIC mapping remains valid");
+    if mode.is_ipi() {
+        let interrupt_layout = LongModeInterruptLayout::new(
+            memory.region(),
+            AP_TRAMPOLINE,
+            AP_LONG_MODE_STACK,
+            AP_LONG_MODE_IPI_VECTOR,
+            AP_LONG_MODE_IPI_HANDLER,
+        )
+        .expect("fixed AP long-mode IPI table layout remains valid");
+        if interrupt_layout.idt_base() != LONG_MODE_INTERRUPT_IDT_ADDR
+            || interrupt_layout.idt_limit() != AP_LONG_MODE_IPI_IDT_LIMIT
+        {
+            return Err(verification_error(
+                SECOND_VCPU_ID,
+                "AP long-mode IPI table layout",
+                format!(
+                    "expected IDT {:#x}/{AP_LONG_MODE_IPI_IDT_LIMIT:#x}, got {:#x}/{:#x}",
+                    LONG_MODE_INTERRUPT_IDT_ADDR.get(),
+                    interrupt_layout.idt_base().get(),
+                    interrupt_layout.idt_limit()
+                ),
+            ));
+        }
+        interrupt_layout.install_tables(&mut memory)?;
+        memory.write(AP_LONG_MODE_IPI_IDTR, &AP_LONG_MODE_IPI_IDTR_BYTES)?;
+    }
     layout.install_page_tables(&mut memory)?;
     first_image.load(&mut memory)?;
     trampoline.load(&mut memory)?;
-    if mode == ApExecutionMode::GuestLongMode {
+    if let Some(handler) = &handler {
+        handler.load(&mut memory)?;
+    }
+    if mode.is_long_mode() {
         memory.write(AP_LONG_MODE_GDT, &AP_LONG_MODE_GDT_BYTES)?;
         memory.write(AP_LONG_MODE_GDTR, &AP_LONG_MODE_GDTR_BYTES)?;
     }
@@ -467,44 +618,128 @@ fn run_two_vcpu_startup(mode: ApExecutionMode) -> Result<StartupOutcome, Error> 
         "INIT/SIPI BSP SIPI barrier",
     )?;
 
+    let (ready_tx, ready_rx) = mpsc::channel::<u64>();
+    let (command_tx, command_rx) = mpsc::channel::<ApWorkerCommand>();
     let worker = std::thread::spawn(move || -> Result<ApWorkerResult, Error> {
         let mut second_vcpu = second_vcpu;
         let mut port_io = PortIoBus::with_debug_port();
         let startup_state = require_init_sipi_startup_state(&mut second_vcpu)?;
         let mut io_exits = Vec::new();
-        for (index, byte) in mode.proof().iter().copied().enumerate() {
-            io_exits.push(run_expected_debug_output(
-                &mut second_vcpu,
-                &mut port_io,
-                byte,
-                if mode == ApExecutionMode::GuestLongMode {
-                    [
-                        "AP real-mode startup",
-                        "AP 64-bit entry",
-                        "AP long-mode marker completion",
-                        "AP long-mode completion barrier",
-                    ][index]
-                } else {
-                    [
-                        "INIT/SIPI AP trampoline startup",
-                        "INIT/SIPI AP shared-marker completion",
-                        "INIT/SIPI AP completion barrier",
-                        "unused",
-                    ][index]
-                },
-            )?);
+        let mut interrupt = None;
+
+        if mode.is_ipi() {
+            for (byte, stage) in [
+                (b'A', "AP real-mode startup"),
+                (b'L', "AP 64-bit entry"),
+                (b'R', "AP long-mode IPI readiness"),
+            ] {
+                io_exits.push(run_expected_debug_output(
+                    &mut second_vcpu,
+                    &mut port_io,
+                    byte,
+                    stage,
+                )?);
+            }
+            let ready_rflags = second_vcpu.registers()?.rflags;
+            require_interrupt_disabled_flags(
+                SECOND_VCPU_ID,
+                "AP long-mode IPI readiness state",
+                ready_rflags,
+            )?;
+            let special = second_vcpu.capture_special_register_snapshot()?;
+            let idt = special.idt();
+            if idt.base() != LONG_MODE_INTERRUPT_IDT_ADDR.get()
+                || idt.limit() != AP_LONG_MODE_IPI_IDT_LIMIT
+            {
+                return Err(verification_error(
+                    SECOND_VCPU_ID,
+                    "AP long-mode IPI IDTR state",
+                    format!(
+                        "expected IDT {:#x}/{AP_LONG_MODE_IPI_IDT_LIMIT:#x}, got {:#x}/{:#x}",
+                        LONG_MODE_INTERRUPT_IDT_ADDR.get(),
+                        idt.base(),
+                        idt.limit()
+                    ),
+                ));
+            }
+            ready_tx.send(ready_rflags).map_err(|_| verification_error(
+                SECOND_VCPU_ID,
+                "AP long-mode IPI readiness channel",
+                "main thread dropped AP readiness receiver",
+            ))?;
+            match command_rx.recv().map_err(|_| verification_error(
+                SECOND_VCPU_ID,
+                "AP long-mode IPI command channel",
+                "main thread dropped AP command sender",
+            ))? {
+                ApWorkerCommand::Continue => {}
+                ApWorkerCommand::Abort => return Err(verification_error(
+                    SECOND_VCPU_ID,
+                    "AP long-mode IPI worker abort",
+                    "BSP IPI delivery failed before AP resume",
+                )),
+            }
+            for (byte, stage) in [
+                (b'I', "AP long-mode IPI handler"),
+                (b'M', "AP long-mode IPI resumed mainline"),
+                (b'D', "AP long-mode IPI completion barrier"),
+            ] {
+                io_exits.push(run_expected_debug_output(
+                    &mut second_vcpu,
+                    &mut port_io,
+                    byte,
+                    stage,
+                )?);
+            }
+            interrupt = Some(ApIpiState {
+                ready_rflags,
+                idt_base: idt.base(),
+                idt_limit: idt.limit(),
+            });
+        } else {
+            for (index, byte) in mode.proof().iter().copied().enumerate() {
+                io_exits.push(run_expected_debug_output(
+                    &mut second_vcpu,
+                    &mut port_io,
+                    byte,
+                    if mode == ApExecutionMode::GuestLongMode {
+                        [
+                            "AP real-mode startup",
+                            "AP 64-bit entry",
+                            "AP long-mode marker completion",
+                            "AP long-mode completion barrier",
+                        ][index]
+                    } else {
+                        [
+                            "INIT/SIPI AP trampoline startup",
+                            "INIT/SIPI AP shared-marker completion",
+                            "INIT/SIPI AP completion barrier",
+                            "unused",
+                        ][index]
+                    },
+                )?);
+            }
         }
+
         let final_mp_state = require_mp_state(
             &second_vcpu,
             KVM_MP_STATE_RUNNABLE,
             "INIT/SIPI final AP MP state",
         )?;
         let completion_rflags = second_vcpu.registers()?.rflags;
-        require_interrupt_disabled_flags(
-            SECOND_VCPU_ID,
-            "INIT/SIPI AP completion state",
-            completion_rflags,
-        )?;
+        if mode.is_ipi() {
+            require_interrupt_enabled_flags(
+                SECOND_VCPU_ID,
+                "AP long-mode IPI completion state",
+                completion_rflags,
+            )?;
+        } else {
+            require_interrupt_disabled_flags(
+                SECOND_VCPU_ID,
+                "INIT/SIPI AP completion state",
+                completion_rflags,
+            )?;
+        }
         let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
         if proof.as_slice() != mode.proof() {
             return Err(verification_error(
@@ -513,7 +748,7 @@ fn run_two_vcpu_startup(mode: ApExecutionMode) -> Result<StartupOutcome, Error> 
                 format!("expected {:?}, got {proof:?}", mode.proof()),
             ));
         }
-        let long_mode = if mode == ApExecutionMode::GuestLongMode {
+        let long_mode = if mode.is_long_mode() {
             Some(require_ap_long_mode_state(&second_vcpu)?)
         } else {
             None
@@ -525,15 +760,53 @@ fn run_two_vcpu_startup(mode: ApExecutionMode) -> Result<StartupOutcome, Error> 
             final_mp_state,
             completion_rflags,
             long_mode,
+            interrupt,
         })
     });
-    let second = worker.join().map_err(|_| {
-        verification_error(
+
+    let mut first_ipi = None;
+    if mode.is_ipi() {
+        let ready_rflags = ready_rx.recv().map_err(|_| verification_error(
             SECOND_VCPU_ID,
-            "INIT/SIPI AP worker join",
-            "secondary vCPU worker panicked",
-        )
-    })??;
+            "AP long-mode IPI readiness receive",
+            "AP worker exited before reporting readiness",
+        ))?;
+        require_interrupt_disabled_flags(
+            SECOND_VCPU_ID,
+            "AP long-mode IPI readiness readback",
+            ready_rflags,
+        )?;
+        let ipi = match run_expected_debug_output(
+            &mut first_vcpu,
+            &mut first_port_io,
+            b'X',
+            "INIT/SIPI BSP post-fixed-IPI barrier",
+        ) {
+            Ok(exit) => exit,
+            Err(error) => {
+                let _ = command_tx.send(ApWorkerCommand::Abort);
+                let _ = worker.join();
+                return Err(error);
+            }
+        };
+        require_interrupt_disabled_flags(
+            FIRST_VCPU_ID,
+            "INIT/SIPI BSP post-fixed-IPI state",
+            first_vcpu.registers()?.rflags,
+        )?;
+        first_ipi = Some(ipi);
+        command_tx.send(ApWorkerCommand::Continue).map_err(|_| verification_error(
+            FIRST_VCPU_ID,
+            "AP long-mode IPI worker resume channel",
+            "AP worker exited before resume command",
+        ))?;
+    }
+
+    let second = worker.join().map_err(|_| verification_error(
+        SECOND_VCPU_ID,
+        "INIT/SIPI AP worker join",
+        "secondary vCPU worker panicked",
+    ))??;
 
     let mut shared_marker = [0_u8; 1];
     vm.guest_memory()
@@ -567,22 +840,20 @@ fn run_two_vcpu_startup(mode: ApExecutionMode) -> Result<StartupOutcome, Error> 
         first_vcpu.registers()?.rflags,
     )?;
     let first_proof = first_port_io.debug_output().unwrap_or(&[]).to_vec();
-    if first_proof.as_slice() != FIRST_PROOF {
+    if first_proof.as_slice() != mode.first_proof() {
         return Err(verification_error(
             FIRST_VCPU_ID,
             "INIT/SIPI BSP proof",
-            format!("expected {:?}, got {first_proof:?}", FIRST_PROOF),
+            format!("expected {:?}, got {first_proof:?}", mode.first_proof()),
         ));
     }
+    let mut first_io_exits = vec![first_zero, first_init, first_deassert, first_sipi];
+    if let Some(ipi) = first_ipi {
+        first_io_exits.push(ipi);
+    }
+    first_io_exits.extend([first_marker, first_completion]);
     Ok(StartupOutcome {
-        first_io_exits: vec![
-            first_zero,
-            first_init,
-            first_deassert,
-            first_sipi,
-            first_marker,
-            first_completion,
-        ],
+        first_io_exits,
         second,
         first_proof,
         initial_mp_state,
@@ -721,6 +992,23 @@ fn require_interrupt_disabled_flags(
     Ok(())
 }
 
+fn require_interrupt_enabled_flags(
+    id: VcpuId,
+    stage: &'static str,
+    rflags: u64,
+) -> Result<(), Error> {
+    if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
+        || rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
+    {
+        return Err(verification_error(
+            id,
+            stage,
+            format!("expected architectural bit1 and IF set, got RFLAGS {rflags:#x}"),
+        ));
+    }
+    Ok(())
+}
+
 fn verification_error(id: VcpuId, operation: &'static str, detail: impl Into<String>) -> Error {
     Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
         id: id.get(),
@@ -800,6 +1088,26 @@ mod tests {
         );
         assert_eq!(AP_LONG_MODE_PROOF, b"ALPD");
         assert_ne!(AP_LONG_MODE_STACK, FIRST_STACK);
+    }
+
+    #[test]
+    fn ap_long_mode_ipi_machine_code_owns_idt_and_guest_icr_route() {
+        assert_eq!(AP_LONG_MODE_IPI_IDTR_BYTES, [0x2f, 0x05, 0x00, 0x60, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(AP_LONG_MODE_IPI_VECTOR, 0x52);
+        assert_eq!(AP_LONG_MODE_IPI_IDT_LIMIT, 0x52f);
+        assert_eq!(AP_LONG_MODE_IPI_HANDLER_BYTES.len(), 16);
+        assert!(AP_LONG_MODE_IPI_TRAMPOLINE_BYTES.windows(2).any(|window| window == [0xfb, 0xf4]));
+        assert!(AP_LONG_MODE_IPI_TRAMPOLINE_BYTES.windows(8).any(|window| window == [0x0f, 0x01, 0x1c, 0x25, 0x40, 0x70, 0x00, 0x00]));
+        assert_eq!(
+            &FIRST_GUEST_IPI_BYTES[67..77],
+            &[0xc7, 0x83, 0x10, 0x03, 0, 0, 0, 0, 0, 1]
+        );
+        assert_eq!(
+            &FIRST_GUEST_IPI_BYTES[77..87],
+            &[0xc7, 0x83, 0, 0x03, 0, 0, AP_LONG_MODE_IPI_VECTOR, 0, 0, 0]
+        );
+        assert_eq!(AP_LONG_MODE_IPI_BSP_PROOF, b"0IDSXMD");
+        assert_eq!(AP_LONG_MODE_IPI_PROOF, b"ALRIMD");
     }
 
     #[test]
