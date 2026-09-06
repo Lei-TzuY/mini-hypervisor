@@ -1,6 +1,5 @@
 use mini_hypervisor::portio::two_vcpu_tlb_shootdown_fixture::{
-    run_two_vcpu_tlb_shootdown, TLB_SHOOTDOWN_VECTOR, TLB_TARGET_PTE,
-    TLB_TARGET_VIRTUAL_PAGE,
+    run_two_vcpu_tlb_shootdown, TLB_SHOOTDOWN_VECTOR, TLB_TARGET_PTE, TLB_TARGET_VIRTUAL_PAGE,
 };
 use std::process::ExitCode;
 
@@ -11,7 +10,10 @@ fn main() -> ExitCode {
             println!("TLB shootdown vector: {TLB_SHOOTDOWN_VECTOR:#x}");
             println!("TLB shootdown target VA: {TLB_TARGET_VIRTUAL_PAGE:#x}");
             println!("TLB shootdown target PTE: {:#x}", TLB_TARGET_PTE.get());
-            println!("TLB shootdown initial AP MP state: {}", state.initial_ap_mp_state());
+            println!(
+                "TLB shootdown initial AP MP state: {}",
+                state.initial_ap_mp_state()
+            );
             println!(
                 "TLB shootdown startup: rip={:#x} cs={:#x} base={:#x}",
                 state.startup_rip(),
