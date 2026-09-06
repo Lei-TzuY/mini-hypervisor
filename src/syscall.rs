@@ -29,7 +29,7 @@ pub const MSR_STAR: MsrIndex = MsrIndex::new(0xc000_0081);
 pub const MSR_LSTAR: MsrIndex = MsrIndex::new(0xc000_0082);
 pub const MSR_SFMASK: MsrIndex = MsrIndex::new(0xc000_0084);
 
-pub const SYSCALL_STAR_VALUE: u64 = 0x0010_0008_0000_0000;
+pub const SYSCALL_STAR_VALUE: u64 = 0x0013_0008_0000_0000;
 pub const SYSCALL_LSTAR_VALUE: u64 = SYSCALL_KERNEL_ENTRY.get();
 pub const SYSCALL_SFMASK_VALUE: u64 = 1 << 9;
 pub const EFER_SYSCALL_ENABLE: u64 = 1;
@@ -432,7 +432,13 @@ fn configure_syscall_msrs(backend: &KvmBackend, vcpu: &Vcpu) -> Result<[u64; 4],
         observed.values()[1].value(),
         observed.values()[2].value(),
     ];
-    if readback != [SYSCALL_STAR_VALUE, SYSCALL_LSTAR_VALUE, SYSCALL_SFMASK_VALUE] {
+    if readback
+        != [
+            SYSCALL_STAR_VALUE,
+            SYSCALL_LSTAR_VALUE,
+            SYSCALL_SFMASK_VALUE,
+        ]
+    {
         return Err(verification_error(
             "syscall MSR readback",
             format!("unexpected readback {readback:#x?}"),
@@ -619,6 +625,7 @@ mod tests {
     #[test]
     fn star_encodes_exact_kernel_and_sysret_selectors() {
         assert_eq!(star_kernel_cs(SYSCALL_STAR_VALUE), KERNEL_CODE_SELECTOR);
+        assert_eq!(((SYSCALL_STAR_VALUE >> 48) as u16) & 3, 3);
         assert_eq!(
             star_sysret_cs(SYSCALL_STAR_VALUE),
             PRIVILEGE_USER_CODE_SELECTOR
