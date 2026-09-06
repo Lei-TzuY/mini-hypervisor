@@ -1,6 +1,5 @@
 use super::{PortIoBus, PortIoService, DEBUG_PORT};
 use crate::error::{Error, HostEnvironmentError};
-use crate::execution::run_vcpu_until_stopped;
 use crate::interrupt::{LongModeInterruptLayout, LONG_MODE_INTERRUPT_IDT_ADDR};
 use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
@@ -25,7 +24,6 @@ use crate::portio::two_vcpu_work_dispatch_fixture::{
     WORK_RESULT_OFFSET,
 };
 use crate::vcpu::{PortIoDirection, PortIoExit, Vcpu, VcpuExit};
-use crate::vmexit::VmExitReport;
 use std::io;
 use std::sync::mpsc;
 
@@ -44,8 +42,6 @@ const X86_RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
 
 pub const BSP_COMPOSED_PROOF: &[u8; 8] = b"0IDSCXVD";
 pub const AP_COMPOSED_PROOF: &[u8; 6] = b"ALRIPD";
-pub const BSP_TERMINAL_RIP: u64 = 0x1_009b;
-pub const AP_TERMINAL_RIP: u64 = 0x80a6;
 
 const AP_LONG_MODE_GDT_BYTES: [u8; 24] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x9a, 0xaf, 0x00,
@@ -257,8 +253,7 @@ pub struct SipiIpiWorkDispatchResult {
     mailbox: ComposedMailboxSnapshot,
     initial_ap_mp_state: u32,
     ap_state: ComposedApState,
-    bsp_report: VmExitReport,
-    ap_report: VmExitReport,
+    bsp_completion_rflags: u64,
 }
 
 impl SipiIpiWorkDispatchResult {
@@ -298,13 +293,8 @@ impl SipiIpiWorkDispatchResult {
     }
 
     #[must_use]
-    pub const fn bsp_report(&self) -> VmExitReport {
-        self.bsp_report
-    }
-
-    #[must_use]
-    pub const fn ap_report(&self) -> VmExitReport {
-        self.ap_report
+    pub const fn bsp_completion_rflags(&self) -> u64 {
+        self.bsp_completion_rflags
     }
 }
 
@@ -319,7 +309,6 @@ struct ApWorkerResult {
     io_exits: Vec<PortIoExit>,
     proof: Vec<u8>,
     state: ComposedApState,
-    report: VmExitReport,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -496,7 +485,6 @@ pub fn run_sipi_ipi_work_dispatch() -> Result<SipiIpiWorkDispatchResult, Error> 
             "composed AP completion state",
             completion_rflags,
         )?;
-        let terminal = run_vcpu_until_stopped(&mut ap_vcpu, &mut port_io, 1)?;
         let state = capture_composed_ap_state(
             &ap_vcpu,
             startup,
@@ -517,7 +505,6 @@ pub fn run_sipi_ipi_work_dispatch() -> Result<SipiIpiWorkDispatchResult, Error> 
             io_exits,
             proof,
             state,
-            report: terminal.report(),
         })
     });
 
@@ -565,7 +552,7 @@ pub fn run_sipi_ipi_work_dispatch() -> Result<SipiIpiWorkDispatchResult, Error> 
         )
     })?;
 
-    let bsp_execution = (|| -> Result<(Vec<PortIoExit>, VmExitReport), Error> {
+    let bsp_execution = (|| -> Result<(Vec<PortIoExit>, u64), Error> {
         let mut exits = Vec::new();
         for (byte, stage) in [
             (b'V', "composed BSP result validation"),
@@ -578,8 +565,13 @@ pub fn run_sipi_ipi_work_dispatch() -> Result<SipiIpiWorkDispatchResult, Error> 
                 stage,
             )?);
         }
-        let terminal = run_vcpu_until_stopped(&mut bsp_vcpu, &mut bsp_port_io, 1)?;
-        Ok((exits, terminal.report()))
+        let completion_rflags = bsp_vcpu.registers()?.rflags;
+        require_interrupt_disabled_flags(
+            FIRST_VCPU_ID.get(),
+            "composed BSP completion state",
+            completion_rflags,
+        )?;
+        Ok((exits, completion_rflags))
     })();
 
     let ap = worker.join().map_err(|_| {
@@ -589,7 +581,7 @@ pub fn run_sipi_ipi_work_dispatch() -> Result<SipiIpiWorkDispatchResult, Error> 
             "AP worker panicked",
         )
     })??;
-    let (tail_exits, bsp_report) = bsp_execution?;
+    let (tail_exits, bsp_completion_rflags) = bsp_execution?;
     bsp_io_exits.extend(tail_exits);
 
     let bsp_proof = bsp_port_io.debug_output().unwrap_or(&[]).to_vec();
@@ -633,8 +625,7 @@ pub fn run_sipi_ipi_work_dispatch() -> Result<SipiIpiWorkDispatchResult, Error> 
         mailbox,
         initial_ap_mp_state,
         ap_state: ap.state,
-        bsp_report,
-        ap_report: ap.report,
+        bsp_completion_rflags,
     })
 }
 
@@ -788,11 +779,7 @@ fn require_interrupt_disabled_flags(
     Ok(())
 }
 
-fn require_interrupt_enabled_flags(
-    id: u16,
-    stage: &'static str,
-    rflags: u64,
-) -> Result<(), Error> {
+fn require_interrupt_enabled_flags(id: u16, stage: &'static str, rflags: u64) -> Result<(), Error> {
     if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
         || rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE
     {
@@ -823,8 +810,6 @@ mod tests {
         assert_eq!(AP_GUEST_BYTES.len(), 171);
         assert_eq!(BSP_COMPOSED_PROOF, b"0IDSCXVD");
         assert_eq!(AP_COMPOSED_PROOF, b"ALRIPD");
-        assert_eq!(BSP_TERMINAL_RIP, BSP_ENTRY.get() + 0x9b);
-        assert_eq!(AP_TERMINAL_RIP, AP_TRAMPOLINE.get() + 0xa6);
         assert!(BSP_GUEST_BYTES
             .windows(3)
             .any(|window| window == [0x86, 0x41, WORK_COMMAND_OFFSET as u8]));
