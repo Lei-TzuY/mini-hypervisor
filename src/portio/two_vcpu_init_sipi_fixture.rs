@@ -16,8 +16,11 @@ const SHARED_MARKER: GuestPhysAddr = GuestPhysAddr::new(0x9000);
 const SHARED_MARKER_VALUE: u8 = b'K';
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
 const X86_RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
+const X86_CR0_PROTECTED_MODE_ENABLE: u64 = 1;
 const KVM_MP_STATE_RUNNABLE: u32 = 0;
 const KVM_MP_STATE_UNINITIALIZED: u32 = 1;
+const SIPI_CS_SELECTOR: u16 = 0x0800;
+const SIPI_CS_BASE: u64 = 0x8000;
 
 pub const FIRST_VCPU_ID: VcpuId = VcpuId::BOOT;
 pub const SECOND_VCPU_ID: VcpuId = VcpuId::new(1);
@@ -69,6 +72,15 @@ const AP_TRAMPOLINE_BYTES: [u8; 27] = [
     0xf4,
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ApStartupState {
+    mp_state: u32,
+    rip: u64,
+    cs_selector: u16,
+    cs_base: u64,
+    cr0: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TwoVcpuInitSipiResult {
     first_io_exits: Vec<PortIoExit>,
@@ -76,6 +88,11 @@ pub struct TwoVcpuInitSipiResult {
     first_proof: Vec<u8>,
     second_proof: Vec<u8>,
     initial_mp_state: u32,
+    startup_mp_state: u32,
+    startup_rip: u64,
+    startup_cs_selector: u16,
+    startup_cs_base: u64,
+    startup_cr0: u64,
     final_mp_state: u32,
     ap_completion_rflags: u64,
     shared_marker: u8,
@@ -108,6 +125,31 @@ impl TwoVcpuInitSipiResult {
     }
 
     #[must_use]
+    pub const fn startup_mp_state(&self) -> u32 {
+        self.startup_mp_state
+    }
+
+    #[must_use]
+    pub const fn startup_rip(&self) -> u64 {
+        self.startup_rip
+    }
+
+    #[must_use]
+    pub const fn startup_cs_selector(&self) -> u16 {
+        self.startup_cs_selector
+    }
+
+    #[must_use]
+    pub const fn startup_cs_base(&self) -> u64 {
+        self.startup_cs_base
+    }
+
+    #[must_use]
+    pub const fn startup_cr0(&self) -> u64 {
+        self.startup_cr0
+    }
+
+    #[must_use]
     pub const fn final_mp_state(&self) -> u32 {
         self.final_mp_state
     }
@@ -127,6 +169,7 @@ impl TwoVcpuInitSipiResult {
 struct ApWorkerResult {
     io_exits: Vec<PortIoExit>,
     proof: Vec<u8>,
+    startup: ApStartupState,
     final_mp_state: u32,
     completion_rflags: u64,
 }
@@ -157,9 +200,9 @@ pub fn run_two_vcpu_init_sipi() -> Result<TwoVcpuInitSipiResult, Error> {
     first_vcpu.initialize_long_mode(layout.boot_layout())?;
     let _ = first_vcpu.configure_legacy_pic_extint()?;
 
-    // KVM_GET_MP_STATE does not process pending LAPIC startup events. Only claim the state that is
-    // architecturally observable before the target vCPU runs; actual INIT/SIPI acceptance is proven
-    // below by executing the SIPI-selected real-mode trampoline.
+    // KVM_GET_MP_STATE does not itself process pending LAPIC startup events. The initial read proves
+    // only that the AP starts UNINITIALIZED; the worker below uses the Linux KVM_RUN EAGAIN startup
+    // handoff to consume pending INIT/SIPI and validates the resulting SIPI state before execution.
     let initial_mp_state = require_mp_state(
         &second_vcpu,
         KVM_MP_STATE_UNINITIALIZED,
@@ -198,12 +241,15 @@ pub fn run_two_vcpu_init_sipi() -> Result<TwoVcpuInitSipiResult, Error> {
         "INIT/SIPI BSP SIPI barrier",
     )?;
 
-    // vCPU1 has never been initialized or forced RUNNABLE by userspace. Its first KVM_RUN must
-    // consume pending INIT then SIPI in KVM's target-vCPU LAPIC path and reach 0x8000. Unique Vcpu
-    // ownership moves into one worker thread only after all three guest startup commands committed.
+    // vCPU1 has never been initialized or forced RUNNABLE by userspace. Its first KVM_RUN enters
+    // Linux KVM's UNINITIALIZED-vCPU startup path, consumes pending INIT/SIPI, and returns EAGAIN.
+    // We require that exact handoff and validate the resulting SIPI-selected real-mode state before
+    // the one subsequent KVM_RUN is allowed to execute trampoline byte A. Unique Vcpu ownership moves
+    // into one worker thread only after all three guest startup commands committed.
     let worker = std::thread::spawn(move || -> Result<ApWorkerResult, Error> {
         let mut second_vcpu = second_vcpu;
         let mut port_io = PortIoBus::with_debug_port();
+        let startup_state = require_init_sipi_startup_state(&mut second_vcpu)?;
         let startup = run_expected_debug_output(
             &mut second_vcpu,
             &mut port_io,
@@ -244,6 +290,7 @@ pub fn run_two_vcpu_init_sipi() -> Result<TwoVcpuInitSipiResult, Error> {
         Ok(ApWorkerResult {
             io_exits: vec![startup, marker, completion],
             proof,
+            startup: startup_state,
             final_mp_state,
             completion_rflags,
         })
@@ -311,9 +358,47 @@ pub fn run_two_vcpu_init_sipi() -> Result<TwoVcpuInitSipiResult, Error> {
         first_proof,
         second_proof: second.proof,
         initial_mp_state,
+        startup_mp_state: second.startup.mp_state,
+        startup_rip: second.startup.rip,
+        startup_cs_selector: second.startup.cs_selector,
+        startup_cs_base: second.startup.cs_base,
+        startup_cr0: second.startup.cr0,
         final_mp_state: second.final_mp_state,
         ap_completion_rflags: second.completion_rflags,
         shared_marker: shared_marker[0],
+    })
+}
+
+fn require_init_sipi_startup_state(vcpu: &mut Vcpu) -> Result<ApStartupState, Error> {
+    let mp_state = vcpu.accept_init_sipi_startup_handoff()?;
+    let registers = vcpu.registers()?;
+    let special = vcpu.capture_special_register_snapshot()?;
+    let cs = special.cs();
+
+    if registers.rip != 0
+        || cs.selector() != SIPI_CS_SELECTOR
+        || cs.base() != SIPI_CS_BASE
+        || special.cr0() & X86_CR0_PROTECTED_MODE_ENABLE != 0
+    {
+        return Err(verification_error(
+            vcpu.id(),
+            "INIT/SIPI AP startup architectural state after KVM_RUN EAGAIN",
+            format!(
+                "expected MP={KVM_MP_STATE_RUNNABLE}, RIP=0, CS={SIPI_CS_SELECTOR:#x} base={SIPI_CS_BASE:#x}, CR0.PE=0; got MP={mp_state}, RIP={:#x}, CS={:#x} base={:#x}, CR0={:#x}",
+                registers.rip,
+                cs.selector(),
+                cs.base(),
+                special.cr0()
+            ),
+        ));
+    }
+
+    Ok(ApStartupState {
+        mp_state,
+        rip: registers.rip,
+        cs_selector: cs.selector(),
+        cs_base: cs.base(),
+        cr0: special.cr0(),
     })
 }
 
@@ -400,6 +485,8 @@ mod tests {
         assert_eq!(TARGET_APIC_ID, SECOND_VCPU_ID.get() as u8);
         assert_eq!(SIPI_VECTOR, 0x08);
         assert_eq!(AP_TRAMPOLINE.get(), u64::from(SIPI_VECTOR) << 12);
+        assert_eq!(SIPI_CS_SELECTOR, 0x0800);
+        assert_eq!(SIPI_CS_BASE, AP_TRAMPOLINE.get());
         assert_eq!(ICR_HIGH_VALUE, 0x0100_0000);
         assert_eq!(INIT_ASSERT_VALUE, 0x0000_c500);
         assert_eq!(INIT_DEASSERT_VALUE, 0x0000_8500);
