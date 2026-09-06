@@ -35,10 +35,20 @@ jobs:
           grep -F 'INIT/SIPI vector: 0x8' <<<"$output"
           grep -F 'INIT/SIPI trampoline GPA: 0x8000' <<<"$output"
           grep -F 'INIT/SIPI initial AP mp-state: 1' <<<"$output"
+          grep -F 'INIT/SIPI startup AP mp-state: 0' <<<"$output"
+          grep -F 'INIT/SIPI startup AP RIP: 0x0' <<<"$output"
+          grep -F 'INIT/SIPI startup AP CS selector: 0x800' <<<"$output"
+          grep -F 'INIT/SIPI startup AP CS base: 0x8000' <<<"$output"
           grep -F 'INIT/SIPI final AP mp-state: 0' <<<"$output"
           grep -F 'INIT/SIPI shared marker: 0x4b' <<<"$output"
           grep -F 'INIT/SIPI BSP proof: [48, 73, 68, 83, 77, 68]' <<<"$output"
           grep -F 'INIT/SIPI AP proof: [65, 80, 68]' <<<"$output"
+
+          line="$(grep -F 'INIT/SIPI startup AP CR0:' <<<"$output")"
+          hex="${line##*: }"
+          [[ "$hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          cr0=$((hex))
+          (( (cr0 & 0x1) == 0 ))
 
           line="$(grep -F 'INIT/SIPI AP completion rflags:' <<<"$output")"
           hex="${line##*: }"
