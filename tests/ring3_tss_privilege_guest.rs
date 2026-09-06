@@ -2,8 +2,8 @@ use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::error::{Error, HostEnvironmentError};
 use mini_hypervisor::portio::DEBUG_PORT;
 use mini_hypervisor::privilege::{
-    run_privilege_transition_guest, PRIVILEGE_PROOF, PRIVILEGE_TERMINAL_RIP,
-    PRIVILEGE_TSS_ADDR, PRIVILEGE_TSS_RSP0, PRIVILEGE_TSS_SELECTOR, PRIVILEGE_USER_CODE_SELECTOR,
+    run_privilege_transition_guest, PRIVILEGE_PROOF, PRIVILEGE_TERMINAL_RIP, PRIVILEGE_TSS_ADDR,
+    PRIVILEGE_TSS_RSP0, PRIVILEGE_TSS_SELECTOR, PRIVILEGE_USER_CODE_SELECTOR,
     PRIVILEGE_USER_DATA_SELECTOR, PRIVILEGE_USER_RETURN_RIP, PRIVILEGE_USER_STACK,
 };
 use mini_hypervisor::vcpu::{PortIoDirection, VcpuExit};
@@ -19,7 +19,11 @@ fn ring3_trap_uses_tss_rsp0_returns_to_user_and_finishes_in_ring0() {
         Ok(result) => {
             assert_eq!(result.proof(), PRIVILEGE_PROOF);
             assert_eq!(result.io_exits().len(), 2);
-            for (io, expected) in result.io_exits().iter().zip(PRIVILEGE_PROOF.iter().copied()) {
+            for (io, expected) in result
+                .io_exits()
+                .iter()
+                .zip(PRIVILEGE_PROOF.iter().copied())
+            {
                 assert_eq!(io.direction(), PortIoDirection::Out);
                 assert_eq!(io.size(), 1);
                 assert_eq!(io.port(), DEBUG_PORT);
@@ -44,9 +48,15 @@ fn ring3_trap_uses_tss_rsp0_returns_to_user_and_finishes_in_ring0() {
             assert_eq!(frame.rsp(), PRIVILEGE_USER_STACK);
             assert_eq!(frame.ss(), u64::from(PRIVILEGE_USER_DATA_SELECTOR));
 
-            assert_eq!(result.terminal_rsp(), PRIVILEGE_TSS_RSP0 - PRIVILEGE_FRAME_BYTES);
+            assert_eq!(
+                result.terminal_rsp(),
+                PRIVILEGE_TSS_RSP0 - PRIVILEGE_FRAME_BYTES
+            );
             assert_eq!(result.terminal_cs(), 0x08);
-            assert_eq!(result.terminal_rflags() & X86_RFLAGS_RESERVED, X86_RFLAGS_RESERVED);
+            assert_eq!(
+                result.terminal_rflags() & X86_RFLAGS_RESERVED,
+                X86_RFLAGS_RESERVED
+            );
             assert_eq!(result.terminal_rflags() & X86_RFLAGS_IF, 0);
 
             assert_eq!(result.tr_selector(), PRIVILEGE_TSS_SELECTOR);
@@ -62,7 +72,10 @@ fn ring3_trap_uses_tss_rsp0_returns_to_user_and_finishes_in_ring0() {
 
             assert_eq!(result.report().exit(), VcpuExit::Hlt);
             assert_eq!(result.report().rip(), PRIVILEGE_TERMINAL_RIP);
-            assert_eq!(result.report().rflags() & X86_RFLAGS_RESERVED, X86_RFLAGS_RESERVED);
+            assert_eq!(
+                result.report().rflags() & X86_RFLAGS_RESERVED,
+                X86_RFLAGS_RESERVED
+            );
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
