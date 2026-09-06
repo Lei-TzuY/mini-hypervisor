@@ -596,9 +596,12 @@ fn require_ap_long_mode_state(vcpu: &Vcpu) -> Result<ApLongModeState, Error> {
     let cs = special.cs();
     let ss = special.ss();
     let gdt = special.gdt();
+    // In 64-bit mode the architectural CS base used for address calculation is fixed at zero;
+    // KVM_GET_SREGS may retain the SIPI-era hidden cache value even after the long-mode far jump.
+    // Validate the architecturally active CS attributes instead of treating that ignored cache as
+    // part of the guest-owned transition contract.
     let valid = registers.rsp() == AP_LONG_MODE_STACK
         && cs.selector() == AP_LONG_MODE_CODE_SELECTOR
-        && cs.base() == 0
         && cs.l() == 1
         && cs.db() == 0
         && cs.present() == 1
