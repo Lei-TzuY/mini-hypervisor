@@ -4,15 +4,15 @@ use crate::interrupt::{LongModeInterruptLayout, LONG_MODE_INTERRUPT_IDT_ADDR};
 use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
 use crate::long_mode::{
-    LONG_MODE_ALIAS_PT_ADDR, LONG_MODE_CR0_REQUIRED_BITS, LONG_MODE_CR4_REQUIRED_BITS,
-    LONG_MODE_EFER_REQUIRED_BITS, LONG_MODE_IDENTITY_MAP_SIZE, LONG_MODE_PML4_ADDR,
+    LONG_MODE_CR0_REQUIRED_BITS, LONG_MODE_CR4_REQUIRED_BITS, LONG_MODE_EFER_REQUIRED_BITS,
+    LONG_MODE_IDENTITY_MAP_SIZE, LONG_MODE_PML4_ADDR,
 };
 use crate::memory::{GuestMemory, GuestPhysAddr};
 use crate::mmio::long_mode::{LongModeMmioBootLayout, LongModeMmioPageMapping};
 use crate::portio::two_vcpu_init_sipi_fixture::{
     AP_LONG_MODE_CODE_SELECTOR, AP_LONG_MODE_DATA_SELECTOR, AP_LONG_MODE_GDT,
     AP_LONG_MODE_GDT_LIMIT, AP_LONG_MODE_STACK, FIRST_VCPU_ID, LAPIC_GPA, LAPIC_VIRTUAL_PAGE,
-    SECOND_VCPU_ID, SIPI_VECTOR,
+    SECOND_VCPU_ID,
 };
 use crate::vcpu::{PortIoDirection, PortIoExit, Vcpu, VcpuExit};
 use std::io;
@@ -286,7 +286,7 @@ pub fn run_two_vcpu_tlb_shootdown() -> Result<TwoVcpuTlbShootdownResult, Error> 
     let ap_vcpu = vm.create_vcpu(SECOND_VCPU_ID)?;
     bsp_vcpu.initialize_long_mode(bsp_layout.boot_layout())?;
     let _ = bsp_vcpu.configure_legacy_pic_extint()?;
-    let initial_ap_mp_state = ap_vcpu.mp_state()?;
+    let initial_ap_mp_state = ap_vcpu.multiprocessing_state_raw()?;
     if initial_ap_mp_state != KVM_MP_STATE_UNINITIALIZED {
         return Err(verification_error(SECOND_VCPU_ID.get(), "initial AP MP state", format!("expected {KVM_MP_STATE_UNINITIALIZED}, got {initial_ap_mp_state}")));
     }
@@ -476,14 +476,14 @@ fn run_expected_debug_output(vcpu: &mut Vcpu, port_io: &mut PortIoBus, expected:
     Ok(io)
 }
 
-fn require_interrupt_disabled_flags(id: u32, stage: &'static str, rflags: u64) -> Result<(), Error> {
+fn require_interrupt_disabled_flags(id: u16, stage: &'static str, rflags: u64) -> Result<(), Error> {
     if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT || rflags & X86_RFLAGS_INTERRUPT_ENABLE != 0 {
         return Err(verification_error(id, stage, format!("expected bit1 with IF clear, got {rflags:#x}")));
     }
     Ok(())
 }
 
-fn require_interrupt_enabled_flags(id: u32, stage: &'static str, rflags: u64) -> Result<(), Error> {
+fn require_interrupt_enabled_flags(id: u16, stage: &'static str, rflags: u64) -> Result<(), Error> {
     if rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT || rflags & X86_RFLAGS_INTERRUPT_ENABLE != X86_RFLAGS_INTERRUPT_ENABLE {
         return Err(verification_error(id, stage, format!("expected bit1+IF, got {rflags:#x}")));
     }
@@ -494,7 +494,7 @@ fn write_u64(memory: &mut GuestMemory, address: GuestPhysAddr, value: u64) -> Re
     memory.write(address, &value.to_le_bytes())
 }
 
-fn verification_error(id: u32, operation: &'static str, detail: impl Into<String>) -> Error {
+fn verification_error(id: u16, operation: &'static str, detail: impl Into<String>) -> Error {
     Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
         id,
         operation,
@@ -505,6 +505,7 @@ fn verification_error(id: u32, operation: &'static str, detail: impl Into<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::long_mode::LONG_MODE_ALIAS_PT_ADDR;
 
     #[test]
     fn target_alias_uses_shared_page_table_entry_outside_lapic_slot() {
