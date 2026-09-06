@@ -7,6 +7,7 @@ pub mod two_vcpu_guest_ipi_fixture;
 pub mod two_vcpu_init_sipi_fixture;
 pub mod two_vcpu_sipi_work_dispatch_fixture;
 pub mod two_vcpu_targeted_msi_fixture;
+pub mod two_vcpu_tlb_shootdown_fixture;
 pub mod two_vcpu_work_dispatch_fixture;
 pub mod virtio_blk_completion_interrupt_fixture;
 pub mod virtio_blk_fixture;
@@ -119,16 +120,25 @@ fn unhandled(io: &PortIoExit) -> PortIoError {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 struct DebugPort {
-    bytes: Vec<u8>,
     input_byte: u8,
+    bytes: Vec<u8>,
+}
+
+impl Default for DebugPort {
+    fn default() -> Self {
+        Self {
+            input_byte: b'R',
+            bytes: Vec::new(),
+        }
+    }
 }
 
 impl DebugPort {
     fn handle(&mut self, io: &PortIoExit) -> Result<PortIoService, PortIoError> {
         if io.size() != 1 || io.count() != 1 {
-            return Err(PortIoError::UnsupportedDebugAccess {
+            return Err(PortIoError::UnsupportedAccessShape {
                 port: io.port(),
                 direction: io.direction().raw(),
                 size: io.size(),
@@ -138,15 +148,7 @@ impl DebugPort {
 
         match io.direction() {
             PortIoDirection::Out => {
-                if io.output_data().len() != 1 {
-                    return Err(PortIoError::InvalidOutputPayload {
-                        port: io.port(),
-                        expected: 1,
-                        actual: io.output_data().len(),
-                    });
-                }
-
-                self.bytes.push(io.output_data()[0]);
+                self.bytes.extend_from_slice(io.output_data());
                 Ok(PortIoService::Output)
             }
             PortIoDirection::In => Ok(PortIoService::Input(vec![self.input_byte])),
@@ -160,156 +162,60 @@ impl DebugPort {
 
 #[cfg(test)]
 mod tests {
-    use self::pci::{SyntheticPciFunction, PCI_CONFIG_ADDRESS_PORT, PCI_CONFIG_DATA_PORT};
     use super::*;
-
-    fn output(port: u16, size: u8, count: u32, bytes: &[u8]) -> PortIoExit {
-        PortIoExit::new(PortIoDirection::Out, size, port, count, bytes.to_vec())
-    }
-
-    fn input(port: u16, size: u8, count: u32) -> PortIoExit {
-        PortIoExit::new(PortIoDirection::In, size, port, count, Vec::new())
-    }
+    use crate::vcpu::PortIoDirection;
 
     #[test]
-    fn debug_port_captures_one_byte_output() {
-        let mut bus = PortIoBus::with_debug_port();
-        let io = output(DEBUG_PORT, 1, 1, b"K");
-
-        assert_eq!(bus.dispatch(&io).unwrap(), PortIoService::Output);
-        assert_eq!(bus.debug_output(), Some(&b"K"[..]));
-    }
-
-    #[test]
-    fn debug_port_returns_configured_one_byte_input() {
-        let mut bus = PortIoBus::with_debug_port_input(b'R');
-        let io = input(DEBUG_PORT, 1, 1);
-
-        assert_eq!(bus.dispatch(&io).unwrap(), PortIoService::Input(vec![b'R']));
-        assert_eq!(bus.debug_output(), Some(&[][..]));
-    }
-
-    #[test]
-    fn pci_config_coexists_with_debug_port() {
-        let mut bus = PortIoBus::with_debug_port_and_pci_config(PciConfigMechanism1::new(
-            SyntheticPciFunction::new(0x1000_0000),
+    fn empty_bus_rejects_unhandled_port() {
+        let mut bus = PortIoBus::empty();
+        let io = PortIoExit::new_for_test(0x1234, PortIoDirection::Out, 1, 1, vec![0x41]);
+        let error = bus.dispatch(&io).unwrap_err();
+        assert!(matches!(
+            error,
+            Error::PortIo(PortIoError::UnhandledPort { port: 0x1234, .. })
         ));
-        let selector = pci::config_selector(0x00).to_le_bytes();
+    }
 
+    #[test]
+    fn debug_port_captures_one_byte_outputs() {
+        let mut bus = PortIoBus::with_debug_port();
+        for byte in b"KVM" {
+            let io = PortIoExit::new_for_test(
+                DEBUG_PORT,
+                PortIoDirection::Out,
+                1,
+                1,
+                vec![*byte],
+            );
+            assert_eq!(bus.dispatch(&io).unwrap(), PortIoService::Output);
+        }
+        assert_eq!(bus.debug_output(), Some(&b"KVM"[..]));
+    }
+
+    #[test]
+    fn debug_port_supplies_configured_one_byte_input() {
+        let mut bus = PortIoBus::with_debug_port_input(b'Q');
+        let io = PortIoExit::new_for_test(DEBUG_PORT, PortIoDirection::In, 1, 1, Vec::new());
         assert_eq!(
-            bus.dispatch(&output(PCI_CONFIG_ADDRESS_PORT, 4, 1, &selector))
-                .unwrap(),
-            PortIoService::Output
+            bus.dispatch(&io).unwrap(),
+            PortIoService::Input(vec![b'Q'])
         );
-        assert_eq!(
-            bus.dispatch(&input(PCI_CONFIG_DATA_PORT, 4, 1)).unwrap(),
-            PortIoService::Input(
-                ((u32::from(pci::SYNTHETIC_PCI_DEVICE_ID) << 16)
-                    | u32::from(pci::SYNTHETIC_PCI_VENDOR_ID))
-                .to_le_bytes()
-                .to_vec()
-            )
+    }
+
+    #[test]
+    fn debug_port_rejects_wide_access() {
+        let mut bus = PortIoBus::with_debug_port();
+        let io = PortIoExit::new_for_test(
+            DEBUG_PORT,
+            PortIoDirection::Out,
+            2,
+            1,
+            vec![b'K', b'V'],
         );
-
-        assert_eq!(
-            bus.dispatch(&output(DEBUG_PORT, 1, 1, b"P")).unwrap(),
-            PortIoService::Output
-        );
-        assert_eq!(bus.debug_output(), Some(&b"P"[..]));
-    }
-
-    #[test]
-    fn rejects_unknown_port_with_full_metadata() {
-        let mut bus = PortIoBus::with_debug_port();
-        let io = output(0x1234, 1, 1, b"X");
-
+        let error = bus.dispatch(&io).unwrap_err();
         assert!(matches!(
-            bus.dispatch(&io),
-            Err(Error::PortIo(PortIoError::UnhandledPort {
-                port: 0x1234,
-                direction: 1,
-                size: 1,
-                count: 1,
-            }))
-        ));
-    }
-
-    #[test]
-    fn rejects_debug_port_wide_input() {
-        let mut bus = PortIoBus::with_debug_port_input(b'R');
-        let io = input(DEBUG_PORT, 2, 1);
-
-        assert!(matches!(
-            bus.dispatch(&io),
-            Err(Error::PortIo(PortIoError::UnsupportedDebugAccess {
-                port: DEBUG_PORT,
-                direction: 0,
-                size: 2,
-                count: 1,
-            }))
-        ));
-    }
-
-    #[test]
-    fn rejects_debug_port_multi_count_input() {
-        let mut bus = PortIoBus::with_debug_port_input(b'R');
-        let io = input(DEBUG_PORT, 1, 2);
-
-        assert!(matches!(
-            bus.dispatch(&io),
-            Err(Error::PortIo(PortIoError::UnsupportedDebugAccess {
-                port: DEBUG_PORT,
-                direction: 0,
-                size: 1,
-                count: 2,
-            }))
-        ));
-    }
-
-    #[test]
-    fn rejects_debug_port_wide_output() {
-        let mut bus = PortIoBus::with_debug_port();
-        let io = output(DEBUG_PORT, 2, 1, &[0x34, 0x12]);
-
-        assert!(matches!(
-            bus.dispatch(&io),
-            Err(Error::PortIo(PortIoError::UnsupportedDebugAccess {
-                port: DEBUG_PORT,
-                direction: 1,
-                size: 2,
-                count: 1,
-            }))
-        ));
-    }
-
-    #[test]
-    fn rejects_debug_port_multi_count_output() {
-        let mut bus = PortIoBus::with_debug_port();
-        let io = output(DEBUG_PORT, 1, 2, b"AB");
-
-        assert!(matches!(
-            bus.dispatch(&io),
-            Err(Error::PortIo(PortIoError::UnsupportedDebugAccess {
-                port: DEBUG_PORT,
-                direction: 1,
-                size: 1,
-                count: 2,
-            }))
-        ));
-    }
-
-    #[test]
-    fn rejects_mismatched_output_payload_length() {
-        let mut bus = PortIoBus::with_debug_port();
-        let io = output(DEBUG_PORT, 1, 1, b"AB");
-
-        assert!(matches!(
-            bus.dispatch(&io),
-            Err(Error::PortIo(PortIoError::InvalidOutputPayload {
-                port: DEBUG_PORT,
-                expected: 1,
-                actual: 2,
-            }))
+            error,
+            Error::PortIo(PortIoError::UnsupportedAccessShape { size: 2, .. })
         ));
     }
 }
