@@ -267,8 +267,9 @@ mod tests {
 
     #[test]
     fn rejects_debug_port_wide_output() {
-        let io = output(DEBUG_PORT, 2, 1, &[0x34, 0x12]);
         let mut bus = PortIoBus::with_debug_port();
+        let io = output(DEBUG_PORT, 2, 1, &[0x34, 0x12]);
+
         assert!(matches!(
             bus.dispatch(&io),
             Err(Error::PortIo(PortIoError::UnsupportedDebugAccess {
@@ -282,8 +283,9 @@ mod tests {
 
     #[test]
     fn rejects_debug_port_multi_count_output() {
-        let io = output(DEBUG_PORT, 1, 2, b"AB");
         let mut bus = PortIoBus::with_debug_port();
+        let io = output(DEBUG_PORT, 1, 2, b"AB");
+
         assert!(matches!(
             bus.dispatch(&io),
             Err(Error::PortIo(PortIoError::UnsupportedDebugAccess {
@@ -297,8 +299,9 @@ mod tests {
 
     #[test]
     fn rejects_mismatched_output_payload_length() {
-        let io = output(DEBUG_PORT, 1, 1, b"AB");
         let mut bus = PortIoBus::with_debug_port();
+        let io = output(DEBUG_PORT, 1, 1, b"AB");
+
         assert!(matches!(
             bus.dispatch(&io),
             Err(Error::PortIo(PortIoError::InvalidOutputPayload {
