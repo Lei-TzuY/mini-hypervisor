@@ -31,12 +31,25 @@ fn cross_page_copy_reports_exact_partial_progress_after_read_and_write_faults() 
             assert_eq!(result.source_fault_source(), CROSS_PAGE_SOURCE_FAULT_BYTES);
             assert_eq!(
                 result.source_fault_destination(),
-                [CROSS_PAGE_SOURCE_FAULT_BYTES[0], CROSS_PAGE_SOURCE_FAULT_BYTES[1], 0, 0]
+                [
+                    CROSS_PAGE_SOURCE_FAULT_BYTES[0],
+                    CROSS_PAGE_SOURCE_FAULT_BYTES[1],
+                    0,
+                    0,
+                ]
             );
-            assert_eq!(result.destination_fault_source(), CROSS_PAGE_DEST_FAULT_BYTES);
+            assert_eq!(
+                result.destination_fault_source(),
+                CROSS_PAGE_DEST_FAULT_BYTES
+            );
             assert_eq!(
                 result.destination_fault_destination(),
-                [CROSS_PAGE_DEST_FAULT_BYTES[0], CROSS_PAGE_DEST_FAULT_BYTES[1], 0, 0]
+                [
+                    CROSS_PAGE_DEST_FAULT_BYTES[0],
+                    CROSS_PAGE_DEST_FAULT_BYTES[1],
+                    0,
+                    0,
+                ]
             );
 
             let read = result.read_fault();
@@ -66,7 +79,10 @@ fn cross_page_copy_reports_exact_partial_progress_after_read_and_write_faults() 
             let mappings = result.user_page_ptes();
             assert_eq!(mappings.len(), 12);
             for &(address, pte) in mappings {
-                assert_eq!(pte & (X86_PAGE_WRITE | X86_PAGE_USER), X86_PAGE_WRITE | X86_PAGE_USER);
+                assert_eq!(
+                    pte & (X86_PAGE_WRITE | X86_PAGE_USER),
+                    X86_PAGE_WRITE | X86_PAGE_USER
+                );
                 let expected_present = address != CROSS_PAGE_SOURCE_FAULT_ADDR
                     && address != CROSS_PAGE_DEST_FAULT_ADDR;
                 assert_eq!(pte & X86_PAGE_PRESENT != 0, expected_present);
@@ -101,7 +117,10 @@ fn cross_page_copy_reports_exact_partial_progress_after_read_and_write_faults() 
 
             // This is a host backing-memory sanity check only; the architectural destination fault
             // itself is proven by CR2/error/RIP/fixup and the return value of two completed bytes.
-            assert_eq!(CROSS_PAGE_DEST_FAULT_DESTINATION + 2, CROSS_PAGE_DEST_FAULT_ADDR);
+            assert_eq!(
+                CROSS_PAGE_DEST_FAULT_DESTINATION + 2,
+                CROSS_PAGE_DEST_FAULT_ADDR
+            );
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
