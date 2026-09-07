@@ -4,47 +4,54 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `c09f6a17b5c70a1c6c796d948a45e49c720b3b13` through PR #115 (`Expose bounded partial-progress copy through syscall dispatch`). Exact merged-main ordinary CI and every triggered permanent hosted-KVM workflow completed successfully; no failed, queued, in-progress or cancelled workflow remains for that exact main commit.
+`main` is `d8d7970ba7390b49da9dc9951599d2e3c8effba9` through PR #117 (`Track exact guest dirty pages through KVM`). Exact merged-main ordinary CI, the permanent hosted-KVM workflows triggered for that commit, and the independent dirty-log proof have converged without a failed, queued, in-progress or cancelled check on the exact main SHA.
 
-The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; guest-owned ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall-number dispatcher; fault-safe copyin/copyout/usercopy; bounded four-byte cross-page partial-progress usercopy; and syscall nr2 exposing the same exact partial-progress semantics to ring3 callers while retaining nr0/nr1 and `-ENOSYS` compatibility.
+The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; guest-owned ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall-number dispatcher; fault-safe copyin/copyout/usercopy with bounded cross-page partial progress; two isolated ring3 address spaces with distinct CR3/page-table ownership and physical backing; and opt-in slot-0 KVM dirty-page tracking with exact clear-on-read hosted-KVM evidence.
 
-PR #115 seals the fixed-length partial-copy syscall composition. Do not farm nr3/nr4 clones, longer hard-coded copies, duplicate fault sites or larger static fixup tables merely to extend that phase.
+PR #116 seals the fixed A/B address-space proof. The same user code/data/stack virtual addresses are backed by different physical pages, the guest switches A→B→A through a shared CPL0 handler, CR3 observations are `[0x1000, 0xb000, 0x1000]`, physical data remains isolated, and exact proof `ABAD` completes at the validated CPL0 terminal path. Do not farm a third fixed address space, more hard-coded switch vectors or duplicate page-table variants.
 
-## Selected milestone — bounded guest-owned address-space switch
+PR #117 independently seals the basic dirty-log observability primitive. Slot 0 can opt into `KVM_MEM_LOG_DIRTY_PAGES`; the exact four-page fixture reports first bitmap `0b1010`, readback bytes `[A,B]`, and an immediate second harvest of zero without vCPU re-entry. This remains an observability/incremental-snapshot prerequisite, not a claim of migration-complete snapshots, dirty-ring/manual-protect support or multi-slot tracking.
 
-The next boundary is address-space ownership rather than another syscall or usercopy variant. One vCPU will execute two ring3 contexts that use the same user virtual code/data/stack addresses but different physical backing pages and different CR3 roots. A shared supervisor-only CPL0 handler switches A→B→A by changing CR3 and constructing complete user `iretq` frames; a terminal handler proves the original A mapping survives the round trip.
+## Selected milestone — bounded guest-owned task context switching
+
+The next architecture boundary is execution-context ownership. Reuse the two integrated A/B address spaces, but add explicit per-task saved user execution state and a real guest-owned dispatch transition. A shared supervisor-only vector `0x80` handler must save the interrupted task context, select the other fixed task from the active CR3, switch address spaces, restore the next user frame/register state and return with `iretq`. Task A must later resume with its own register and stack state intact.
+
+This remains a deliberately bounded cooperative two-task proof. It is not a general process object model, runqueue, timer-preemptive scheduler or claim that every architectural register is part of a stable task ABI. The task implementation is intentionally orthogonal to the integrated dirty-log path; synchronizing this milestone onto #117 must preserve both capabilities unchanged.
 
 Acceptance contract:
 
-- preserve exact merged-green base `c09f6a17b5c70a1c6c796d948a45e49c720b3b13`, Rust 1.74 shipped-target MSRV, ordinary CI and every permanent hosted-KVM workflow green on PR #115 merged main;
-- retain address-space A at the integrated privilege root `CR3=0x1000`; create a second validated four-level low-2MiB root with PML4 `0xb000`, PDPT `0xc000`, PD `0xd000` and PT `0xe000`;
-- both roots use the same user virtual entry `0x11000`, data page `0xa000` and stack page `0x1fc000`, but root B maps them to physical `0x20000`, `0x21000` and `0x22000` respectively;
-- all shared kernel code, switch/terminal handlers, GDT, IDT, TSS, page tables and kernel stack remain identity-mapped supervisor-only in both roots;
-- root A user code writes `A` to VA `0xa000`, invokes vector `0x80`, and later resumes exactly at `0x1100f` before invoking terminal vector `0x81`;
-- the vector `0x80` CPL0 handler must read and record the active CR3, read the current address-space byte at the same VA `0xa000`, then switch A→B or B→A with `mov cr3` and return through a complete SS/RSP/RFLAGS/CS/RIP `iretq` frame;
-- root B user code at the same VA writes `B` to its independently backed data page and invokes the same vector `0x80`; no host-side CR3 rewrite substitutes for guest-owned switching;
-- CR3 observations must be exactly `[0x1000, 0xb000, 0x1000]`, final vCPU CR3 must be `0x1000`, physical A data must be `A` and physical B data must be `B`;
-- exact debug proof is `ABAD`: first handler sees A data, second handler sees B data, terminal handler after the switch-back sees A data again, then emits `D` before halting;
-- root-A and root-B user code/data/stack PTEs must map the expected distinct physical frames with P/W/U set; the shared switch-handler PTE must map the same identity physical page in both roots with U clear;
-- the terminal path must halt in CPL0 at RIP `0x13031` with architectural RFLAGS bit 1 set; unexpected CR3 values fail closed with `F` and halt;
-- KVM-aware integration must independently validate proof bytes, all four debug-port exits, CR3 observations/final CR3, physical data isolation, both roots' PTE ownership and terminal state;
-- a permanent `address-space-switch` hosted-KVM workflow must run the standalone binary under a bounded timeout with mandatory `/dev/kvm` and hard-check the same CR3/data/PTE/proof/terminal invariants;
-- formatter, Clippy, Rust 1.74 MSRV, page-table construction, U/S ownership, CR3 transitions, user return frame, proof or hosted-KVM failures remain hard failures and must not be hidden by changed expectations.
+- preserve exact merged-green base `d8d7970ba7390b49da9dc9951599d2e3c8effba9`, including PR #117 dirty-log behavior, Rust 1.74 shipped-target MSRV, ordinary CI and every permanent hosted-KVM workflow green on that exact main;
+- reuse address-space A at `CR3=0x1000` and address-space B at `CR3=0xb000`, including the already-validated distinct user code/stack physical backing and shared supervisor mappings;
+- reserve one shared supervisor-only task-context page at physical `0x30000`; both roots must map it P/W with U clear;
+- task A owns initial user RSP `0x1fcff0` and representative register `R12=0x1111`; task B owns initial user RSP `0x1fcfd0` and initial `R12=0x2222`;
+- task A writes physical stack marker `a`, invokes vector `0x80`, and must save context `(CR3=0x1000, RIP=0x11011, RSP=0x1fcff0, RFLAGS=0x202, R12=0x1111, save_count=1)`;
+- task B must start with restored `R12=0x2222`, write its independently backed stack marker `b`, increment R12 to `0x2223`, invoke the same scheduler vector, and save `(CR3=0xb000, RIP=0x11013, RSP=0x1fcfd0, RFLAGS=0x202, R12=0x2223, save_count=1)`;
+- the CPL0 scheduler handler must choose A/B from the active CR3, fail closed on an unexpected root or representative-register value, save the current interrupted RIP/RSP/RFLAGS/R12 and CR3, rewrite a complete user `iretq` frame from the next context, restore next-task R12, switch CR3 and `iretq`; no host-side register or CR3 rewrite may substitute for the guest scheduler;
+- after B→A, task A must reach terminal vector `0x81` with CR3 `0x1000`, user RIP `0x11013`, RSP `0x1fcff0` and R12 `0x1111`; final vCPU CR3/R12 must retain those A values;
+- physical stack markers must be exactly `a` for A and `b` for B, proving the same user stack virtual page resolves to each task's independent backing while context state is restored;
+- exact debug proof is `ABRD`: scheduler first observes A, scheduler then observes B, the terminal handler proves restored A state with `R`, then emits `D` before halting;
+- terminal execution must halt in CPL0 at RIP `0x13059` with architectural RFLAGS bit 1 set;
+- KVM-aware integration must independently validate every context field, both save counts, both physical stack markers, both supervisor task-context PTEs, all four byte-wide debug-port exits, final CR3/R12 and terminal state;
+- a permanent `task-context-switch` hosted-KVM workflow must run the standalone binary under a bounded timeout with mandatory `/dev/kvm` and hard-check the same context, PTE, stack-marker, proof and terminal invariants;
+- the existing dirty-log workflow and all previously integrated permanent hosted-KVM workflows must remain green on the same candidate;
+- formatter, Clippy, Rust 1.74 MSRV, page-table ownership, context encoding, scheduler dispatch, user return frame, proof, dirty-log regression or hosted-KVM failures remain hard failures and must not be hidden by changed expectations.
 
-Implementation is in progress on `milestone/address-space-switch`. The implementation must pass ordinary CI and the new permanent hosted-KVM proof on one exact candidate before integration.
+Implementation is in progress on `milestone/task-context-switch`. The branch was originally based on PR #116 and is being synchronized with PR #117 through a history-preserving merge before formal PR validation. It must pass ordinary CI and the permanent task-context hosted-KVM proof on one exact candidate before integration.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- a general task/process object model, scheduler, runqueue, timer preemption or context-switch policy;
-- more than two fixed user address spaces, dynamic address-space allocation, arbitrary virtual mappings, fork, mmap, copy-on-write, demand paging or swapping;
-- PCID/ASID optimization, KPTI, SMEP, SMAP, PKU or security claims beyond the executed U/S and physical-isolation invariants;
-- multi-vCPU user execution, cross-vCPU process migration, per-process TSS ownership, signals or resumable task snapshots;
+- more than two fixed tasks, dynamic task/process allocation, PID namespaces, fork/exec, process teardown or a general process model;
+- a runqueue, priorities, fairness policy, timer preemption, blocking/wakeup primitives or arbitrary scheduler selection;
+- a claim that the bounded saved fields form a complete x86-64 process ABI; FPU/XSAVE, debug registers, signal state and every general register are not promoted here;
+- a third address space, dynamic virtual mappings, mmap, copy-on-write, demand paging, swapping, PCID/ASID or KPTI;
+- multi-vCPU user-task migration, cross-vCPU scheduling, per-process TSS ownership or signals;
+- dirty-ring/manual-protect2, multi-slot dirty tracking, incremental-copy or migration-complete snapshot semantics;
 - new filesystem/device/syscall surfaces, PCI/virtio capability, DMA/IOMMU or performance claims.
 
 ## Promotion rule
 
-After the two-address-space CR3 switch is integrated and exact merged-`main` ordinary CI plus every triggered permanent hosted-KVM workflow are green, seal the fixed A/B proof rather than adding a third hard-coded address space or more switch vectors.
+After the bounded A→B→A task-context switch is integrated and exact merged-`main` ordinary CI plus every triggered permanent hosted-KVM workflow are green, seal the fixed cooperative two-task proof rather than adding task C or more saved-field clones.
 
-The next architecture audit should promote to bounded task context ownership only if a genuine executable slice can combine address-space identity with saved user register/stack state and a real scheduling/dispatch transition. Otherwise choose another materially different caller-visible or runtime-control boundary; do not promote by cloning address spaces or enlarging static fixtures.
+The next architecture audit should promote only to a materially new scheduling/control boundary with executable evidence. A strong candidate is bounded timer-driven preemption that combines the already integrated asynchronous interrupt source with saved task-context/address-space ownership, but only if the slice can prove an interrupt-triggered context switch and deterministic resume without weakening the existing interrupt or task invariants. Another legitimate frontier is composition of task-owned memory state with the integrated dirty-log/snapshot primitives if it produces a real incremental-state lifecycle rather than another observability-only fixture. Otherwise choose another higher-value runtime boundary rather than inflating the task fixture.
