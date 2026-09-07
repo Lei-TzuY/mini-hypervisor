@@ -40,8 +40,8 @@ jobs:
 
           grep -F 'dispatch proof: [67, 80, 82, 87, 85, 68]' <<<"$output"
           grep -F 'dispatch results: copy=0x0 readback=0x6b putc=0x0 bad_src=0xfffffffffffffff2 bad_dst=0xfffffffffffffff2 unknown=0xffffffffffffffda source=0x6b destination=0x6b' <<<"$output"
-          grep -F 'dispatch read fault: cr2=0x400000 error=0x0 rip=0x12026 cs=0x8 rflags=0x10002 fixup=0x12033' <<<"$output"
-          grep -F 'dispatch write fault: cr2=0x400000 error=0x2 rip=0x12029 cs=0x8 rflags=0x10002 fixup=0x12040' <<<"$output"
+          grep -F 'dispatch read fault: cr2=0x400000 error=0x0 rip=0x12026 cs=0x8 rflags=0x10046 fixup=0x12033' <<<"$output"
+          grep -F 'dispatch write fault: cr2=0x400000 error=0x2 rip=0x12029 cs=0x8 rflags=0x10046 fixup=0x12040' <<<"$output"
           grep -F 'dispatch fixup[0]: fault=0x12026 fixup=0x12033 observation=0xb000' <<<"$output"
           grep -F 'dispatch fixup[1]: fault=0x12029 fixup=0x12040 observation=0xb040' <<<"$output"
           grep -F 'dispatch terminal frame: rip=0x1108a cs=0x23 rflags=0x202 rsp=0x1fd000 ss=0x1b' <<<"$output"
