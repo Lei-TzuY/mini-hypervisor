@@ -50,6 +50,8 @@ const X86_PAGE_PRESENT: u64 = 1;
 const X86_PAGE_WRITE: u64 = 1 << 1;
 const X86_PAGE_USER: u64 = 1 << 2;
 const X86_RFLAGS_RESERVED: u64 = 1 << 1;
+const X86_RFLAGS_PF: u64 = 1 << 2;
+const X86_RFLAGS_ZF: u64 = 1 << 6;
 const X86_RFLAGS_IF: u64 = 1 << 9;
 const X86_RFLAGS_RF: u64 = 1 << 16;
 const DISPATCH_EXIT_BUDGET: u32 = 7;
@@ -60,7 +62,8 @@ const FIXUP_TABLE_BYTES: usize = 2 * FIXUP_ENTRY_BYTES;
 const PAGE_FAULT_GATE_SIZE: u64 = 16;
 const READ_PAGE_FAULT_ERROR_CODE: u64 = 0;
 const WRITE_PAGE_FAULT_ERROR_CODE: u64 = 1 << 1;
-const PAGE_FAULT_SAVED_RFLAGS: u64 = X86_RFLAGS_RESERVED | X86_RFLAGS_RF;
+const PAGE_FAULT_SAVED_RFLAGS: u64 =
+    X86_RFLAGS_RESERVED | X86_RFLAGS_PF | X86_RFLAGS_ZF | X86_RFLAGS_RF;
 const BAD_POINTER_PD_INDEX: u64 = (DISPATCH_BAD_POINTER >> 21) & 0x1ff;
 
 const KERNEL_BOOT_BYTES: [u8; 41] = [
@@ -820,6 +823,7 @@ mod tests {
         assert_eq!(DISPATCH_COPY_NR, 0);
         assert_eq!(DISPATCH_PUTC_NR, 1);
         assert_eq!(DISPATCH_UNKNOWN_NR, 0xff);
+        assert_eq!(PAGE_FAULT_SAVED_RFLAGS, 0x10046);
     }
 
     #[test]
