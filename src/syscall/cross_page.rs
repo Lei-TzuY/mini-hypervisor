@@ -796,15 +796,14 @@ fn validate_runtime_state(
     ];
 
     let mappings_valid = user_page_ptes.len() == USER_PAGES.len()
-        && user_page_ptes
-            .iter()
-            .zip(USER_PAGES)
-            .all(|((address, pte), (expected_address, present))| {
+        && user_page_ptes.iter().zip(USER_PAGES).all(
+            |((address, pte), (expected_address, present))| {
                 *address == expected_address
                     && pte & (X86_PAGE_WRITE | X86_PAGE_USER)
                         == (X86_PAGE_WRITE | X86_PAGE_USER)
                     && (pte & X86_PAGE_PRESENT != 0) == present
-            });
+            },
+        );
 
     if returns != [CROSS_PAGE_COPY_LEN, 2, 2]
         || good_source != CROSS_PAGE_GOOD_BYTES
@@ -865,24 +864,48 @@ mod tests {
         assert_eq!(CROSS_PAGE_WRITE_FAULT_RIP, SYSCALL_KERNEL_ENTRY.get() + 24);
         assert_eq!(CROSS_PAGE_COMMON_FIXUP_RIP, SYSCALL_KERNEL_ENTRY.get() + 37);
         assert_eq!(PAGE_FAULT_HANDLER_BYTES.len(), 105);
-        assert!(!PAGE_FAULT_HANDLER_BYTES.windows(3).any(|bytes| bytes == [0x49, 0xc7, 0xc0]));
+        assert!(!PAGE_FAULT_HANDLER_BYTES
+            .windows(3)
+            .any(|bytes| bytes == [0x49, 0xc7, 0xc0]));
     }
 
     #[test]
     fn fixture_places_faults_on_third_byte_of_cross_page_copy() {
         assert_eq!(CROSS_PAGE_GOOD_SOURCE & 0xfff, 0xffe);
         assert_eq!(CROSS_PAGE_GOOD_DESTINATION & 0xfff, 0xffe);
-        assert_eq!(CROSS_PAGE_SOURCE_FAULT_SOURCE + 2, CROSS_PAGE_SOURCE_FAULT_ADDR);
-        assert_eq!(CROSS_PAGE_DEST_FAULT_DESTINATION + 2, CROSS_PAGE_DEST_FAULT_ADDR);
-        assert_eq!(USER_PAGES.iter().find(|(page, _)| *page == 0x25000), Some(&(0x25000, false)));
-        assert_eq!(USER_PAGES.iter().find(|(page, _)| *page == 0x2b000), Some(&(0x2b000, false)));
+        assert_eq!(
+            CROSS_PAGE_SOURCE_FAULT_SOURCE + 2,
+            CROSS_PAGE_SOURCE_FAULT_ADDR
+        );
+        assert_eq!(
+            CROSS_PAGE_DEST_FAULT_DESTINATION + 2,
+            CROSS_PAGE_DEST_FAULT_ADDR
+        );
+        assert_eq!(
+            USER_PAGES.iter().find(|(page, _)| *page == 0x25000),
+            Some(&(0x25000, false))
+        );
+        assert_eq!(
+            USER_PAGES.iter().find(|(page, _)| *page == 0x2b000),
+            Some(&(0x2b000, false))
+        );
     }
 
     #[test]
     fn user_program_issues_three_syscalls_and_three_ring3_return_markers() {
         let code = build_user_guest();
-        assert_eq!(code.windows(2).filter(|bytes| *bytes == [0x0f, 0x05]).count(), 3);
-        assert_eq!(code.windows(2).filter(|bytes| *bytes == [0xcd, 0x80]).count(), 3);
+        assert_eq!(
+            code.windows(2)
+                .filter(|bytes| *bytes == [0x0f, 0x05])
+                .count(),
+            3
+        );
+        assert_eq!(
+            code.windows(2)
+                .filter(|bytes| *bytes == [0xcd, 0x80])
+                .count(),
+            3
+        );
         assert_eq!(&code[code.len() - 2..], [0xcd, 0x81]);
     }
 }
