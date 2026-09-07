@@ -20,7 +20,12 @@ use mini_hypervisor::vcpu::{PortIoDirection, VcpuExit};
 const X86_PAGE_PRESENT: u64 = 1;
 const X86_PAGE_WRITE: u64 = 1 << 1;
 const X86_PAGE_USER: u64 = 1 << 2;
+const X86_RFLAGS_RESERVED: u64 = 1 << 1;
+const X86_RFLAGS_PF: u64 = 1 << 2;
+const X86_RFLAGS_ZF: u64 = 1 << 6;
 const X86_RFLAGS_RF: u64 = 1 << 16;
+const DISPATCH_FAULT_RFLAGS: u64 =
+    X86_RFLAGS_RESERVED | X86_RFLAGS_PF | X86_RFLAGS_ZF | X86_RFLAGS_RF;
 
 #[test]
 fn syscall_number_dispatches_copy_putc_faults_and_unknown_service() {
@@ -50,7 +55,7 @@ fn syscall_number_dispatches_copy_putc_faults_and_unknown_service() {
             assert_eq!(read.error_code(), 0);
             assert_eq!(read.rip(), DISPATCH_COPY_READ_FAULT_RIP);
             assert_eq!(read.cs(), 0x08);
-            assert_eq!(read.rflags(), 0x2 | X86_RFLAGS_RF);
+            assert_eq!(read.rflags(), DISPATCH_FAULT_RFLAGS);
             assert_eq!(read.resolved_fixup(), DISPATCH_COPY_READ_FIXUP_RIP);
 
             let write = result.write_fault();
@@ -58,7 +63,7 @@ fn syscall_number_dispatches_copy_putc_faults_and_unknown_service() {
             assert_eq!(write.error_code(), 0x2);
             assert_eq!(write.rip(), DISPATCH_COPY_WRITE_FAULT_RIP);
             assert_eq!(write.cs(), 0x08);
-            assert_eq!(write.rflags(), 0x2 | X86_RFLAGS_RF);
+            assert_eq!(write.rflags(), DISPATCH_FAULT_RFLAGS);
             assert_eq!(write.resolved_fixup(), DISPATCH_COPY_WRITE_FIXUP_RIP);
             assert_eq!(result.final_cr2(), DISPATCH_BAD_POINTER);
 
