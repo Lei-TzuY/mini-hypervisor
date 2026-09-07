@@ -164,8 +164,8 @@ impl AddressSpaceSwitchLayout {
             for (second, second_address) in reserved.iter().skip(index + 1) {
                 if first_address == second_address {
                     return Err(AddressSpaceConfigurationError::DuplicateReservedPage {
-                        first: *first,
-                        second: *second,
+                        first,
+                        second,
                         address: *first_address,
                     });
                 }
@@ -466,7 +466,7 @@ fn install_second_root(memory: &mut GuestMemory) -> Result<(), Error> {
     for index in 0..512_u64 {
         let virtual_address = index * LONG_MODE_PAGE_SIZE;
         let physical_address = match virtual_address {
-            address if address == 0xa000 => ADDRESS_SPACE_B_USER_DATA_BACKING.get(),
+            0xa000 => ADDRESS_SPACE_B_USER_DATA_BACKING.get(),
             address if address == PRIVILEGE_USER_ENTRY.get() => {
                 ADDRESS_SPACE_B_USER_CODE_BACKING.get()
             }
