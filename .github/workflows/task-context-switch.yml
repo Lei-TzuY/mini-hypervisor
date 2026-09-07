@@ -1,0 +1,64 @@
+name: Strict KVM task context switch
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/task.rs'
+      - 'src/bin/task-context-switch.rs'
+      - 'tests/task_context_switch_guest.rs'
+      - 'src/address_space.rs'
+      - 'src/privilege.rs'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/**'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/lib.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/task-context-switch.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  task-context-switch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM bounded task context switch proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin task-context-switch)"
+          printf '%s\n' "$output"
+
+          grep -F 'task A context: cr3=0x1000 rip=0x11011 rsp=0x1fcff0 rflags=0x202 r12=0x1111 saves=1' <<<"$output"
+          grep -F 'task B context: cr3=0xb000 rip=0x11013 rsp=0x1fcfd0 rflags=0x202 r12=0x2223 saves=1' <<<"$output"
+          grep -F 'task terminal: cr3=0x1000 rip=0x11013 rsp=0x1fcff0 r12=0x1111' <<<"$output"
+          grep -F 'task final registers: cr3=0x1000 r12=0x1111' <<<"$output"
+          grep -F 'task stack markers: first=97 second=98' <<<"$output"
+          grep -F 'task proof: [65, 66, 82, 68]' <<<"$output"
+
+          check_context_pte() {
+            label="$1"
+            line="$(grep -F "$label" <<<"$output")"
+            value_hex="${line##*: }"
+            [[ "$value_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            value=$((value_hex))
+            (( (value & 0x000ffffffffff000) == 0x30000 ))
+            (( (value & 0x1) == 0x1 ))
+            (( (value & 0x2) == 0x2 ))
+            (( (value & 0x4) == 0 ))
+          }
+
+          check_context_pte 'task A context PTE:'
+          check_context_pte 'task B context PTE:'
+
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x13059, rflags=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
