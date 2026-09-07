@@ -4,52 +4,47 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `20ec83c11dad0029b27a3912a438da6e9c9e7142` through PR #114 (`Report partial progress across cross-page usercopy faults`). The exact merged mainline preserves Rust 1.74 shipped-target MSRV, ordinary CI and every triggered permanent hosted-KVM workflow across the integrated x86-64/ELF64, MMIO/interrupt, PCI/virtio, SMP/TLB, ring3/SYSCALL and fault-safe usercopy surfaces.
+`main` is `c09f6a17b5c70a1c6c796d948a45e49c720b3b13` through PR #115 (`Expose bounded partial-progress copy through syscall dispatch`). Exact merged-main ordinary CI and every triggered permanent hosted-KVM workflow completed successfully; no failed, queued, in-progress or cancelled workflow remains for that exact main commit.
 
-The repository therefore integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; guest-owned ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall-number dispatcher; one-byte fault-safe copyin/copyout/usercopy; and a bounded four-byte cross-page CPL0 usercopy loop with exact partial-progress reporting.
+The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; guest-owned ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall-number dispatcher; fault-safe copyin/copyout/usercopy; bounded four-byte cross-page partial-progress usercopy; and syscall nr2 exposing the same exact partial-progress semantics to ring3 callers while retaining nr0/nr1 and `-ENOSYS` compatibility.
 
-PR #114 seals the fixed four-byte cross-page service. It uses one reusable load site and one reusable store site, exactly two guest-resident fixup entries, returns progress only after a byte load and store both complete, reports two committed bytes before either the non-present source page `0x25000` or destination page `0x2b000`, and is permanently exercised by the `cross-page-usercopy` hosted-KVM workflow. Do not farm additional fixed lengths or pointer placements merely to extend that phase.
+PR #115 seals the fixed-length partial-copy syscall composition. Do not farm nr3/nr4 clones, longer hard-coded copies, duplicate fault sites or larger static fixup tables merely to extend that phase.
 
-## Selected milestone — expose partial-progress usercopy through syscall dispatch
+## Selected milestone — bounded guest-owned address-space switch
 
-The next boundary is caller-visible syscall composition rather than another standalone usercopy fixture. Syscall nr2 accepts `RDI=source`, `RSI=destination`, `RDX=length`, reuses the proven partial-progress semantics for lengths `1..=4`, and coexists with the integrated nr0 copy-byte, nr1 debug-putc and unknown-number behavior in one ring3 execution.
+The next boundary is address-space ownership rather than another syscall or usercopy variant. One vCPU will execute two ring3 contexts that use the same user virtual code/data/stack addresses but different physical backing pages and different CR3 roots. A shared supervisor-only CPL0 handler switches A→B→A by changing CR3 and constructing complete user `iretq` frames; a terminal handler proves the original A mapping survives the round trip.
 
 Acceptance contract:
 
-- preserve exact merged-green base `20ec83c11dad0029b27a3912a438da6e9c9e7142`, Rust 1.74 shipped-target MSRV, ordinary CI and every permanent hosted-KVM workflow green on PR #114 merged main;
-- add syscall nr2 with ABI `RDI=source`, `RSI=destination`, `RDX=length`; valid length is exactly `1..=4`;
-- successful nr2 returns the number of bytes committed; a recoverable source-read or destination-write page fault returns the exact number of bytes whose load and store both completed before the fault;
-- length `0` and lengths above `4` return exact `-EINVAL` without touching user memory;
-- progress lives in R8 and increments only after the current byte's load and store both complete;
-- retain one reusable nr2 range-load site and one reusable range-store site with exactly two nr2 fixup entries; do not unroll fault sites by length or outcome;
-- preserve the integrated nr0/nr1 fault-site offsets and common-return layout in the compatibility dispatcher image; nr2 is reached through a fixed-size trampoline and append-only service code;
-- one ring3 program must prove: length4 success returns `4`, source fault returns `2`, destination fault returns `2`, length1 success returns `1`, length0 returns `-EINVAL`, length5 returns `-EINVAL`, legacy nr0 succeeds, legacy nr1 succeeds, and unknown number returns exact `-ENOSYS`;
-- exact debug proof is `MFFMIICPUD`: `M` marks full/short range success, `F` partial range fault, `I` invalid length, `C` legacy copy-byte, `P` legacy debug-putc, `U` unknown-number handling, and `D` terminal privilege entry;
-- the good four-byte destination must be `[0x11,0x22,0x33,0x44]`; source-fault destination `[0x55,0x66,0,0]`; destination-fault destination `[0x99,0xaa,0,0]`; one-byte short destination `[0xde,0,0,0]`; legacy nr0 destination byte `0x6b`;
-- exact nr2 read fault is CR2 `0x25000`, error `0x0`, RIP `0x12078`; exact nr2 write fault is CR2 `0x2b000`, error `0x2`, RIP `0x1207d`; both use kernel CS `0x8`, saved RFLAGS `0x10046` and common fixup RIP `0x12098`;
-- nr2 has exactly two fixup entries: read fault → `0x12098` with observation `0xb000`, write fault → `0x12098` with observation `0xb040`;
-- all present user data pages remain present+user+writable; `0x25000` and `0x2b000` remain user+writable but non-present; the syscall service, #PF handler and fault metadata remain present supervisor-only;
-- preserve the SYSCALL ABI MSRs: EFER.SCE set, STAR `0x0013000800000000`, LSTAR `0x12000`, SFMASK `0x200`;
-- preserve the ring3 terminal frame selectors/state and the terminal CPL0 HLT path; unmatched page-fault RIPs remain fail-closed;
-- KVM-aware integration must independently validate all return values, destinations, faults, fixups, proof bytes, user/supervisor PTE ownership, ABI MSRs and terminal privilege state;
-- a permanent `syscall-partial-copy` hosted-KVM workflow must execute the standalone binary under a bounded timeout, require `/dev/kvm` with no skip path, and hard-check the same syscall/fault/mapping/MSR/terminal invariants;
-- formatter, Clippy, MSRV, dispatcher compatibility, nr2 loop/fixup code, partial-progress accounting, invalid-length handling, legacy nr0/nr1 behavior, SYSRET, proof or hosted-KVM failures remain hard failures and must not be hidden by altered expectations.
+- preserve exact merged-green base `c09f6a17b5c70a1c6c796d948a45e49c720b3b13`, Rust 1.74 shipped-target MSRV, ordinary CI and every permanent hosted-KVM workflow green on PR #115 merged main;
+- retain address-space A at the integrated privilege root `CR3=0x1000`; create a second validated four-level low-2MiB root with PML4 `0xb000`, PDPT `0xc000`, PD `0xd000` and PT `0xe000`;
+- both roots use the same user virtual entry `0x11000`, data page `0xa000` and stack page `0x1fc000`, but root B maps them to physical `0x20000`, `0x21000` and `0x22000` respectively;
+- all shared kernel code, switch/terminal handlers, GDT, IDT, TSS, page tables and kernel stack remain identity-mapped supervisor-only in both roots;
+- root A user code writes `A` to VA `0xa000`, invokes vector `0x80`, and later resumes exactly at `0x1100f` before invoking terminal vector `0x81`;
+- the vector `0x80` CPL0 handler must read and record the active CR3, read the current address-space byte at the same VA `0xa000`, then switch A→B or B→A with `mov cr3` and return through a complete SS/RSP/RFLAGS/CS/RIP `iretq` frame;
+- root B user code at the same VA writes `B` to its independently backed data page and invokes the same vector `0x80`; no host-side CR3 rewrite substitutes for guest-owned switching;
+- CR3 observations must be exactly `[0x1000, 0xb000, 0x1000]`, final vCPU CR3 must be `0x1000`, physical A data must be `A` and physical B data must be `B`;
+- exact debug proof is `ABAD`: first handler sees A data, second handler sees B data, terminal handler after the switch-back sees A data again, then emits `D` before halting;
+- root-A and root-B user code/data/stack PTEs must map the expected distinct physical frames with P/W/U set; the shared switch-handler PTE must map the same identity physical page in both roots with U clear;
+- the terminal path must halt in CPL0 at RIP `0x13031` with architectural RFLAGS bit 1 set; unexpected CR3 values fail closed with `F` and halt;
+- KVM-aware integration must independently validate proof bytes, all four debug-port exits, CR3 observations/final CR3, physical data isolation, both roots' PTE ownership and terminal state;
+- a permanent `address-space-switch` hosted-KVM workflow must run the standalone binary under a bounded timeout with mandatory `/dev/kvm` and hard-check the same CR3/data/PTE/proof/terminal invariants;
+- formatter, Clippy, Rust 1.74 MSRV, page-table construction, U/S ownership, CR3 transitions, user return frame, proof or hosted-KVM failures remain hard failures and must not be hidden by changed expectations.
 
-Implementation is in progress on `milestone/syscall-partial-copy` / PR #115. The production nr2 service, standalone executable and KVM-aware integration passed the first compiler/MSRV/executable pass at exact head `6f19cadfdd087d7e41d1fc6a2dd65985ced18e13`; ordinary CI and all previously triggered permanent workflows were green, and the KVM-aware partial-copy integration executed successfully on hosted KVM. The standalone verifier has since been expanded to expose fixup, PTE, terminal and MSR observations, and a dedicated permanent `syscall-partial-copy` hosted-KVM workflow has been added. Those governance/evidence changes create a new exact head, so the earlier green head is not final merge evidence. The final candidate must re-pass ordinary CI, the new permanent proof and every other triggered workflow before integration.
+Implementation is in progress on `milestone/address-space-switch`. The implementation must pass ordinary CI and the new permanent hosted-KVM proof on one exact candidate before integration.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- arbitrary or unbounded copy lengths, vectored I/O, large-buffer throughput claims or an optimized generic usercopy subsystem;
-- allocation, mmap, demand paging, copy-on-write, swapping, signals or a general page-fault policy;
-- task/process objects, scheduling, multiple user address spaces, per-process CR3 ownership or multi-vCPU user execution;
-- filesystem/VFS abstractions, file descriptors, sockets, storage/device syscalls or a new device transport;
-- SMEP/SMAP, PKU, kernel preemption or security claims beyond the explicitly executed U/S, privilege and fault-fixup invariants;
-- new PCI/MMIO/virtio/SMP capability, performance or latency claims.
+- a general task/process object model, scheduler, runqueue, timer preemption or context-switch policy;
+- more than two fixed user address spaces, dynamic address-space allocation, arbitrary virtual mappings, fork, mmap, copy-on-write, demand paging or swapping;
+- PCID/ASID optimization, KPTI, SMEP, SMAP, PKU or security claims beyond the executed U/S and physical-isolation invariants;
+- multi-vCPU user execution, cross-vCPU process migration, per-process TSS ownership, signals or resumable task snapshots;
+- new filesystem/device/syscall surfaces, PCI/virtio capability, DMA/IOMMU or performance claims.
 
 ## Promotion rule
 
-After nr2 partial-progress copy is integrated and exact merged-`main` ordinary CI plus every triggered permanent hosted-KVM workflow are green, seal this bounded syscall composition rather than adding nr3/nr4 clones or more hard-coded copy lengths.
+After the two-address-space CR3 switch is integrated and exact merged-`main` ordinary CI plus every triggered permanent hosted-KVM workflow are green, seal the fixed A/B proof rather than adding a third hard-coded address space or more switch vectors.
 
-The next architecture audit must choose a materially different boundary. Prefer task/address-space ownership when a bounded executable per-process CR3/ownership slice is ready, or compose the syscall control plane with an already-integrated storage/device capability only when it produces a genuine caller-visible service path with explicit resource/error semantics. Do not promote by merely increasing copy length, adding more fixed syscall numbers, duplicating fault sites or enlarging the static fixup table.
+The next architecture audit should promote to bounded task context ownership only if a genuine executable slice can combine address-space identity with saved user register/stack state and a real scheduling/dispatch transition. Otherwise choose another materially different caller-visible or runtime-control boundary; do not promote by cloning address spaces or enlarging static fixtures.
