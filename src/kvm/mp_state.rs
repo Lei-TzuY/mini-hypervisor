@@ -22,3 +22,5 @@ mod mp_state_capability_tests {
         assert_eq!(KVM_CAP_MP_STATE, 14);
     }
 }
+
+include!("dirty_log.rs");
