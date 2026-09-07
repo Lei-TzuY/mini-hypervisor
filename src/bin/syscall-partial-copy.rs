@@ -7,7 +7,10 @@ fn main() -> ExitCode {
         Ok(result) => {
             println!("partial-copy proof: {:?}", result.proof());
             println!("partial-copy returns: {:?}", result.returns());
-            println!("partial-copy good destination: {:?}", result.good_destination());
+            println!(
+                "partial-copy good destination: {:?}",
+                result.good_destination()
+            );
             println!(
                 "partial-copy source-fault destination: {:?}",
                 result.source_fault_destination()
@@ -16,12 +19,22 @@ fn main() -> ExitCode {
                 "partial-copy destination-fault destination: {:?}",
                 result.destination_fault_destination()
             );
-            println!("partial-copy short destination: {:?}", result.short_destination());
-            println!("partial-copy byte destination: {:#x}", result.byte_destination());
+            println!(
+                "partial-copy short destination: {:?}",
+                result.short_destination()
+            );
+            println!(
+                "partial-copy byte destination: {:#x}",
+                result.byte_destination()
+            );
             let read = result.read_fault();
             println!(
                 "partial-copy read fault: cr2={:#x} error={:#x} rip={:#x} rflags={:#x} fixup={:#x}",
-                read.cr2(), read.error_code(), read.rip(), read.rflags(), read.resolved_fixup()
+                read.cr2(),
+                read.error_code(),
+                read.rip(),
+                read.rflags(),
+                read.resolved_fixup()
             );
             let write = result.write_fault();
             println!(
