@@ -4,50 +4,49 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `70951389b42322a54ceeeebf7e88c6508f586255` through PR #112 (`Copy a ring3 byte through bounded fault fixups`). Exact merged-main verification is green across ordinary CI/MSRV and every permanent hosted-KVM workflow, including ring3/SYSCALL privilege execution, fault-safe copyin/copyout/usercopy, SMP/IPI/TLB-shootdown coverage, PCI/virtio-rng/virtio-blk execution and storage workflows.
+`main` is `fdeb42d0576fe048f234fb09675d5adb70a24e8f` through PR #113 (`Dispatch bounded ring3 syscalls by number`). The merged mainline preserves Rust 1.74 shipped-target MSRV, ordinary CI and the repository's permanent hosted-KVM proof suite across the previously integrated x86-64/ELF64, MMIO/interrupt, PCI/virtio, SMP/TLB, ring3/SYSCALL and fault-safe usercopy surfaces.
 
-The repository therefore integrates the Phase 73 foundation, x86-64/ELF64 execution, MMIO and controller-backed interrupts, direct/irqfd/eventfd asynchronous delivery, PCI/virtio execution, bounded SMP/IPI/timer/TLB-shootdown behavior, guest-owned ring3/TSS transitions, a bounded SYSCALL/SYSRET ABI, one-byte fault-safe copyin and copyout, and one combined one-byte `copy_byte(src, dst)` service backed by a guest-resident two-entry exception/fixup table.
+The repository therefore integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; guest-owned ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI; one-byte fault-safe copyin, copyout and combined usercopy; and a bounded RAX-selected syscall dispatcher.
 
-The fixed one-byte usercopy/fixup phase is sealed. The integrated service proves a real CPL0 load followed by a real CPL0 store, exact recovery of both canonical-unmapped read and write faults through distinct table entries, exact `-EFAULT` returns, mapped destination readback, supervisor-only fault metadata and fail-closed handling for unlisted fault sites. Do not farm additional fixed pointers, byte values or static fixup entries merely to extend that phase.
+PR #113 seals the fixed dispatcher proof. RAX selects exactly `{copy_byte, debug_putc}` or the unknown-number path, the two valid services execute in CPL0, unknown `0xff` returns exact `-ENOSYS`, and dispatcher-local copy faults use their own exact two-entry #PF/fixup table. Do not farm additional fixed syscall numbers merely to grow the switch.
 
-## Selected milestone — bounded syscall-number dispatcher
+## Selected milestone — bounded cross-page usercopy with partial progress
 
-The next boundary is a small executable syscall control plane rather than another copy primitive. RAX becomes an explicit syscall number while RDI/RSI remain arguments. One ring3 program must exercise two materially different CPL0 services and an unknown-number path through the existing SYSCALL/SYSRET boundary.
+The next user/kernel boundary is a real multi-byte copy contract rather than another dispatcher case. A four-byte CPL0 copy loop crosses 4 KiB user-page boundaries, exposes a single reusable load site and store site, and reports the exact number of bytes committed before a source-read or destination-write page fault.
 
 Acceptance contract:
 
-- preserve exact merged-green base `70951389b42322a54ceeeebf7e88c6508f586255`, Rust 1.74 shipped-target MSRV, ordinary CI and every permanent hosted-KVM workflow already green there;
-- `nr=0` executes fault-safe one-byte `copy_byte(src, dst)` with a real CPL0 load/store and its own two exact #PF/fixup sites;
-- `nr=1` is a bounded privileged debug-putc service: ring3 supplies one byte in RDI, only CPL0 executes `OUT 0xe9`, and the ring3 guest contains no direct debug-port output;
-- unknown syscall `0xff` emits `U` in CPL0 and returns exact `-ENOSYS` rather than aliasing either valid service;
-- dispatcher selection is driven by RAX, preserves the user stack in R10, switches to the existing kernel stack and returns through SYSRETQ;
-- deterministic ring3 sequence is good copy, kernel putc of `P`, bad-source copy, bad-destination copy, unknown syscall, then the existing DPL3 terminal gate;
-- exact debug proof is `CPRWUD`: `C` follows the successful copy, `P` is produced by the privileged putc path, `R` and `W` follow the distinct read/write fault fixups, `U` proves unknown-number dispatch and `D` proves recovered return to ring3 before the terminal transition;
-- mapped source `0xa100` starts at `0x6b`, destination `0xa101` starts at zero and both ring3/host readback must observe destination `0x6b` after the good copy;
-- canonical-unmapped `0x400000` remains absent; bad-source records read #PF error `0x0` at RIP `0x12026` and fixup `0x12033`; bad-destination records write #PF error `0x2` at RIP `0x12029` and fixup `0x12040`; both dispatcher copy faults preserve exact saved RFLAGS `0x10046` because the preceding `cmp rax,0` deterministically leaves ZF and PF set before the faulting load/store, in addition to architectural bit 1 and RF;
-- a supervisor-only two-entry table maps those fault sites to observations `0xb000` and `0xb040`; unlisted page-fault RIPs remain fail-closed rather than receiving a generic recovery;
-- exact syscall returns are copy `0`, putc `0`, both bad copies `-EFAULT` and unknown `-ENOSYS`;
-- the terminal ring3 frame remains RIP `0x1108a`, CS `0x23`, RFLAGS `0x202`, RSP `0x1fd000`, SS `0x1b`; final ring0 terminal state remains on the bounded kernel stack with IF clear and HLT RIP `0x13005`;
-- user data remains U/S+writable while dispatcher code, page-fault handler and fault metadata remain supervisor-only; the bad-pointer PD entry remains non-present;
-- KVM-aware integration must validate service selection, all six exact I/O exits, return values, mapped byte state, both #PF observations/fixups, the two-entry table, MSRs/PTEs and terminal frame/state;
-- the permanent `syscall-dispatcher` hosted-KVM workflow must execute the standalone binary with a bounded timeout and hard-check `CPRWUD`, all five syscall returns, both distinct #PF error codes/fixups/table entries and exact saved RFLAGS `0x10046`, ABI MSRs, mapped/unmapped permissions and terminal state; `/dev/kvm` is mandatory and there is no skip path;
-- formatter, Clippy, MSRV, dispatcher branch offsets, machine-code service selection, #PF/fixup, SYSRET, proof or hosted-KVM failures remain hard failures and must not be hidden by changed expectations.
+- preserve exact merged-green base `fdeb42d0576fe048f234fb09675d5adb70a24e8f`, Rust 1.74 shipped-target MSRV, ordinary CI and every permanent hosted-KVM workflow already green there;
+- copy length is exactly four bytes; R8 is the architectural progress count and increments only after one byte load and one byte store both complete;
+- retain exactly one loop load site at `LSTAR+19`, one loop store site at `LSTAR+24` and two guest-resident fixup-table entries rather than unrolling four copies or farming static fault sites;
+- both exact fault sites resolve to the common return fixup `LSTAR+37`; page-fault recovery preserves R8 and returns the completed-byte count through RAX/SYSRETQ;
+- the successful case copies source `0x20ffe` to destination `0x22ffe`, crosses present user pages, returns `4`, and leaves exact destination `[0x11,0x22,0x33,0x44]`;
+- the source-fault case starts at source `0x24ffe`, faults on byte three at non-present page `0x25000`, returns `2`, and leaves destination `[0x55,0x66,0,0]`;
+- the destination-fault case starts at source `0x28ffe` and destination `0x2affe`, faults on byte three at non-present page `0x2b000`, returns `2`, and leaves destination `[0x99,0xaa,0,0]`;
+- the exact read fault is CR2 `0x25000`, error `0x0`, RIP `0x12013`; the exact write fault is CR2 `0x2b000`, error `0x2`, RIP `0x12018`; both have kernel CS `0x8`, saved RFLAGS `0x10046` and fixup RIP `0x12025`;
+- `cmp r8,r8` immediately precedes the unique loop load/store sequence so the fault frame deterministically contains architectural bit 1 plus PF, ZF and RF while IF remains masked by the SYSCALL contract;
+- all present data pages remain user+writable; exactly `0x25000` and `0x2b000` are user+writable but non-present; the syscall service, #PF handler and fault metadata remain supervisor-only;
+- unmatched page-fault RIPs remain fail-closed and must never receive generic recovery;
+- one ring3 program executes good copy, source-fault copy and destination-fault copy, returns to ring3 after each through the existing DPL3 return gate, then terminates through the existing terminal gate; exact debug proof is `KKKD`;
+- KVM-aware integration must validate return counts, source/destination backing state, both exact #PF observations, both fixup entries, user/supervisor PTEs, ABI MSRs and the terminal privilege frame/state;
+- a permanent `cross-page-usercopy` hosted-KVM workflow must execute the standalone binary with a bounded timeout, require `/dev/kvm` with no skip path, and hard-check proof, partial progress, fault metadata/fixups, mapping permissions, terminal state and ABI MSRs;
+- formatter, Clippy, MSRV, loop/fixup machine code, #PF recovery, partial-progress accounting, SYSRET, proof or hosted-KVM failures remain hard failures and must not be hidden by changing expectations.
 
-Implementation is in progress on `milestone/syscall-dispatcher` / PR #113. The production dispatcher, standalone executable and KVM-aware integration are implemented. Exact head `f6cb143ee4a7ef02151eaa7cee998d6765413783` passed ordinary CI #718, Rust 1.74 MSRV and all pre-existing permanent hosted-KVM workflows. The first dedicated permanent dispatcher run then exposed a real contract bug: dispatcher-local #PF frames contain `0x10046`, not the older usercopy service's `0x10002`, because RAX service selection sets ZF/PF before the faulting copy instructions. Production validation, integration regression, permanent workflow and this roadmap now encode that exact dispatcher-local flag contract; the new exact head must pass all gates before integration.
+Implementation is in progress on `milestone/cross-page-usercopy` / PR #114. The production service, standalone executable and KVM-aware integration were implemented first. Exact production head `31468460ce16d76421d31968f25248f5063f2185` passed ordinary CI #729 after formatter-only corrections; that run executed `cross_page_copy_reports_exact_partial_progress_after_read_and_write_faults ... ok` on the hosted KVM runner rather than taking its environment skip path. The dedicated permanent workflow and this roadmap synchronization are subsequent governance/evidence changes, so that pre-governance green run is not the final merge candidate. The new exact head must re-pass ordinary CI, the permanent cross-page proof and all other triggered workflows before integration.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- a general or dynamically registered syscall table, syscall ABI versioning, arbitrary syscall numbers or a userspace I/O privilege mechanism;
-- multibyte/cross-page copies, partial-progress semantics, vectored I/O, mmap, demand paging, COW, allocation or signals;
+- arbitrary copy lengths, large-buffer throughput claims, vectored I/O or an optimized generic `copy_from_user`/`copy_to_user` subsystem;
+- mmap, demand paging, copy-on-write, allocation, swapping, signals or a general page-fault policy;
 - process/task objects, scheduling, multiple user address spaces, per-process CR3 ownership or multi-vCPU user execution;
-- filesystem/VFS abstractions, file descriptors, sockets or a new storage/device transport;
-- SMEP/SMAP, PKU, kernel preemption or a general exception policy;
+- filesystem/VFS abstractions, file descriptors, sockets, storage syscalls or a new device transport;
+- SMEP/SMAP, PKU, kernel preemption or security claims beyond the explicitly executed U/S and fault-fixup invariants;
 - new PCI/MMIO/virtio/SMP capability, performance or latency claims.
 
 ## Promotion rule
 
-After the bounded dispatcher is integrated and exact merged-`main` ordinary CI plus every permanent hosted-KVM workflow are green, seal the fixed `{copy_byte, putc, unknown}` dispatch proof rather than adding more hard-coded syscall numbers.
+After this four-byte cross-page contract is integrated and exact merged-`main` ordinary CI plus every triggered permanent hosted-KVM workflow are green, seal the fixed-length partial-progress proof rather than adding more fixed lengths, pointer placements or static fault cases.
 
-The next architecture audit must choose a materially different user/kernel boundary. Strong candidates are a bounded multi-byte/cross-page user-copy contract only if partial-progress and fault semantics are specified and executable, a minimal task/process/address-space ownership model, or a syscall-to-an-already-integrated device/storage capability that proves a genuine cross-layer service boundary. Do not promote merely by extending the dispatcher switch with more fixed cases or enlarging the existing static fixup table.
+The next architecture audit must choose a materially different boundary. Prefer composing the proven partial-progress copy semantics into the bounded syscall control plane only if that creates a real caller-visible multi-byte service with explicit ABI/error behavior, or promote to task/address-space ownership when a bounded executable per-process CR3/ownership slice is ready. A syscall-to-an-already-integrated storage/device capability is also valid only when it proves a genuine cross-layer service path. Do not promote by merely increasing the copy length, adding more hard-coded dispatcher cases or enlarging the existing static fixup table.
