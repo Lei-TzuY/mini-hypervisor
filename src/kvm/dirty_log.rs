@@ -3,13 +3,13 @@ const KVM_MEM_LOG_DIRTY_PAGES: u32 = 1 << 0;
 const DIRTY_LOG_SLOT: u32 = 0;
 const DIRTY_LOG_RAM_PAGES: u64 = 4;
 const DIRTY_LOG_RAM_SIZE: u64 = DIRTY_LOG_RAM_PAGES * crate::memory::KVM_MEMORY_ALIGNMENT;
-const DIRTY_LOG_GUEST_ENTRY: crate::memory::GuestPhysAddr = crate::memory::GuestPhysAddr::new(0x100);
+const DIRTY_LOG_GUEST_ENTRY: crate::memory::GuestPhysAddr = crate::memory::GuestPhysAddr::new(0x1100);
 const DIRTY_LOG_FIRST_WRITE: crate::memory::GuestPhysAddr = crate::memory::GuestPhysAddr::new(0x1000);
 const DIRTY_LOG_SECOND_WRITE: crate::memory::GuestPhysAddr = crate::memory::GuestPhysAddr::new(0x3000);
 const DIRTY_LOG_FIRST_VALUE: u8 = b'A';
 const DIRTY_LOG_SECOND_VALUE: u8 = b'B';
 const DIRTY_LOG_PROOF: &[u8; 2] = b"DG";
-const DIRTY_LOG_TERMINAL_RIP: u64 = 0x113;
+const DIRTY_LOG_TERMINAL_RIP: u64 = 0x1113;
 const DIRTY_LOG_EXIT_BUDGET: u32 = 3;
 const DIRTY_LOG_EXPECTED_BITMAP: u64 = (1 << 1) | (1 << 3);
 
@@ -59,6 +59,14 @@ impl DirtyLogSlot0 {
     }
 }
 
+type DirtyLogGuestRun = (
+    Vec<u64>,
+    Vec<u64>,
+    [u8; 2],
+    Vec<u8>,
+    crate::vmexit::VmExitReport,
+);
+
 impl crate::kvm::KvmBackend {
     pub const DIRTY_LOG_PROOF: &'static [u8; 2] = DIRTY_LOG_PROOF;
     pub const DIRTY_LOG_EXPECTED_BITMAP: u64 = DIRTY_LOG_EXPECTED_BITMAP;
@@ -66,13 +74,7 @@ impl crate::kvm::KvmBackend {
 
     pub fn run_dirty_log_guest(
         config: crate::config::VmConfig,
-    ) -> Result<(
-        Vec<u64>,
-        Vec<u64>,
-        [u8; 2],
-        Vec<u8>,
-        crate::vmexit::VmExitReport,
-    ), crate::error::Error> {
+    ) -> Result<DirtyLogGuestRun, crate::error::Error> {
         let image = crate::loader::FlatGuestImage::new(
             DIRTY_LOG_GUEST_ENTRY,
             DIRTY_LOG_GUEST_ENTRY,
@@ -89,7 +91,9 @@ impl crate::kvm::KvmBackend {
         // dirty logging. KVM may still report implementation/setup dirtiness when a logging memslot
         // is installed, so explicitly drain that state and prove a second pre-run harvest is clean.
         // The measured guest interval begins only after this verified zero baseline and immediately
-        // before the first KVM_RUN.
+        // before the first KVM_RUN. Keep executable bytes on page 1, which the guest explicitly
+        // dirties at 0x1000, so conservative execution-page dirtiness cannot create a third tracked
+        // page and obscure the exact two-page fixture contract.
         image.load(&mut memory)?;
         debug_assert_eq!(config.vcpu_count(), 1);
         let mut vcpu = vm.create_vcpu(crate::vcpu::VcpuId::BOOT)?;
@@ -328,8 +332,20 @@ mod dirty_log_tests {
     }
 
     #[test]
-    fn real_mode_fixture_only_writes_pages_one_and_three() {
+    fn real_mode_fixture_executes_from_page_one_and_only_explicitly_writes_pages_one_and_three() {
         assert_eq!(DIRTY_LOG_GUEST_BYTES.len(), 19);
+        assert_eq!(
+            DIRTY_LOG_GUEST_ENTRY.get() / crate::memory::KVM_MEMORY_ALIGNMENT,
+            1
+        );
+        assert_eq!(
+            DIRTY_LOG_FIRST_WRITE.get() / crate::memory::KVM_MEMORY_ALIGNMENT,
+            1
+        );
+        assert_eq!(
+            DIRTY_LOG_SECOND_WRITE.get() / crate::memory::KVM_MEMORY_ALIGNMENT,
+            3
+        );
         assert_eq!(
             DIRTY_LOG_GUEST_ENTRY.get() + DIRTY_LOG_GUEST_BYTES.len() as u64,
             DIRTY_LOG_TERMINAL_RIP
