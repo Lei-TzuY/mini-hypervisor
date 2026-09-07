@@ -39,7 +39,7 @@ jobs:
           grep -F 'dirty-log guest bytes: [65, 66]' <<<"$output"
           grep -F 'dirty-log proof: [68, 71]' <<<"$output"
 
-          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x113, rflags=' <<<"$output")"
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x1113, rflags=' <<<"$output")"
           rflags_hex="${report##*rflags=}"
           [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
           rflags=$((rflags_hex))
