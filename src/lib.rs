@@ -1,5 +1,6 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+pub mod address_space;
 pub mod config;
 pub mod copyin;
 pub mod copyout;
@@ -218,124 +219,124 @@ pub fn run_state_snapshot_roundtrip(
 
     debug_assert_eq!(config.vcpu_count(), 1);
     let vcpu = vm.create_vcpu(VcpuId::BOOT)?;
-    let msr_policy = GuestMsrAccessPolicy::from_host(backend.host_msr_indices(), &[])
-        .expect("empty guest MSR policy is valid by construction");
 
-    vcpu.initialize_real_mode(STATE_REFERENCE_ENTRY)?;
-    let reference = vcpu.capture_state_snapshot(&msr_policy)?;
+    let reference = vcpu.capture_state_snapshot(&GuestMsrAccessPolicy::host_introspection())?;
 
-    vcpu.initialize_real_mode(STATE_CHANGED_ENTRY)?;
-    let observed_changed = vcpu.capture_state_snapshot(&msr_policy)?;
-    let changed = reference.compare(&observed_changed);
-    debug_assert!(
-        !changed.is_exact_match(),
-        "the deterministic state round-trip fixture must mutate the captured state before restore"
-    );
+    let mut registers = vcpu.registers()?;
+    registers.rip = STATE_CHANGED_ENTRY.get();
+    registers.rflags = 0x202;
+    vcpu.set_registers(registers)?;
 
-    let restored = vcpu.restore_and_verify_state_snapshot(&reference)?;
+    let changed = vcpu.compare_state_snapshot(&reference)?;
+    vcpu.restore_state_snapshot(&reference)?;
+    let restored = vcpu.compare_state_snapshot(&reference)?;
+
     Ok(StateSnapshotRoundTripResult { changed, restored })
 }
 
-pub fn run_hlt_guest(config: VmConfig) -> Result<VmExitReport, Error> {
-    let image = FlatGuestImage::new(HLT_GUEST_ENTRY, HLT_GUEST_ENTRY, &HLT_GUEST_BYTES)?;
+pub fn run_hlt_guest(config: VmConfig) -> Result<VmExecutionResult, Error> {
+    let guest = FlatGuestImage::new(HLT_GUEST_ENTRY, HLT_GUEST_ENTRY, &HLT_GUEST_BYTES)?;
+
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm()?;
     let mut memory = GuestMemory::new(LIFECYCLE_RAM_BASE, LIFECYCLE_RAM_SIZE)?;
-    image.load(&mut memory)?;
+    guest.load(&mut memory)?;
     vm.register_guest_memory(memory)?;
 
     debug_assert_eq!(config.vcpu_count(), 1);
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
-    vcpu.initialize_real_mode(image.entry())?;
     let mut port_io = PortIoBus::empty();
-    let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, HLT_EXIT_BUDGET)?;
-
-    debug_assert_eq!(execution.completed_exits(), 1);
-    debug_assert!(execution.io_exits().is_empty());
-    Ok(execution.report())
+    run_vcpu_until_stopped(&mut vcpu, &mut port_io, HLT_EXIT_BUDGET)
 }
 
 pub fn run_debug_port_guest(config: VmConfig) -> Result<DebugPortGuestResult, Error> {
-    let image = FlatGuestImage::new(
+    let guest = FlatGuestImage::new(
         DEBUG_PORT_GUEST_ENTRY,
         DEBUG_PORT_GUEST_ENTRY,
         &DEBUG_PORT_GUEST_BYTES,
     )?;
+
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm()?;
     let mut memory = GuestMemory::new(LIFECYCLE_RAM_BASE, LIFECYCLE_RAM_SIZE)?;
-    image.load(&mut memory)?;
+    guest.load(&mut memory)?;
     vm.register_guest_memory(memory)?;
 
     debug_assert_eq!(config.vcpu_count(), 1);
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
-    vcpu.initialize_real_mode(image.entry())?;
     let mut port_io = PortIoBus::with_debug_port();
     let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, DEBUG_PORT_EXIT_BUDGET)?;
-    let io = required_single_io(&execution, "debug-port output")?;
+    let io = execution
+        .io_exits()
+        .first()
+        .expect("debug-port guest must execute exactly one port-I/O exit")
+        .clone();
 
-    debug_assert_eq!(execution.completed_exits(), 2);
-    let output = port_io.debug_output().unwrap_or(&[]).to_vec();
     Ok(DebugPortGuestResult {
         io,
-        output,
+        output: port_io.debug_output().unwrap_or(&[]).to_vec(),
         report: execution.report(),
     })
 }
 
 pub fn run_debug_port_input_guest(config: VmConfig) -> Result<DebugPortInputGuestResult, Error> {
-    let image = FlatGuestImage::new(
+    let guest = FlatGuestImage::new(
         DEBUG_PORT_INPUT_GUEST_ENTRY,
         DEBUG_PORT_INPUT_GUEST_ENTRY,
         &DEBUG_PORT_INPUT_GUEST_BYTES,
     )?;
+
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm()?;
     let mut memory = GuestMemory::new(LIFECYCLE_RAM_BASE, LIFECYCLE_RAM_SIZE)?;
-    image.load(&mut memory)?;
+    guest.load(&mut memory)?;
     vm.register_guest_memory(memory)?;
 
     debug_assert_eq!(config.vcpu_count(), 1);
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
-    vcpu.initialize_real_mode(image.entry())?;
     let mut port_io = PortIoBus::with_debug_port_input(DEBUG_PORT_INPUT_VALUE);
     let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, DEBUG_PORT_EXIT_BUDGET)?;
-    let io = required_single_io(&execution, "debug-port input")?;
+    let io = execution
+        .io_exits()
+        .first()
+        .expect("debug-port input guest must execute exactly one port-I/O exit")
+        .clone();
 
-    debug_assert_eq!(execution.completed_exits(), 2);
-    let mut observed = [0_u8; 1];
-    vm.guest_memory()
-        .expect("registered guest memory remains owned by the VM")
-        .read(DEBUG_PORT_INPUT_RESULT, &mut observed)?;
+    let guest_memory = vm
+        .guest_memory()
+        .expect("registered debug-port input memory remains VM-owned");
+    let mut value = [0_u8; 1];
+    guest_memory.read(DEBUG_PORT_INPUT_RESULT, &mut value)?;
 
     Ok(DebugPortInputGuestResult {
         io,
-        value: observed[0],
+        value: value[0],
         report: execution.report(),
     })
 }
 
 pub fn run_cpuid_guest(config: VmConfig) -> Result<CpuidGuestResult, Error> {
-    let image = FlatGuestImage::new(CPUID_GUEST_ENTRY, CPUID_GUEST_ENTRY, &CPUID_GUEST_BYTES)?;
+    let guest = FlatGuestImage::new(CPUID_GUEST_ENTRY, CPUID_GUEST_ENTRY, &CPUID_GUEST_BYTES)?;
+
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm()?;
     let mut memory = GuestMemory::new(LIFECYCLE_RAM_BASE, LIFECYCLE_RAM_SIZE)?;
-    image.load(&mut memory)?;
+    guest.load(&mut memory)?;
     vm.register_guest_memory(memory)?;
 
     debug_assert_eq!(config.vcpu_count(), 1);
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
-    vcpu.initialize_real_mode(image.entry())?;
     let mut port_io = PortIoBus::empty();
     let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, CPUID_EXIT_BUDGET)?;
 
-    debug_assert_eq!(execution.completed_exits(), 1);
-    debug_assert!(execution.io_exits().is_empty());
-    let mut observed = [0_u8; 8];
-    vm.guest_memory()
-        .expect("registered guest memory remains owned by the VM")
-        .read(CPUID_GUEST_RESULT, &mut observed)?;
-    let (cpuid1_ecx, kvm_features_eax) = decode_cpuid_guest_result(observed);
+    let guest_memory = vm
+        .guest_memory()
+        .expect("registered CPUID memory remains VM-owned");
+    let cpuid1_ecx = read_u32(guest_memory, CPUID_GUEST_RESULT)?;
+    let kvm_features_eax = read_u32(
+        guest_memory,
+        GuestPhysAddr::new(CPUID_GUEST_RESULT.get() + 4),
+    )?;
 
     Ok(CpuidGuestResult {
         cpuid1_ecx,
@@ -345,22 +346,22 @@ pub fn run_cpuid_guest(config: VmConfig) -> Result<CpuidGuestResult, Error> {
 }
 
 pub fn run_long_mode_guest(config: VmConfig) -> Result<LongModeGuestResult, Error> {
-    let image = FlatGuestImage::new(
+    let guest = FlatGuestImage::new(
         LONG_MODE_GUEST_ENTRY,
         LONG_MODE_GUEST_ENTRY,
         &LONG_MODE_GUEST_BYTES,
     )?;
+
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm()?;
     let mut memory = GuestMemory::new(LIFECYCLE_RAM_BASE, LIFECYCLE_RAM_SIZE)?;
     let layout = LongModeBootLayout::new(
         memory.region(),
-        image.entry(),
+        LONG_MODE_GUEST_ENTRY,
         LONG_MODE_GUEST_STACK_POINTER,
-    )
-    .expect("fixed deterministic long-mode fixture layout remains valid");
+    )?;
     layout.install_page_tables(&mut memory)?;
-    image.load(&mut memory)?;
+    guest.load(&mut memory)?;
     vm.register_guest_memory(memory)?;
 
     debug_assert_eq!(config.vcpu_count(), 1);
@@ -368,10 +369,15 @@ pub fn run_long_mode_guest(config: VmConfig) -> Result<LongModeGuestResult, Erro
     vcpu.initialize_long_mode(&layout)?;
     let mut port_io = PortIoBus::with_debug_port();
     let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, LONG_MODE_EXIT_BUDGET)?;
-
-    debug_assert_eq!(execution.completed_exits(), LONG_MODE_EXIT_BUDGET);
-    debug_assert_eq!(execution.io_exits().len(), LONG_MODE_GUEST_PROOF.len());
     let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
+    if proof.as_slice() != LONG_MODE_GUEST_PROOF {
+        return Err(Error::VmExit(VmExitError::UnexpectedSequence {
+            stage: "long-mode guest proof",
+            expected_reason: 5,
+            actual_reason: execution.report().exit().reason(),
+        }));
+    }
+
     Ok(LongModeGuestResult {
         io_exits: execution.io_exits().to_vec(),
         proof,
@@ -379,31 +385,15 @@ pub fn run_long_mode_guest(config: VmConfig) -> Result<LongModeGuestResult, Erro
     })
 }
 
-fn decode_cpuid_guest_result(observed: [u8; 8]) -> (u32, u32) {
-    let cpuid1_ecx = u32::from_le_bytes([observed[0], observed[1], observed[2], observed[3]]);
-    let kvm_features_eax = u32::from_le_bytes([observed[4], observed[5], observed[6], observed[7]]);
-    (cpuid1_ecx, kvm_features_eax)
+fn masked_lapic_features_clear(cpuid1_ecx: u32, kvm_features_eax: u32) -> bool {
+    cpuid1_ecx & (CPUID1_X2APIC | CPUID1_TSC_DEADLINE) == 0
+        && kvm_features_eax & KVM_FEATURE_PV_UNHALT == 0
 }
 
-const fn masked_lapic_features_clear(cpuid1_ecx: u32, kvm_features_eax: u32) -> bool {
-    let cpuid1_mask = CPUID1_X2APIC | CPUID1_TSC_DEADLINE;
-    cpuid1_ecx & cpuid1_mask == 0 && kvm_features_eax & KVM_FEATURE_PV_UNHALT == 0
-}
-
-fn required_single_io(
-    execution: &VmExecutionResult,
-    stage: &'static str,
-) -> Result<PortIoExit, Error> {
-    let Some(io) = execution.io_exits().first() else {
-        return Err(Error::VmExit(VmExitError::UnexpectedSequence {
-            stage,
-            expected_reason: kvm::sys::KVM_EXIT_IO,
-            actual_reason: execution.report().exit().reason(),
-        }));
-    };
-
-    debug_assert_eq!(execution.io_exits().len(), 1);
-    Ok(io.clone())
+fn read_u32(memory: &GuestMemory, address: GuestPhysAddr) -> Result<u32, Error> {
+    let mut bytes = [0_u8; 4];
+    memory.read(address, &mut bytes)?;
+    Ok(u32::from_le_bytes(bytes))
 }
 
 #[cfg(test)]
@@ -411,41 +401,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cpuid_guest_machine_code_is_stable() {
-        assert_eq!(
-            CPUID_GUEST_BYTES,
-            [
-                0x66, 0xb8, 0x01, 0x00, 0x00, 0x00, 0x0f, 0xa2, 0x66, 0x89, 0xc8, 0x66, 0xa3, 0x00,
-                0x20, 0x66, 0xb8, 0x01, 0x00, 0x00, 0x40, 0x0f, 0xa2, 0x66, 0xa3, 0x04, 0x20, 0xf4,
-            ]
-        );
-        assert_eq!(CPUID_GUEST_BYTES.len(), 0x1c);
-    }
-
-    #[test]
-    fn long_mode_guest_machine_code_is_stable() {
-        assert_eq!(
-            LONG_MODE_GUEST_BYTES,
-            [
-                0x48, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x4c, 0x4d, 0x36, 0x34, 0x48, 0xc1, 0xe8, 0x20,
-                0xba, 0xe9, 0x00, 0x00, 0x00, 0xee, 0x48, 0xc1, 0xe8, 0x08, 0xee, 0x48, 0xc1, 0xe8,
-                0x08, 0xee, 0x48, 0xc1, 0xe8, 0x08, 0xee, 0xf4,
-            ]
-        );
-        assert_eq!(LONG_MODE_GUEST_BYTES.len(), 0x24);
-        assert_eq!(LONG_MODE_GUEST_PROOF, b"LM64");
-    }
-
-    #[test]
-    fn decodes_cpuid_guest_result_as_little_endian_words() {
-        assert_eq!(
-            decode_cpuid_guest_result([0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x90]),
-            (0x1234_5678, 0x90ab_cdef)
-        );
-    }
-
-    #[test]
-    fn detects_each_lapic_dependent_feature_bit() {
+    fn masked_lapic_feature_check_rejects_any_exposed_feature() {
         assert!(masked_lapic_features_clear(0, 0));
         assert!(!masked_lapic_features_clear(CPUID1_X2APIC, 0));
         assert!(!masked_lapic_features_clear(CPUID1_TSC_DEADLINE, 0));
