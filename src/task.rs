@@ -1,7 +1,6 @@
 use crate::address_space::{
     AddressSpaceSwitchLayout, ADDRESS_SPACE_A_CR3, ADDRESS_SPACE_B_PML4_ADDR,
     ADDRESS_SPACE_B_PT_ADDR, ADDRESS_SPACE_B_USER_CODE_BACKING,
-    ADDRESS_SPACE_B_USER_STACK_BACKING,
 };
 use crate::config::VmConfig;
 use crate::error::{Error, HostEnvironmentError};
@@ -415,7 +414,7 @@ fn verification_error(stage: &'static str, detail: impl Into<String>) -> Error {
 
 const _: () = {
     assert!(TASK_CONTEXT_PAGE_ADDR.get() % LONG_MODE_PAGE_SIZE == 0);
-    assert!(TASK_TERMINAL_OBSERVATION_ADDR.get() + TASK_TERMINAL_OBSERVATION_BYTES as u64 < TASK_CONTEXT_PAGE_ADDR.get() + LONG_MODE_PAGE_SIZE);
+    assert!(TASK_TERMINAL_OBSERVATION_ADDR.get() + (TASK_TERMINAL_OBSERVATION_BYTES as u64) < TASK_CONTEXT_PAGE_ADDR.get() + LONG_MODE_PAGE_SIZE);
     assert!(TASK_B_STACK_MARKER_PHYS.get() < LONG_MODE_IDENTITY_MAP_SIZE);
 };
 
