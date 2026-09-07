@@ -1,5 +1,6 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+pub mod address_space;
 pub mod config;
 pub mod copyin;
 pub mod copyout;

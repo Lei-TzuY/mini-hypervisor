@@ -1,0 +1,74 @@
+name: Strict KVM address-space switch
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/address_space.rs'
+      - 'src/bin/address-space-switch.rs'
+      - 'tests/address_space_switch_guest.rs'
+      - 'src/privilege.rs'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/**'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/lib.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/address-space-switch.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  address-space-switch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM two-address-space CR3 switch proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin address-space-switch)"
+          printf '%s\n' "$output"
+
+          grep -F 'address-space roots: first=0x1000 second=0xb000' <<<"$output"
+          grep -F 'address-space CR3 observations: [0x1000, 0xb000, 0x1000]' <<<"$output"
+          grep -F 'address-space final CR3: 0x1000' <<<"$output"
+          grep -F 'address-space data: first=65 second=66' <<<"$output"
+          grep -F 'address-space proof: [65, 66, 65, 68]' <<<"$output"
+
+          check_pte() {
+            label="$1"
+            expected_phys="$2"
+            expected_user="$3"
+            line="$(grep -F "$label" <<<"$output")"
+            value_hex="${line##*: }"
+            [[ "$value_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            value=$((value_hex))
+            (( (value & 0x000ffffffffff000) == expected_phys ))
+            (( (value & 0x1) == 0x1 ))
+            (( (value & 0x2) == 0x2 ))
+            if [[ "$expected_user" == 1 ]]; then
+              (( (value & 0x4) == 0x4 ))
+            else
+              (( (value & 0x4) == 0 ))
+            fi
+          }
+
+          check_pte 'address-space A code PTE:' 0x11000 1
+          check_pte 'address-space B code PTE:' 0x20000 1
+          check_pte 'address-space A data PTE:' 0xa000 1
+          check_pte 'address-space B data PTE:' 0x21000 1
+          check_pte 'address-space A stack PTE:' 0x1fc000 1
+          check_pte 'address-space B stack PTE:' 0x22000 1
+          check_pte 'address-space A switch-handler PTE:' 0x15000 0
+          check_pte 'address-space B switch-handler PTE:' 0x15000 0
+
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x13031, rflags=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
