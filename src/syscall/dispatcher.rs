@@ -552,8 +552,7 @@ pub fn run_syscall_dispatch_guest(config: VmConfig) -> Result<SyscallDispatchGue
 fn install_page_fault_gate(memory: &mut GuestMemory) -> Result<(), Error> {
     memory.write(
         GuestPhysAddr::new(
-            PRIVILEGE_IDT_ADDR.get()
-                + u64::from(DISPATCH_PAGE_FAULT_VECTOR) * PAGE_FAULT_GATE_SIZE,
+            PRIVILEGE_IDT_ADDR.get() + u64::from(DISPATCH_PAGE_FAULT_VECTOR) * PAGE_FAULT_GATE_SIZE,
         ),
         &encode_kernel_interrupt_gate(DISPATCH_PAGE_FAULT_HANDLER.get()),
     )
@@ -801,11 +800,23 @@ mod tests {
 
     #[test]
     fn dispatcher_uses_rax_number_and_two_distinct_service_paths() {
-        assert_eq!(&DISPATCHER_HANDLER_BYTES[13..19], &[0x48, 0x83, 0xf8, 0x00, 0x74, 0x13]);
-        assert_eq!(&DISPATCHER_HANDLER_BYTES[19..25], &[0x48, 0x83, 0xf8, 0x01, 0x74, 0x34]);
+        assert_eq!(
+            &DISPATCHER_HANDLER_BYTES[13..19],
+            &[0x48, 0x83, 0xf8, 0x00, 0x74, 0x13]
+        );
+        assert_eq!(
+            &DISPATCHER_HANDLER_BYTES[19..25],
+            &[0x48, 0x83, 0xf8, 0x01, 0x74, 0x34]
+        );
         assert_eq!(&DISPATCHER_HANDLER_BYTES[25..29], &[0xb0, b'U', 0xe6, 0xe9]);
-        assert_eq!(&DISPATCHER_HANDLER_BYTES[38..43], &[0x0f, 0xb6, 0x07, 0x88, 0x06]);
-        assert_eq!(&DISPATCHER_HANDLER_BYTES[77..84], &[0x40, 0x88, 0xf8, 0xe6, 0xe9, 0x31, 0xc0]);
+        assert_eq!(
+            &DISPATCHER_HANDLER_BYTES[38..43],
+            &[0x0f, 0xb6, 0x07, 0x88, 0x06]
+        );
+        assert_eq!(
+            &DISPATCHER_HANDLER_BYTES[77..84],
+            &[0x40, 0x88, 0xf8, 0xe6, 0xe9, 0x31, 0xc0]
+        );
         assert_eq!(DISPATCH_COPY_NR, 0);
         assert_eq!(DISPATCH_PUTC_NR, 1);
         assert_eq!(DISPATCH_UNKNOWN_NR, 0xff);
@@ -824,7 +835,10 @@ mod tests {
 
     #[test]
     fn ring3_program_uses_five_syscalls_and_no_direct_debug_port_output() {
-        let syscall_count = USER_BYTES.windows(2).filter(|window| *window == [0x0f, 0x05]).count();
+        let syscall_count = USER_BYTES
+            .windows(2)
+            .filter(|window| *window == [0x0f, 0x05])
+            .count();
         let direct_debug_out = USER_BYTES.windows(2).any(|window| window == [0xe6, 0xe9]);
         assert_eq!(syscall_count, 5);
         assert!(!direct_debug_out);
@@ -847,13 +861,20 @@ mod tests {
 
     #[test]
     fn page_fault_handler_fails_closed_for_unlisted_dispatch_faults() {
-        assert_eq!(&PAGE_FAULT_HANDLER_BYTES[26..31], &[0xb0, b'X', 0xe6, 0xe9, 0xf4]);
-        assert_eq!(&PAGE_FAULT_HANDLER_BYTES[106..112], &[0x48, 0x83, 0xc4, 0x08, 0x48, 0xcf]);
+        assert_eq!(
+            &PAGE_FAULT_HANDLER_BYTES[26..31],
+            &[0xb0, b'X', 0xe6, 0xe9, 0xf4]
+        );
+        assert_eq!(
+            &PAGE_FAULT_HANDLER_BYTES[106..112],
+            &[0x48, 0x83, 0xc4, 0x08, 0x48, 0xcf]
+        );
     }
 
     #[test]
     fn dispatcher_data_is_user_writable_but_handlers_and_metadata_are_supervisor_only() {
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let layout = layout();
         layout.install_tables(&mut memory).unwrap();
         install_page_fault_gate(&mut memory).unwrap();
@@ -868,6 +889,9 @@ mod tests {
         assert_eq!(dispatcher_pte & X86_PAGE_USER, 0);
         assert_eq!(handler_pte & X86_PAGE_USER, 0);
         assert_eq!(metadata_pte & X86_PAGE_USER, 0);
-        assert_eq!(read_bad_pointer_pd_entry(&memory).unwrap() & X86_PAGE_PRESENT, 0);
+        assert_eq!(
+            read_bad_pointer_pd_entry(&memory).unwrap() & X86_PAGE_PRESENT,
+            0
+        );
     }
 }
