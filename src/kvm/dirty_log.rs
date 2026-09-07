@@ -86,14 +86,26 @@ impl crate::kvm::KvmBackend {
         )?;
 
         // Finish every host-side guest-image and vCPU state initialization step before enabling
-        // dirty logging. The measured interval therefore begins only after setup is complete and
-        // immediately before the first KVM_RUN, so setup activity cannot contaminate guest-write
-        // evidence.
+        // dirty logging. KVM may still report implementation/setup dirtiness when a logging memslot
+        // is installed, so explicitly drain that state and prove a second pre-run harvest is clean.
+        // The measured guest interval begins only after this verified zero baseline and immediately
+        // before the first KVM_RUN.
         image.load(&mut memory)?;
         debug_assert_eq!(config.vcpu_count(), 1);
         let mut vcpu = vm.create_vcpu(crate::vcpu::VcpuId::BOOT)?;
         vcpu.initialize_real_mode(image.entry())?;
         let dirty_slot = register_guest_memory_with_dirty_log(&mut vm, memory)?;
+
+        let setup_dirty = harvest_dirty_log(&vm, dirty_slot)?;
+        let clean_baseline = harvest_dirty_log(&vm, dirty_slot)?;
+        if clean_baseline.iter().any(|word| *word != 0) {
+            return Err(dirty_log_verification_error(
+                "pre-execution dirty-log baseline",
+                format!(
+                    "expected a clean bitmap after draining setup dirtiness {setup_dirty:?}, got {clean_baseline:?}"
+                ),
+            ));
+        }
 
         let mut port_io = crate::portio::PortIoBus::with_debug_port();
         let execution = crate::execution::run_vcpu_until_stopped(
@@ -129,7 +141,7 @@ impl crate::kvm::KvmBackend {
         }
 
         // Basic KVM_GET_DIRTY_LOG clears harvested bits before returning when manual dirty-log
-        // protect2 is not enabled. No guest is re-entered between these two harvests.
+        // protect2 is not enabled. No guest is re-entered between these two post-run harvests.
         let second = harvest_dirty_log(&vm, dirty_slot)?;
         if second.iter().any(|word| *word != 0) {
             return Err(dirty_log_verification_error(
