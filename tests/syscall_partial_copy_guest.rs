@@ -18,18 +18,41 @@ fn bounded_copy_syscall_reports_partial_progress_and_preserves_dispatcher_servic
         Ok(result) => {
             assert_eq!(
                 result.returns(),
-                [4, 2, 2, 1, PARTIAL_EINVAL, PARTIAL_EINVAL, 0, 0, PARTIAL_ENOSYS]
+                [
+                    4,
+                    2,
+                    2,
+                    1,
+                    PARTIAL_EINVAL,
+                    PARTIAL_EINVAL,
+                    0,
+                    0,
+                    PARTIAL_ENOSYS
+                ]
             );
             assert_eq!(result.good_destination(), PARTIAL_GOOD_BYTES);
             assert_eq!(
                 result.source_fault_destination(),
-                [PARTIAL_SOURCE_FAULT_BYTES[0], PARTIAL_SOURCE_FAULT_BYTES[1], 0, 0]
+                [
+                    PARTIAL_SOURCE_FAULT_BYTES[0],
+                    PARTIAL_SOURCE_FAULT_BYTES[1],
+                    0,
+                    0
+                ]
             );
             assert_eq!(
                 result.destination_fault_destination(),
-                [PARTIAL_DEST_FAULT_BYTES[0], PARTIAL_DEST_FAULT_BYTES[1], 0, 0]
+                [
+                    PARTIAL_DEST_FAULT_BYTES[0],
+                    PARTIAL_DEST_FAULT_BYTES[1],
+                    0,
+                    0
+                ]
             );
-            assert_eq!(result.short_destination(), [PARTIAL_SHORT_BYTES[0], 0, 0, 0]);
+            assert_eq!(
+                result.short_destination(),
+                [PARTIAL_SHORT_BYTES[0], 0, 0, 0]
+            );
             assert_eq!(result.byte_destination(), PARTIAL_BYTE_VALUE);
 
             let read = result.read_fault();
@@ -63,11 +86,20 @@ fn bounded_copy_syscall_reports_partial_progress_and_preserves_dispatcher_servic
             assert_eq!(result.fault_handler_pte() & 0x4, 0);
             assert_eq!(result.fault_metadata_pte() & 0x4, 0);
 
-            assert_eq!(result.terminal_frame().rflags() & X86_RFLAGS_IF, X86_RFLAGS_IF);
+            assert_eq!(
+                result.terminal_frame().rflags() & X86_RFLAGS_IF,
+                X86_RFLAGS_IF
+            );
             assert_eq!(result.terminal_rflags() & X86_RFLAGS_IF, 0);
-            assert_eq!(result.terminal_rflags() & X86_RFLAGS_RESERVED, X86_RFLAGS_RESERVED);
+            assert_eq!(
+                result.terminal_rflags() & X86_RFLAGS_RESERVED,
+                X86_RFLAGS_RESERVED
+            );
             assert_eq!(result.report().exit(), VcpuExit::Hlt);
-            assert_eq!(result.report().rflags() & X86_RFLAGS_RESERVED, X86_RFLAGS_RESERVED);
+            assert_eq!(
+                result.report().rflags() & X86_RFLAGS_RESERVED,
+                X86_RFLAGS_RESERVED
+            );
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
