@@ -1,0 +1,113 @@
+name: Strict KVM syscall partial progress
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/bin/syscall-partial-copy.rs'
+      - 'src/syscall/partial_dispatch.rs'
+      - 'src/syscall/dispatcher.rs'
+      - 'src/syscall/base.rs'
+      - 'src/syscall/mod.rs'
+      - 'tests/syscall_partial_copy_guest.rs'
+      - 'src/privilege.rs'
+      - 'src/kvm/msr.rs'
+      - 'src/kvm/msr/**'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/**'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/lib.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/syscall-partial-copy.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM bounded syscall partial-progress copy proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin syscall-partial-copy)"
+          printf '%s\n' "$output"
+
+          grep -F 'partial-copy proof: [77, 70, 70, 77, 73, 73, 67, 80, 85, 68]' <<<"$output"
+          grep -F 'partial-copy returns: [4, 2, 2, 1, 18446744073709551594, 18446744073709551594, 0, 0, 18446744073709551578]' <<<"$output"
+          grep -F 'partial-copy good destination: [17, 34, 51, 68]' <<<"$output"
+          grep -F 'partial-copy source-fault destination: [85, 102, 0, 0]' <<<"$output"
+          grep -F 'partial-copy destination-fault destination: [153, 170, 0, 0]' <<<"$output"
+          grep -F 'partial-copy short destination: [222, 0, 0, 0]' <<<"$output"
+          grep -F 'partial-copy byte destination: 0x6b' <<<"$output"
+
+          grep -F 'partial-copy read fault: cr2=0x25000 error=0x0 rip=0x12078 cs=0x8 rflags=0x10046 fixup=0x12098' <<<"$output"
+          grep -F 'partial-copy write fault: cr2=0x2b000 error=0x2 rip=0x1207d cs=0x8 rflags=0x10046 fixup=0x12098' <<<"$output"
+          grep -F 'partial-copy fixup[0]: fault=0x12078 fixup=0x12098 observation=0xb000' <<<"$output"
+          grep -F 'partial-copy fixup[1]: fault=0x1207d fixup=0x12098 observation=0xb040' <<<"$output"
+
+          pte_for() {
+            local address="$1"
+            local line
+            line="$(grep -F "partial-copy PTE ${address}:" <<<"$output")"
+            printf '%s\n' "${line##*: }"
+          }
+          for address in 0x20000 0x21000 0x22000 0x23000 0x24000 0x26000 0x27000 0x28000 0x29000 0x2a000; do
+            pte_hex="$(pte_for "$address")"
+            [[ "$pte_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            pte=$((pte_hex))
+            (( (pte & 0x7) == 0x7 ))
+          done
+          for address in 0x25000 0x2b000; do
+            pte_hex="$(pte_for "$address")"
+            [[ "$pte_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            pte=$((pte_hex))
+            (( (pte & 0x1) == 0 ))
+            (( (pte & 0x6) == 0x6 ))
+          done
+
+          for label in 'partial-copy service PTE:' 'partial-copy fault handler PTE:' 'partial-copy fault metadata PTE:'; do
+            line="$(grep -F "$label" <<<"$output")"
+            pte_hex="${line##*: }"
+            [[ "$pte_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            pte=$((pte_hex))
+            (( (pte & 0x1) == 0x1 ))
+            (( (pte & 0x4) == 0 ))
+          done
+
+          frame="$(grep -F 'partial-copy terminal frame:' <<<"$output")"
+          [[ "$frame" == *' cs=0x23 '* ]]
+          [[ "$frame" == *' rflags=0x202 '* ]]
+          [[ "$frame" == *' rsp=0x1fd000 '* ]]
+          [[ "$frame" == *' ss=0x1b' ]]
+
+          terminal="$(grep -F 'partial-copy terminal: rsp=' <<<"$output")"
+          [[ "$terminal" == *' cs=0x8 '* ]]
+          [[ "$terminal" == *' cr2=0x2b000' ]]
+          terminal_rflags_hex="$(sed -n 's/.* rflags=\(0x[0-9a-fA-F]*\) cr2=.*/\1/p' <<<"$terminal")"
+          [[ "$terminal_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          terminal_rflags=$((terminal_rflags_hex))
+          (( (terminal_rflags & 0x2) == 0x2 ))
+          (( (terminal_rflags & 0x200) == 0 ))
+
+          msrs="$(grep -F 'partial-copy MSRs:' <<<"$output")"
+          efer_hex="$(sed -n 's/.*efer=\(0x[0-9a-fA-F]*\) star=.*/\1/p' <<<"$msrs")"
+          [[ "$efer_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          efer=$((efer_hex))
+          (( (efer & 0x1) == 0x1 ))
+          [[ "$msrs" == *'star=0x13000800000000'* ]]
+          [[ "$msrs" == *'lstar=0x12000'* ]]
+          [[ "$msrs" == *'sfmask=0x200'* ]]
+
+          report="$(grep -F 'partial-copy terminal report: vCPU 0 exit Hlt: rip=0x13005, rflags=' <<<"$output")"
+          report_rflags_hex="${report##*rflags=}"
+          [[ "$report_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          report_rflags=$((report_rflags_hex))
+          (( (report_rflags & 0x2) == 0x2 ))
