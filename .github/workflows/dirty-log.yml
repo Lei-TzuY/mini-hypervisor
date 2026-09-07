@@ -1,0 +1,46 @@
+name: Strict KVM dirty-log tracking
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/kvm/dirty_log.rs'
+      - 'src/kvm/mp_state.rs'
+      - 'src/kvm/mod.rs'
+      - 'src/kvm/sys.rs'
+      - 'src/bin/dirty-log.rs'
+      - 'tests/dirty_log_guest.rs'
+      - 'src/memory.rs'
+      - 'src/execution.rs'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/**'
+      - '.github/workflows/dirty-log.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  dirty-log:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM slot-0 dirty bitmap proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin dirty-log)"
+          printf '%s\n' "$output"
+
+          grep -F 'dirty-log first bitmap: [10]' <<<"$output"
+          grep -F 'dirty-log second bitmap: [0]' <<<"$output"
+          grep -F 'dirty-log guest bytes: [65, 66]' <<<"$output"
+          grep -F 'dirty-log proof: [68, 71]' <<<"$output"
+
+          report="$(grep -F 'vCPU 0 exit Hlt: rip=0x1113, rflags=' <<<"$output")"
+          rflags_hex="${report##*rflags=}"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
