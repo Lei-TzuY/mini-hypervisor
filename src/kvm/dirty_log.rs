@@ -85,14 +85,16 @@ impl crate::kvm::KvmBackend {
             DIRTY_LOG_RAM_SIZE,
         )?;
 
-        // Host initialization precedes dirty-log registration so the executable page is not part of
-        // the guest-write evidence. The real-mode guest performs no stack or page-table writes.
+        // Finish every host-side guest-image and vCPU state initialization step before enabling
+        // dirty logging. The measured interval therefore begins only after setup is complete and
+        // immediately before the first KVM_RUN, so setup activity cannot contaminate guest-write
+        // evidence.
         image.load(&mut memory)?;
-        let dirty_slot = register_guest_memory_with_dirty_log(&mut vm, memory)?;
-
         debug_assert_eq!(config.vcpu_count(), 1);
         let mut vcpu = vm.create_vcpu(crate::vcpu::VcpuId::BOOT)?;
         vcpu.initialize_real_mode(image.entry())?;
+        let dirty_slot = register_guest_memory_with_dirty_log(&mut vm, memory)?;
+
         let mut port_io = crate::portio::PortIoBus::with_debug_port();
         let execution = crate::execution::run_vcpu_until_stopped(
             &mut vcpu,
