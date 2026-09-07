@@ -22,7 +22,10 @@ fn main() -> ExitCode {
             println!("address-space A data PTE: {:#x}", result.first_data_pte());
             println!("address-space B data PTE: {:#x}", result.second_data_pte());
             println!("address-space A stack PTE: {:#x}", result.first_stack_pte());
-            println!("address-space B stack PTE: {:#x}", result.second_stack_pte());
+            println!(
+                "address-space B stack PTE: {:#x}",
+                result.second_stack_pte()
+            );
             println!(
                 "address-space A switch-handler PTE: {:#x}",
                 result.first_kernel_pte()
