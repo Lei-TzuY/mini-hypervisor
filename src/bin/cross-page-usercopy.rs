@@ -6,19 +6,22 @@ fn main() -> ExitCode {
     match run_cross_page_usercopy_guest(VmConfig::default()) {
         Ok(result) => {
             println!("cross-page proof: {:?}", result.proof());
-            println!("cross-page returns: {:?}", result.returns());
+            let [good_return, source_fault_return, destination_fault_return] = result.returns();
+            println!(
+                "cross-page returns: good={good_return} source_fault={source_fault_return} destination_fault={destination_fault_return}"
+            );
             println!(
                 "cross-page good: source={:?} destination={:?}",
                 result.good_source(),
                 result.good_destination()
             );
             println!(
-                "cross-page source-fault: source={:?} destination={:?}",
+                "cross-page source fault: source={:?} destination={:?}",
                 result.source_fault_source(),
                 result.source_fault_destination()
             );
             println!(
-                "cross-page destination-fault: source={:?} destination={:?}",
+                "cross-page destination fault: source={:?} destination={:?}",
                 result.destination_fault_source(),
                 result.destination_fault_destination()
             );
@@ -51,7 +54,7 @@ fn main() -> ExitCode {
                 );
             }
             for (address, pte) in result.user_page_ptes() {
-                println!("cross-page user PTE {address:#x}: {pte:#x}");
+                println!("cross-page PTE {address:#x}: {pte:#x}");
             }
             println!("cross-page service PTE: {:#x}", result.service_pte());
             println!(
@@ -78,12 +81,11 @@ fn main() -> ExitCode {
                 result.terminal_rflags(),
                 result.final_cr2()
             );
-            println!("cross-page MSRs: {:?}", result.msrs());
+            let [efer, star, lstar, sfmask] = result.msrs();
             println!(
-                "cross-page terminal report: rip={:#x} rflags={:#x}",
-                result.report().rip(),
-                result.report().rflags()
+                "cross-page MSRs: efer={efer:#x} star={star:#x} lstar={lstar:#x} sfmask={sfmask:#x}"
             );
+            println!("cross-page terminal report: {}", result.report());
             ExitCode::SUCCESS
         }
         Err(error) => {
