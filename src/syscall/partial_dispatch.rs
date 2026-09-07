@@ -131,11 +131,17 @@ pub struct PartialDispatchFixupEntry {
 
 impl PartialDispatchFixupEntry {
     #[must_use]
-    pub const fn fault_rip(self) -> u64 { self.fault_rip }
+    pub const fn fault_rip(self) -> u64 {
+        self.fault_rip
+    }
     #[must_use]
-    pub const fn fixup_rip(self) -> u64 { self.fixup_rip }
+    pub const fn fixup_rip(self) -> u64 {
+        self.fixup_rip
+    }
     #[must_use]
-    pub const fn observation_addr(self) -> u64 { self.observation_addr }
+    pub const fn observation_addr(self) -> u64 {
+        self.observation_addr
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,17 +156,29 @@ pub struct PartialDispatchFaultObservation {
 
 impl PartialDispatchFaultObservation {
     #[must_use]
-    pub const fn cr2(self) -> u64 { self.cr2 }
+    pub const fn cr2(self) -> u64 {
+        self.cr2
+    }
     #[must_use]
-    pub const fn error_code(self) -> u64 { self.error_code }
+    pub const fn error_code(self) -> u64 {
+        self.error_code
+    }
     #[must_use]
-    pub const fn rip(self) -> u64 { self.rip }
+    pub const fn rip(self) -> u64 {
+        self.rip
+    }
     #[must_use]
-    pub const fn cs(self) -> u64 { self.cs }
+    pub const fn cs(self) -> u64 {
+        self.cs
+    }
     #[must_use]
-    pub const fn rflags(self) -> u64 { self.rflags }
+    pub const fn rflags(self) -> u64 {
+        self.rflags
+    }
     #[must_use]
-    pub const fn resolved_fixup(self) -> u64 { self.resolved_fixup }
+    pub const fn resolved_fixup(self) -> u64 {
+        self.resolved_fixup
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,15 +192,25 @@ pub struct PartialDispatchTerminalFrame {
 
 impl PartialDispatchTerminalFrame {
     #[must_use]
-    pub const fn rip(self) -> u64 { self.rip }
+    pub const fn rip(self) -> u64 {
+        self.rip
+    }
     #[must_use]
-    pub const fn cs(self) -> u64 { self.cs }
+    pub const fn cs(self) -> u64 {
+        self.cs
+    }
     #[must_use]
-    pub const fn rflags(self) -> u64 { self.rflags }
+    pub const fn rflags(self) -> u64 {
+        self.rflags
+    }
     #[must_use]
-    pub const fn rsp(self) -> u64 { self.rsp }
+    pub const fn rsp(self) -> u64 {
+        self.rsp
+    }
     #[must_use]
-    pub const fn ss(self) -> u64 { self.ss }
+    pub const fn ss(self) -> u64 {
+        self.ss
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,58 +241,110 @@ pub struct PartialDispatchGuestResult {
 
 impl PartialDispatchGuestResult {
     #[must_use]
-    pub fn io_exits(&self) -> &[PortIoExit] { &self.io_exits }
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
     #[must_use]
-    pub fn proof(&self) -> &[u8] { &self.proof }
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
     #[must_use]
-    pub const fn report(&self) -> VmExitReport { self.report }
+    pub const fn report(&self) -> VmExitReport {
+        self.report
+    }
     #[must_use]
-    pub const fn returns(&self) -> [u64; 9] { self.returns }
+    pub const fn returns(&self) -> [u64; 9] {
+        self.returns
+    }
     #[must_use]
-    pub const fn good_destination(&self) -> [u8; 4] { self.good_destination }
+    pub const fn good_destination(&self) -> [u8; 4] {
+        self.good_destination
+    }
     #[must_use]
-    pub const fn source_fault_destination(&self) -> [u8; 4] { self.source_fault_destination }
+    pub const fn source_fault_destination(&self) -> [u8; 4] {
+        self.source_fault_destination
+    }
     #[must_use]
-    pub const fn destination_fault_destination(&self) -> [u8; 4] { self.destination_fault_destination }
+    pub const fn destination_fault_destination(&self) -> [u8; 4] {
+        self.destination_fault_destination
+    }
     #[must_use]
-    pub const fn short_destination(&self) -> [u8; 4] { self.short_destination }
+    pub const fn short_destination(&self) -> [u8; 4] {
+        self.short_destination
+    }
     #[must_use]
-    pub const fn byte_destination(&self) -> u8 { self.byte_destination }
+    pub const fn byte_destination(&self) -> u8 {
+        self.byte_destination
+    }
     #[must_use]
-    pub const fn read_fault(&self) -> PartialDispatchFaultObservation { self.read_fault }
+    pub const fn read_fault(&self) -> PartialDispatchFaultObservation {
+        self.read_fault
+    }
     #[must_use]
-    pub const fn write_fault(&self) -> PartialDispatchFaultObservation { self.write_fault }
+    pub const fn write_fault(&self) -> PartialDispatchFaultObservation {
+        self.write_fault
+    }
     #[must_use]
-    pub const fn fixup_entries(&self) -> &[PartialDispatchFixupEntry; 2] { &self.fixup_entries }
+    pub const fn fixup_entries(&self) -> &[PartialDispatchFixupEntry; 2] {
+        &self.fixup_entries
+    }
     #[must_use]
-    pub const fn terminal_frame(&self) -> PartialDispatchTerminalFrame { self.terminal_frame }
+    pub const fn terminal_frame(&self) -> PartialDispatchTerminalFrame {
+        self.terminal_frame
+    }
     #[must_use]
-    pub const fn terminal_rsp(&self) -> u64 { self.terminal_rsp }
+    pub const fn terminal_rsp(&self) -> u64 {
+        self.terminal_rsp
+    }
     #[must_use]
-    pub const fn terminal_cs(&self) -> u16 { self.terminal_cs }
+    pub const fn terminal_cs(&self) -> u16 {
+        self.terminal_cs
+    }
     #[must_use]
-    pub const fn terminal_rflags(&self) -> u64 { self.terminal_rflags }
+    pub const fn terminal_rflags(&self) -> u64 {
+        self.terminal_rflags
+    }
     #[must_use]
-    pub const fn final_cr2(&self) -> u64 { self.final_cr2 }
+    pub const fn final_cr2(&self) -> u64 {
+        self.final_cr2
+    }
     #[must_use]
-    pub const fn msrs(&self) -> [u64; 4] { self.msrs }
+    pub const fn msrs(&self) -> [u64; 4] {
+        self.msrs
+    }
     #[must_use]
-    pub fn user_page_ptes(&self) -> &[(u64, u64)] { &self.user_page_ptes }
+    pub fn user_page_ptes(&self) -> &[(u64, u64)] {
+        &self.user_page_ptes
+    }
     #[must_use]
-    pub const fn service_pte(&self) -> u64 { self.service_pte }
+    pub const fn service_pte(&self) -> u64 {
+        self.service_pte
+    }
     #[must_use]
-    pub const fn fault_handler_pte(&self) -> u64 { self.fault_handler_pte }
+    pub const fn fault_handler_pte(&self) -> u64 {
+        self.fault_handler_pte
+    }
     #[must_use]
-    pub const fn fault_metadata_pte(&self) -> u64 { self.fault_metadata_pte }
+    pub const fn fault_metadata_pte(&self) -> u64 {
+        self.fault_metadata_pte
+    }
 }
 
 pub fn run_partial_dispatch_guest(config: VmConfig) -> Result<PartialDispatchGuestResult, Error> {
     let user_bytes = build_user_guest();
     let terminal_return_rip = PRIVILEGE_USER_ENTRY.get()
         + u64::try_from(user_bytes.len()).expect("bounded partial-dispatch user program fits u64");
-    let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &KERNEL_BOOT_BYTES)?;
+    let kernel = FlatGuestImage::new(
+        PRIVILEGE_KERNEL_ENTRY,
+        PRIVILEGE_KERNEL_ENTRY,
+        &KERNEL_BOOT_BYTES,
+    )?;
     let user = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &user_bytes)?;
-    let dispatcher = FlatGuestImage::new(SYSCALL_KERNEL_ENTRY, SYSCALL_KERNEL_ENTRY, &PARTIAL_DISPATCHER_BYTES)?;
+    let dispatcher = FlatGuestImage::new(
+        SYSCALL_KERNEL_ENTRY,
+        SYSCALL_KERNEL_ENTRY,
+        &PARTIAL_DISPATCHER_BYTES,
+    )?;
     let page_fault_handler = FlatGuestImage::new(
         PARTIAL_PAGE_FAULT_HANDLER,
         PARTIAL_PAGE_FAULT_HANDLER,
@@ -291,8 +371,14 @@ pub fn run_partial_dispatch_guest(config: VmConfig) -> Result<PartialDispatchGue
     terminal_handler.load(&mut memory)?;
     initialize_data(&mut memory)?;
     memory.write(PARTIAL_RESULT_ADDR, &[0; 72])?;
-    memory.write(PARTIAL_READ_FAULT_OBSERVATION_ADDR, &[0; FAULT_OBSERVATION_BYTES])?;
-    memory.write(PARTIAL_WRITE_FAULT_OBSERVATION_ADDR, &[0; FAULT_OBSERVATION_BYTES])?;
+    memory.write(
+        PARTIAL_READ_FAULT_OBSERVATION_ADDR,
+        &[0; FAULT_OBSERVATION_BYTES],
+    )?;
+    memory.write(
+        PARTIAL_WRITE_FAULT_OBSERVATION_ADDR,
+        &[0; FAULT_OBSERVATION_BYTES],
+    )?;
     memory.write(PARTIAL_FIXUP_TABLE_ADDR, &encoded_fixup_table())?;
     vm.register_guest_memory(memory)?;
 
@@ -307,10 +393,17 @@ pub fn run_partial_dispatch_guest(config: VmConfig) -> Result<PartialDispatchGue
     if execution.io_exits().len() != PARTIAL_PROOF.len() || proof.as_slice() != PARTIAL_PROOF {
         return Err(verification_error(
             "partial-copy dispatcher proof",
-            format!("expected {PARTIAL_PROOF:?}, got {proof:?} report={}", execution.report()),
+            format!(
+                "expected {PARTIAL_PROOF:?}, got {proof:?} report={}",
+                execution.report()
+            ),
         ));
     }
-    for (io, expected) in execution.io_exits().iter().zip(PARTIAL_PROOF.iter().copied()) {
+    for (io, expected) in execution
+        .io_exits()
+        .iter()
+        .zip(PARTIAL_PROOF.iter().copied())
+    {
         if io.direction() != PortIoDirection::Out
             || io.size() != 1
             || io.count() != 1
@@ -363,7 +456,13 @@ pub fn run_partial_dispatch_guest(config: VmConfig) -> Result<PartialDispatchGue
 fn build_user_guest() -> Vec<u8> {
     let mut code = Vec::new();
     emit_movabs(&mut code, 0xbb, PARTIAL_RESULT_ADDR.get());
-    emit_range_call(&mut code, PARTIAL_GOOD_SOURCE, PARTIAL_GOOD_DESTINATION, 4, 0);
+    emit_range_call(
+        &mut code,
+        PARTIAL_GOOD_SOURCE,
+        PARTIAL_GOOD_DESTINATION,
+        4,
+        0,
+    );
     emit_range_call(
         &mut code,
         PARTIAL_SOURCE_FAULT_SOURCE,
@@ -378,9 +477,27 @@ fn build_user_guest() -> Vec<u8> {
         4,
         16,
     );
-    emit_range_call(&mut code, PARTIAL_SHORT_SOURCE, PARTIAL_SHORT_DESTINATION, 1, 24);
-    emit_range_call(&mut code, PARTIAL_SHORT_SOURCE, PARTIAL_SHORT_DESTINATION, 0, 32);
-    emit_range_call(&mut code, PARTIAL_SHORT_SOURCE, PARTIAL_SHORT_DESTINATION, 5, 40);
+    emit_range_call(
+        &mut code,
+        PARTIAL_SHORT_SOURCE,
+        PARTIAL_SHORT_DESTINATION,
+        1,
+        24,
+    );
+    emit_range_call(
+        &mut code,
+        PARTIAL_SHORT_SOURCE,
+        PARTIAL_SHORT_DESTINATION,
+        0,
+        32,
+    );
+    emit_range_call(
+        &mut code,
+        PARTIAL_SHORT_SOURCE,
+        PARTIAL_SHORT_DESTINATION,
+        5,
+        40,
+    );
     emit_copy_byte_call(&mut code, 48);
     emit_putc_call(&mut code, 56);
     emit_unknown_call(&mut code, 64);
@@ -397,7 +514,6 @@ fn emit_range_call(code: &mut Vec<u8>, source: u64, destination: u64, len: u32, 
     code.extend_from_slice(&[0x0f, 0x05]);
     emit_store_result(code, result_offset);
 }
-
 fn emit_copy_byte_call(code: &mut Vec<u8>, result_offset: u8) {
     code.extend_from_slice(&[0xb8, 0, 0, 0, 0]);
     emit_movabs(code, 0xbf, PARTIAL_BYTE_SOURCE);
@@ -446,8 +562,7 @@ fn install_user_mappings(memory: &mut GuestMemory) -> Result<(), Error> {
 fn install_page_fault_gate(memory: &mut GuestMemory) -> Result<(), Error> {
     memory.write(
         GuestPhysAddr::new(
-            PRIVILEGE_IDT_ADDR.get()
-                + u64::from(PARTIAL_PAGE_FAULT_VECTOR) * PAGE_FAULT_GATE_SIZE,
+            PRIVILEGE_IDT_ADDR.get() + u64::from(PARTIAL_PAGE_FAULT_VECTOR) * PAGE_FAULT_GATE_SIZE,
         ),
         &encode_kernel_interrupt_gate(PARTIAL_PAGE_FAULT_HANDLER.get()),
     )
@@ -470,15 +585,24 @@ fn initialize_data(memory: &mut GuestMemory) -> Result<(), Error> {
         GuestPhysAddr::new(PARTIAL_SOURCE_FAULT_SOURCE),
         &PARTIAL_SOURCE_FAULT_BYTES,
     )?;
-    memory.write(GuestPhysAddr::new(PARTIAL_SOURCE_FAULT_DESTINATION), &[0; 4])?;
+    memory.write(
+        GuestPhysAddr::new(PARTIAL_SOURCE_FAULT_DESTINATION),
+        &[0; 4],
+    )?;
     memory.write(
         GuestPhysAddr::new(PARTIAL_DEST_FAULT_SOURCE),
         &PARTIAL_DEST_FAULT_BYTES,
     )?;
     memory.write(GuestPhysAddr::new(PARTIAL_DEST_FAULT_DESTINATION), &[0; 4])?;
-    memory.write(GuestPhysAddr::new(PARTIAL_SHORT_SOURCE), &PARTIAL_SHORT_BYTES)?;
+    memory.write(
+        GuestPhysAddr::new(PARTIAL_SHORT_SOURCE),
+        &PARTIAL_SHORT_BYTES,
+    )?;
     memory.write(GuestPhysAddr::new(PARTIAL_SHORT_DESTINATION), &[0; 4])?;
-    memory.write(GuestPhysAddr::new(PARTIAL_BYTE_SOURCE), &[PARTIAL_BYTE_VALUE])?;
+    memory.write(
+        GuestPhysAddr::new(PARTIAL_BYTE_SOURCE),
+        &[PARTIAL_BYTE_VALUE],
+    )?;
     memory.write(GuestPhysAddr::new(PARTIAL_BYTE_DESTINATION), &[0])?;
     Ok(())
 }
@@ -497,7 +621,6 @@ fn expected_fixup_entries() -> [PartialDispatchFixupEntry; 2] {
         },
     ]
 }
-
 fn encoded_fixup_table() -> [u8; FIXUP_TABLE_BYTES] {
     let mut bytes = [0_u8; FIXUP_TABLE_BYTES];
     for (index, entry) in expected_fixup_entries().iter().copied().enumerate() {
@@ -596,7 +719,10 @@ fn write_u64(memory: &mut GuestMemory, address: GuestPhysAddr, value: u64) -> Re
     memory.write(address, &value.to_le_bytes())
 }
 
-fn validate_runtime_state(result: &PartialDispatchGuestResult, terminal_return_rip: u64) -> Result<(), Error> {
+fn validate_runtime_state(
+    result: &PartialDispatchGuestResult,
+    terminal_return_rip: u64,
+) -> Result<(), Error> {
     let expected_returns = [
         4,
         2,
@@ -720,10 +846,22 @@ mod tests {
 
     #[test]
     fn appended_range_service_preserves_integrated_dispatcher_fault_offsets() {
-        assert_eq!(&PARTIAL_DISPATCHER_BYTES[13..19], &[0x48, 0x83, 0xf8, 0x00, 0x74, 0x13]);
-        assert_eq!(&PARTIAL_DISPATCHER_BYTES[19..25], &[0x48, 0x83, 0xf8, 0x01, 0x74, 0x34]);
-        assert_eq!(&PARTIAL_DISPATCHER_BYTES[25..31], &[0x48, 0x83, 0xf8, 0x02, 0x74, 0x48]);
-        assert_eq!(&PARTIAL_DISPATCHER_BYTES[38..43], &[0x0f, 0xb6, 0x07, 0x88, 0x06]);
+        assert_eq!(
+            &PARTIAL_DISPATCHER_BYTES[13..19],
+            &[0x48, 0x83, 0xf8, 0x00, 0x74, 0x13]
+        );
+        assert_eq!(
+            &PARTIAL_DISPATCHER_BYTES[19..25],
+            &[0x48, 0x83, 0xf8, 0x01, 0x74, 0x34]
+        );
+        assert_eq!(
+            &PARTIAL_DISPATCHER_BYTES[25..31],
+            &[0x48, 0x83, 0xf8, 0x02, 0x74, 0x48]
+        );
+        assert_eq!(
+            &PARTIAL_DISPATCHER_BYTES[38..43],
+            &[0x0f, 0xb6, 0x07, 0x88, 0x06]
+        );
         assert_eq!(SYSCALL_KERNEL_ENTRY.get() + 38, 0x12026);
         assert_eq!(SYSCALL_KERNEL_ENTRY.get() + 41, 0x12029);
         assert_eq!(SYSCALL_KERNEL_ENTRY.get() + 51, 0x12033);
@@ -734,8 +872,14 @@ mod tests {
     #[test]
     fn range_service_uses_one_load_store_pair_and_progress_preserving_fixup() {
         assert_eq!(&PARTIAL_DISPATCHER_BYTES[117..120], &[0x4d, 0x39, 0xc0]);
-        assert_eq!(&PARTIAL_DISPATCHER_BYTES[120..125], &[0x42, 0x0f, 0xb6, 0x04, 0x07]);
-        assert_eq!(&PARTIAL_DISPATCHER_BYTES[125..129], &[0x42, 0x88, 0x04, 0x06]);
+        assert_eq!(
+            &PARTIAL_DISPATCHER_BYTES[120..125],
+            &[0x42, 0x0f, 0xb6, 0x04, 0x07]
+        );
+        assert_eq!(
+            &PARTIAL_DISPATCHER_BYTES[125..129],
+            &[0x42, 0x88, 0x04, 0x06]
+        );
         assert_eq!(PARTIAL_READ_FAULT_RIP, 0x12078);
         assert_eq!(PARTIAL_WRITE_FAULT_RIP, 0x1207d);
         assert_eq!(PARTIAL_COMMON_FIXUP_RIP, 0x12098);
