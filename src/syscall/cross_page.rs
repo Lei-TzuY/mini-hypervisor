@@ -1,5 +1,5 @@
 use crate::config::VmConfig;
-use crate::error::{Error, HostEnvironmentError, VmExitError};
+use crate::error::{Error, HostEnvironmentError};
 use crate::execution::run_vcpu_until_stopped;
 use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
@@ -416,11 +416,17 @@ pub fn run_cross_page_usercopy_guest(
     let mut port_io = PortIoBus::with_debug_port();
     let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, CROSS_PAGE_EXIT_BUDGET)?;
     if execution.io_exits().len() != CROSS_PAGE_PROOF.len() {
-        return Err(Error::VmExit(VmExitError::UnexpectedSequence {
-            stage: "cross-page usercopy proof output count",
-            expected_reason: VcpuExit::Io.reason(),
-            actual_reason: execution.report().exit().reason(),
-        }));
+        let partial_proof = port_io.debug_output().unwrap_or(&[]).to_vec();
+        return Err(verification_error(
+            "cross-page usercopy proof output count",
+            format!(
+                "expected {} debug outputs, got {} partial={partial_proof:?} report={} exit_reasons={:?}",
+                CROSS_PAGE_PROOF.len(),
+                execution.io_exits().len(),
+                execution.report(),
+                execution.exit_reasons()
+            ),
+        ));
     }
     let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
     if proof.as_slice() != CROSS_PAGE_PROOF {
