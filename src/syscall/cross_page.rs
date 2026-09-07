@@ -799,8 +799,7 @@ fn validate_runtime_state(
         && user_page_ptes.iter().zip(USER_PAGES).all(
             |((address, pte), (expected_address, present))| {
                 *address == expected_address
-                    && pte & (X86_PAGE_WRITE | X86_PAGE_USER)
-                        == (X86_PAGE_WRITE | X86_PAGE_USER)
+                    && pte & (X86_PAGE_WRITE | X86_PAGE_USER) == (X86_PAGE_WRITE | X86_PAGE_USER)
                     && (pte & X86_PAGE_PRESENT != 0) == present
             },
         );
