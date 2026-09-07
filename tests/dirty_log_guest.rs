@@ -18,7 +18,9 @@ fn guest_writes_only_dirty_pages_one_and_three_then_harvest_clears_them() {
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
-            eprintln!("skipping dirty-log integration assertion: /dev/kvm is unavailable to this runner");
+            eprintln!(
+                "skipping dirty-log integration assertion: /dev/kvm is unavailable to this runner"
+            );
         }
         Err(error) => panic!("dirty-log guest execution failed unexpectedly: {error}"),
     }
