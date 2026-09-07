@@ -3,10 +3,7 @@ use crate::error::{Error, HostEnvironmentError, VmExitError};
 use crate::execution::run_vcpu_until_stopped;
 use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
-use crate::long_mode::{
-    LongModeConfigurationError, LONG_MODE_IDENTITY_MAP_SIZE, LONG_MODE_PAGE_SIZE,
-    LONG_MODE_PDPT_ADDR, LONG_MODE_PD_ADDR, LONG_MODE_PML4_ADDR,
-};
+use crate::long_mode::{LONG_MODE_IDENTITY_MAP_SIZE, LONG_MODE_PAGE_SIZE, LONG_MODE_PML4_ADDR};
 use crate::memory::{GuestMemory, GuestMemoryRegion, GuestPhysAddr};
 use crate::portio::{PortIoBus, DEBUG_PORT};
 use crate::privilege::{
@@ -76,9 +73,19 @@ const TERMINAL_HANDLER_BYTES: [u8; 54] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddressSpaceConfigurationError {
     Privilege(crate::privilege::PrivilegeConfigurationError),
-    AddressOutsideMemory { role: &'static str, address: u64 },
-    MisalignedAddress { role: &'static str, address: u64 },
-    DuplicateReservedPage { first: &'static str, second: &'static str, address: u64 },
+    AddressOutsideMemory {
+        role: &'static str,
+        address: u64,
+    },
+    MisalignedAddress {
+        role: &'static str,
+        address: u64,
+    },
+    DuplicateReservedPage {
+        first: &'static str,
+        second: &'static str,
+        address: u64,
+    },
 }
 
 impl fmt::Display for AddressSpaceConfigurationError {
@@ -91,7 +98,11 @@ impl fmt::Display for AddressSpaceConfigurationError {
             Self::MisalignedAddress { role, address } => {
                 write!(f, "{role} address {address:#x} is not 4 KiB aligned")
             }
-            Self::DuplicateReservedPage { first, second, address } => write!(
+            Self::DuplicateReservedPage {
+                first,
+                second,
+                address,
+            } => write!(
                 f,
                 "{first} and {second} both reserve physical page {address:#x}"
             ),
@@ -145,8 +156,8 @@ impl AddressSpaceSwitchLayout {
             for (second, second_address) in reserved.iter().skip(index + 1) {
                 if first_address == second_address {
                     return Err(AddressSpaceConfigurationError::DuplicateReservedPage {
-                        first,
-                        second,
+                        first: *first,
+                        second: *second,
                         address: *first_address,
                     });
                 }
@@ -208,39 +219,89 @@ pub struct AddressSpaceSwitchGuestResult {
 
 impl AddressSpaceSwitchGuestResult {
     #[must_use]
-    pub fn io_exits(&self) -> &[PortIoExit] { &self.io_exits }
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
+
     #[must_use]
-    pub fn proof(&self) -> &[u8] { &self.proof }
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
+
     #[must_use]
-    pub const fn report(&self) -> VmExitReport { self.report }
+    pub const fn report(&self) -> VmExitReport {
+        self.report
+    }
+
     #[must_use]
-    pub const fn cr3_observations(&self) -> [u64; 3] { self.cr3_observations }
+    pub const fn cr3_observations(&self) -> [u64; 3] {
+        self.cr3_observations
+    }
+
     #[must_use]
-    pub const fn final_cr3(&self) -> u64 { self.final_cr3 }
+    pub const fn final_cr3(&self) -> u64 {
+        self.final_cr3
+    }
+
     #[must_use]
-    pub const fn first_data(&self) -> u8 { self.first_data }
+    pub const fn first_data(&self) -> u8 {
+        self.first_data
+    }
+
     #[must_use]
-    pub const fn second_data(&self) -> u8 { self.second_data }
+    pub const fn second_data(&self) -> u8 {
+        self.second_data
+    }
+
     #[must_use]
-    pub const fn first_code_pte(&self) -> u64 { self.first_code_pte }
+    pub const fn first_code_pte(&self) -> u64 {
+        self.first_code_pte
+    }
+
     #[must_use]
-    pub const fn second_code_pte(&self) -> u64 { self.second_code_pte }
+    pub const fn second_code_pte(&self) -> u64 {
+        self.second_code_pte
+    }
+
     #[must_use]
-    pub const fn first_data_pte(&self) -> u64 { self.first_data_pte }
+    pub const fn first_data_pte(&self) -> u64 {
+        self.first_data_pte
+    }
+
     #[must_use]
-    pub const fn second_data_pte(&self) -> u64 { self.second_data_pte }
+    pub const fn second_data_pte(&self) -> u64 {
+        self.second_data_pte
+    }
+
     #[must_use]
-    pub const fn first_stack_pte(&self) -> u64 { self.first_stack_pte }
+    pub const fn first_stack_pte(&self) -> u64 {
+        self.first_stack_pte
+    }
+
     #[must_use]
-    pub const fn second_stack_pte(&self) -> u64 { self.second_stack_pte }
+    pub const fn second_stack_pte(&self) -> u64 {
+        self.second_stack_pte
+    }
+
     #[must_use]
-    pub const fn first_kernel_pte(&self) -> u64 { self.first_kernel_pte }
+    pub const fn first_kernel_pte(&self) -> u64 {
+        self.first_kernel_pte
+    }
+
     #[must_use]
-    pub const fn second_kernel_pte(&self) -> u64 { self.second_kernel_pte }
+    pub const fn second_kernel_pte(&self) -> u64 {
+        self.second_kernel_pte
+    }
 }
 
-pub fn run_address_space_switch_guest(config: VmConfig) -> Result<AddressSpaceSwitchGuestResult, Error> {
-    let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &KERNEL_BOOT_BYTES)?;
+pub fn run_address_space_switch_guest(
+    config: VmConfig,
+) -> Result<AddressSpaceSwitchGuestResult, Error> {
+    let kernel = FlatGuestImage::new(
+        PRIVILEGE_KERNEL_ENTRY,
+        PRIVILEGE_KERNEL_ENTRY,
+        &KERNEL_BOOT_BYTES,
+    )?;
     let first_user = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &TASK_A_BYTES)?;
     let second_user = FlatGuestImage::new(
         ADDRESS_SPACE_B_USER_CODE_BACKING,
@@ -318,11 +379,23 @@ pub fn run_address_space_switch_guest(config: VmConfig) -> Result<AddressSpaceSw
     let first_data = read_byte(guest_memory, GuestPhysAddr::new(0xa000))?;
     let second_data = read_byte(guest_memory, ADDRESS_SPACE_B_USER_DATA_BACKING)?;
     let first_code_pte = read_pte(guest_memory, PRIVILEGE_PT_ADDR, PRIVILEGE_USER_ENTRY.get())?;
-    let second_code_pte = read_pte(guest_memory, ADDRESS_SPACE_B_PT_ADDR, PRIVILEGE_USER_ENTRY.get())?;
+    let second_code_pte = read_pte(
+        guest_memory,
+        ADDRESS_SPACE_B_PT_ADDR,
+        PRIVILEGE_USER_ENTRY.get(),
+    )?;
     let first_data_pte = read_pte(guest_memory, PRIVILEGE_PT_ADDR, 0xa000)?;
     let second_data_pte = read_pte(guest_memory, ADDRESS_SPACE_B_PT_ADDR, 0xa000)?;
-    let first_stack_pte = read_pte(guest_memory, PRIVILEGE_PT_ADDR, PRIVILEGE_USER_STACK - 1)?;
-    let second_stack_pte = read_pte(guest_memory, ADDRESS_SPACE_B_PT_ADDR, PRIVILEGE_USER_STACK - 1)?;
+    let first_stack_pte = read_pte(
+        guest_memory,
+        PRIVILEGE_PT_ADDR,
+        PRIVILEGE_USER_STACK - 1,
+    )?;
+    let second_stack_pte = read_pte(
+        guest_memory,
+        ADDRESS_SPACE_B_PT_ADDR,
+        PRIVILEGE_USER_STACK - 1,
+    )?;
     let first_kernel_pte = read_pte(
         guest_memory,
         PRIVILEGE_PT_ADDR,
@@ -370,20 +443,40 @@ pub fn run_address_space_switch_guest(config: VmConfig) -> Result<AddressSpaceSw
 }
 
 fn install_second_root(memory: &mut GuestMemory) -> Result<(), Error> {
-    write_u64(memory, ADDRESS_SPACE_B_PML4_ADDR, ADDRESS_SPACE_B_PDPT_ADDR.get() | 0x7)?;
-    write_u64(memory, ADDRESS_SPACE_B_PDPT_ADDR, ADDRESS_SPACE_B_PD_ADDR.get() | 0x7)?;
-    write_u64(memory, ADDRESS_SPACE_B_PD_ADDR, ADDRESS_SPACE_B_PT_ADDR.get() | 0x7)?;
+    write_u64(
+        memory,
+        ADDRESS_SPACE_B_PML4_ADDR,
+        ADDRESS_SPACE_B_PDPT_ADDR.get() | 0x7,
+    )?;
+    write_u64(
+        memory,
+        ADDRESS_SPACE_B_PDPT_ADDR,
+        ADDRESS_SPACE_B_PD_ADDR.get() | 0x7,
+    )?;
+    write_u64(
+        memory,
+        ADDRESS_SPACE_B_PD_ADDR,
+        ADDRESS_SPACE_B_PT_ADDR.get() | 0x7,
+    )?;
     for index in 0..512_u64 {
         let virtual_address = index * LONG_MODE_PAGE_SIZE;
         let physical_address = match virtual_address {
             address if address == 0xa000 => ADDRESS_SPACE_B_USER_DATA_BACKING.get(),
-            address if address == PRIVILEGE_USER_ENTRY.get() => ADDRESS_SPACE_B_USER_CODE_BACKING.get(),
-            address if address == page_start(PRIVILEGE_USER_STACK - 1) => ADDRESS_SPACE_B_USER_STACK_BACKING.get(),
+            address if address == PRIVILEGE_USER_ENTRY.get() => {
+                ADDRESS_SPACE_B_USER_CODE_BACKING.get()
+            }
+            address if address == page_start(PRIVILEGE_USER_STACK - 1) => {
+                ADDRESS_SPACE_B_USER_STACK_BACKING.get()
+            }
             address => address,
         };
         let flags = X86_PAGE_PRESENT
             | X86_PAGE_WRITABLE
-            | if is_user_virtual_page(virtual_address) { X86_PAGE_USER } else { 0 };
+            | if is_user_virtual_page(virtual_address) {
+                X86_PAGE_USER
+            } else {
+                0
+            };
         write_u64(
             memory,
             GuestPhysAddr::new(ADDRESS_SPACE_B_PT_ADDR.get() + index * 8),
@@ -420,7 +513,11 @@ fn read_byte(memory: &GuestMemory, address: GuestPhysAddr) -> Result<u8, Error> 
     Ok(byte[0])
 }
 
-fn read_pte(memory: &GuestMemory, table: GuestPhysAddr, virtual_address: u64) -> Result<u64, Error> {
+fn read_pte(
+    memory: &GuestMemory,
+    table: GuestPhysAddr,
+    virtual_address: u64,
+) -> Result<u64, Error> {
     let index = page_start(virtual_address) / LONG_MODE_PAGE_SIZE;
     let mut bytes = [0_u8; 8];
     memory.read(GuestPhysAddr::new(table.get() + index * 8), &mut bytes)?;
@@ -431,6 +528,7 @@ fn write_u64(memory: &mut GuestMemory, address: GuestPhysAddr, value: u64) -> Re
     memory.write(address, &value.to_le_bytes())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_result(
     report: VmExitReport,
     cr3_observations: [u64; 3],
@@ -446,36 +544,76 @@ fn validate_result(
     first_kernel_pte: u64,
     second_kernel_pte: u64,
 ) -> Result<(), Error> {
-    if !matches!(report.exit(), crate::vcpu::VcpuExit::Hlt)
-        || report.rip() != Some(ADDRESS_SPACE_TERMINAL_RIP)
-    {
+    if report.exit() != crate::vcpu::VcpuExit::Hlt || report.rip() != ADDRESS_SPACE_TERMINAL_RIP {
         return Err(verification_error(
             "address-space terminal exit",
             format!("expected HLT at RIP {ADDRESS_SPACE_TERMINAL_RIP:#x}, got {report}"),
         ));
     }
-    let expected_cr3 = [ADDRESS_SPACE_A_CR3.get(), ADDRESS_SPACE_B_PML4_ADDR.get(), ADDRESS_SPACE_A_CR3.get()];
+    let expected_cr3 = [
+        ADDRESS_SPACE_A_CR3.get(),
+        ADDRESS_SPACE_B_PML4_ADDR.get(),
+        ADDRESS_SPACE_A_CR3.get(),
+    ];
     if cr3_observations != expected_cr3 || final_cr3 != ADDRESS_SPACE_A_CR3.get() {
         return Err(verification_error(
             "address-space CR3 ownership",
-            format!("expected observations {expected_cr3:#x?} and final {:#x}, got {cr3_observations:#x?} and {final_cr3:#x}", ADDRESS_SPACE_A_CR3.get()),
+            format!(
+                "expected observations {:?} and final {:#x}, got {:?} and {final_cr3:#x}",
+                expected_cr3,
+                ADDRESS_SPACE_A_CR3.get(),
+                cr3_observations
+            ),
         ));
     }
     if first_data != ADDRESS_SPACE_A_DATA_VALUE || second_data != ADDRESS_SPACE_B_DATA_VALUE {
         return Err(verification_error(
             "address-space physical data isolation",
-            format!("expected A/B data {:?}/{:?}, got {first_data:?}/{second_data:?}", ADDRESS_SPACE_A_DATA_VALUE, ADDRESS_SPACE_B_DATA_VALUE),
+            format!(
+                "expected A/B data {:?}/{:?}, got {first_data:?}/{second_data:?}",
+                ADDRESS_SPACE_A_DATA_VALUE, ADDRESS_SPACE_B_DATA_VALUE
+            ),
         ));
     }
     for (role, pte, expected_physical, user) in [
         ("A code", first_code_pte, PRIVILEGE_USER_ENTRY.get(), true),
-        ("B code", second_code_pte, ADDRESS_SPACE_B_USER_CODE_BACKING.get(), true),
+        (
+            "B code",
+            second_code_pte,
+            ADDRESS_SPACE_B_USER_CODE_BACKING.get(),
+            true,
+        ),
         ("A data", first_data_pte, 0xa000, true),
-        ("B data", second_data_pte, ADDRESS_SPACE_B_USER_DATA_BACKING.get(), true),
-        ("A stack", first_stack_pte, page_start(PRIVILEGE_USER_STACK - 1), true),
-        ("B stack", second_stack_pte, ADDRESS_SPACE_B_USER_STACK_BACKING.get(), true),
-        ("A switch handler", first_kernel_pte, crate::privilege::PRIVILEGE_RETURN_HANDLER.get(), false),
-        ("B switch handler", second_kernel_pte, crate::privilege::PRIVILEGE_RETURN_HANDLER.get(), false),
+        (
+            "B data",
+            second_data_pte,
+            ADDRESS_SPACE_B_USER_DATA_BACKING.get(),
+            true,
+        ),
+        (
+            "A stack",
+            first_stack_pte,
+            page_start(PRIVILEGE_USER_STACK - 1),
+            true,
+        ),
+        (
+            "B stack",
+            second_stack_pte,
+            ADDRESS_SPACE_B_USER_STACK_BACKING.get(),
+            true,
+        ),
+        (
+            "A switch handler",
+            first_kernel_pte,
+            crate::privilege::PRIVILEGE_RETURN_HANDLER.get(),
+            false,
+        ),
+        (
+            "B switch handler",
+            second_kernel_pte,
+            crate::privilege::PRIVILEGE_RETURN_HANDLER.get(),
+            false,
+        ),
     ] {
         validate_pte(role, pte, expected_physical, user)?;
     }
@@ -517,27 +655,84 @@ mod tests {
 
     #[test]
     fn fixed_second_root_maps_same_user_virtual_pages_to_distinct_backing() {
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let layout = AddressSpaceSwitchLayout::new(memory.region()).unwrap();
         layout.install_tables(&mut memory).unwrap();
 
         let a_code = read_pte(&memory, PRIVILEGE_PT_ADDR, PRIVILEGE_USER_ENTRY.get()).unwrap();
-        let b_code = read_pte(&memory, ADDRESS_SPACE_B_PT_ADDR, PRIVILEGE_USER_ENTRY.get()).unwrap();
+        let b_code = read_pte(
+            &memory,
+            ADDRESS_SPACE_B_PT_ADDR,
+            PRIVILEGE_USER_ENTRY.get(),
+        )
+        .unwrap();
         let a_data = read_pte(&memory, PRIVILEGE_PT_ADDR, 0xa000).unwrap();
         let b_data = read_pte(&memory, ADDRESS_SPACE_B_PT_ADDR, 0xa000).unwrap();
         let a_stack = read_pte(&memory, PRIVILEGE_PT_ADDR, PRIVILEGE_USER_STACK - 1).unwrap();
-        let b_stack = read_pte(&memory, ADDRESS_SPACE_B_PT_ADDR, PRIVILEGE_USER_STACK - 1).unwrap();
-        let a_kernel = read_pte(&memory, PRIVILEGE_PT_ADDR, crate::privilege::PRIVILEGE_RETURN_HANDLER.get()).unwrap();
-        let b_kernel = read_pte(&memory, ADDRESS_SPACE_B_PT_ADDR, crate::privilege::PRIVILEGE_RETURN_HANDLER.get()).unwrap();
+        let b_stack = read_pte(
+            &memory,
+            ADDRESS_SPACE_B_PT_ADDR,
+            PRIVILEGE_USER_STACK - 1,
+        )
+        .unwrap();
+        let a_kernel = read_pte(
+            &memory,
+            PRIVILEGE_PT_ADDR,
+            crate::privilege::PRIVILEGE_RETURN_HANDLER.get(),
+        )
+        .unwrap();
+        let b_kernel = read_pte(
+            &memory,
+            ADDRESS_SPACE_B_PT_ADDR,
+            crate::privilege::PRIVILEGE_RETURN_HANDLER.get(),
+        )
+        .unwrap();
 
         validate_pte("A code", a_code, PRIVILEGE_USER_ENTRY.get(), true).unwrap();
-        validate_pte("B code", b_code, ADDRESS_SPACE_B_USER_CODE_BACKING.get(), true).unwrap();
+        validate_pte(
+            "B code",
+            b_code,
+            ADDRESS_SPACE_B_USER_CODE_BACKING.get(),
+            true,
+        )
+        .unwrap();
         validate_pte("A data", a_data, 0xa000, true).unwrap();
-        validate_pte("B data", b_data, ADDRESS_SPACE_B_USER_DATA_BACKING.get(), true).unwrap();
-        validate_pte("A stack", a_stack, page_start(PRIVILEGE_USER_STACK - 1), true).unwrap();
-        validate_pte("B stack", b_stack, ADDRESS_SPACE_B_USER_STACK_BACKING.get(), true).unwrap();
-        validate_pte("A handler", a_kernel, crate::privilege::PRIVILEGE_RETURN_HANDLER.get(), false).unwrap();
-        validate_pte("B handler", b_kernel, crate::privilege::PRIVILEGE_RETURN_HANDLER.get(), false).unwrap();
+        validate_pte(
+            "B data",
+            b_data,
+            ADDRESS_SPACE_B_USER_DATA_BACKING.get(),
+            true,
+        )
+        .unwrap();
+        validate_pte(
+            "A stack",
+            a_stack,
+            page_start(PRIVILEGE_USER_STACK - 1),
+            true,
+        )
+        .unwrap();
+        validate_pte(
+            "B stack",
+            b_stack,
+            ADDRESS_SPACE_B_USER_STACK_BACKING.get(),
+            true,
+        )
+        .unwrap();
+        validate_pte(
+            "A handler",
+            a_kernel,
+            crate::privilege::PRIVILEGE_RETURN_HANDLER.get(),
+            false,
+        )
+        .unwrap();
+        validate_pte(
+            "B handler",
+            b_kernel,
+            crate::privilege::PRIVILEGE_RETURN_HANDLER.get(),
+            false,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -545,7 +740,10 @@ mod tests {
         assert_eq!(SWITCH_HANDLER_BYTES.len(), 172);
         assert_eq!(TERMINAL_HANDLER_BYTES.len(), 54);
         assert_eq!(&TASK_A_BYTES[13..17], &[0xcd, 0x80, 0xcd, 0x81]);
-        assert_eq!(PRIVILEGE_USER_ENTRY.get() + 15, ADDRESS_SPACE_A_CONTINUATION_RIP);
+        assert_eq!(
+            PRIVILEGE_USER_ENTRY.get() + 15,
+            ADDRESS_SPACE_A_CONTINUATION_RIP
+        );
         assert_eq!(TERMINAL_HANDLER_BYTES[48], 0xf4);
     }
 }
