@@ -38,36 +38,35 @@ const X86_PAGE_ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
 const ADDRESS_SPACE_EXIT_BUDGET: u32 = 5;
 
 const KERNEL_BOOT_BYTES: [u8; 41] = [
-    0xfa, 0x66, 0xb8, 0x28, 0x00, 0x0f, 0x00, 0xd8, 0x6a, 0x1b, 0x48, 0xb8, 0x00, 0xd0,
-    0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x68, 0x02, 0x02, 0x00, 0x00, 0x6a, 0x23,
-    0x48, 0xb8, 0x00, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x48, 0xcf,
+    0xfa, 0x66, 0xb8, 0x28, 0x00, 0x0f, 0x00, 0xd8, 0x6a, 0x1b, 0x48, 0xb8, 0x00, 0xd0, 0x1f, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x50, 0x68, 0x02, 0x02, 0x00, 0x00, 0x6a, 0x23, 0x48, 0xb8, 0x00, 0x10,
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x48, 0xcf,
 ];
 
 const TASK_A_BYTES: [u8; 17] = [
-    0x48, 0xbf, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc6, 0x07, b'A', 0xcd,
-    0x80, 0xcd, 0x81,
+    0x48, 0xbf, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc6, 0x07, b'A', 0xcd, 0x80, 0xcd,
+    0x81,
 ];
 
 const TASK_B_BYTES: [u8; 17] = [
-    0x48, 0xbf, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc6, 0x07, b'B', 0xcd,
-    0x80, 0xcd, 0x81,
+    0x48, 0xbf, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc6, 0x07, b'B', 0xcd, 0x80, 0xcd,
+    0x81,
 ];
 
 const SWITCH_HANDLER_BYTES: [u8; 172] = [
-    15, 32, 219, 72, 191, 0, 160, 0, 0, 0, 0, 0, 0, 138, 7, 230, 233, 72, 129, 251, 0,
-    16, 0, 0, 15, 132, 18, 0, 0, 0, 72, 129, 251, 0, 176, 0, 0, 15, 132, 64, 0, 0,
-    0, 233, 119, 0, 0, 0, 72, 191, 0, 240, 0, 0, 0, 0, 0, 0, 72, 137, 31, 72, 184, 0,
-    176, 0, 0, 0, 0, 0, 0, 15, 34, 216, 106, 27, 72, 184, 0, 208, 31, 0, 0, 0, 0, 0,
-    80, 104, 2, 2, 0, 0, 106, 35, 72, 184, 0, 16, 1, 0, 0, 0, 0, 0, 80, 72, 207, 72,
-    191, 0, 240, 0, 0, 0, 0, 0, 0, 72, 137, 95, 8, 72, 184, 0, 16, 0, 0, 0, 0, 0, 0,
-    15, 34, 216, 106, 27, 72, 184, 0, 208, 31, 0, 0, 0, 0, 0, 80, 104, 2, 2, 0, 0, 106,
-    35, 72, 184, 15, 16, 1, 0, 0, 0, 0, 0, 80, 72, 207, 176, 70, 230, 233, 244,
+    15, 32, 219, 72, 191, 0, 160, 0, 0, 0, 0, 0, 0, 138, 7, 230, 233, 72, 129, 251, 0, 16, 0, 0,
+    15, 132, 18, 0, 0, 0, 72, 129, 251, 0, 176, 0, 0, 15, 132, 64, 0, 0, 0, 233, 119, 0, 0, 0, 72,
+    191, 0, 240, 0, 0, 0, 0, 0, 0, 72, 137, 31, 72, 184, 0, 176, 0, 0, 0, 0, 0, 0, 15, 34, 216,
+    106, 27, 72, 184, 0, 208, 31, 0, 0, 0, 0, 0, 80, 104, 2, 2, 0, 0, 106, 35, 72, 184, 0, 16, 1,
+    0, 0, 0, 0, 0, 80, 72, 207, 72, 191, 0, 240, 0, 0, 0, 0, 0, 0, 72, 137, 95, 8, 72, 184, 0, 16,
+    0, 0, 0, 0, 0, 0, 15, 34, 216, 106, 27, 72, 184, 0, 208, 31, 0, 0, 0, 0, 0, 80, 104, 2, 2, 0,
+    0, 106, 35, 72, 184, 15, 16, 1, 0, 0, 0, 0, 0, 80, 72, 207, 176, 70, 230, 233, 244,
 ];
 
 const TERMINAL_HANDLER_BYTES: [u8; 54] = [
-    15, 32, 219, 72, 129, 251, 0, 16, 0, 0, 15, 133, 33, 0, 0, 0, 72, 191, 0, 240, 0, 0,
-    0, 0, 0, 0, 72, 137, 95, 16, 72, 191, 0, 160, 0, 0, 0, 0, 0, 0, 138, 7, 230, 233,
-    176, 68, 230, 233, 244, 176, 70, 230, 233, 244,
+    15, 32, 219, 72, 129, 251, 0, 16, 0, 0, 15, 133, 33, 0, 0, 0, 72, 191, 0, 240, 0, 0, 0, 0, 0,
+    0, 72, 137, 95, 16, 72, 191, 0, 160, 0, 0, 0, 0, 0, 0, 138, 7, 230, 233, 176, 68, 230, 233,
+    244, 176, 70, 230, 233, 244,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,9 +139,18 @@ impl AddressSpaceSwitchLayout {
             ("B PD", ADDRESS_SPACE_B_PD_ADDR.get()),
             ("B PT", ADDRESS_SPACE_B_PT_ADDR.get()),
             ("CR3 observation", ADDRESS_SPACE_CR3_OBSERVATION_ADDR.get()),
-            ("B user code backing", ADDRESS_SPACE_B_USER_CODE_BACKING.get()),
-            ("B user data backing", ADDRESS_SPACE_B_USER_DATA_BACKING.get()),
-            ("B user stack backing", ADDRESS_SPACE_B_USER_STACK_BACKING.get()),
+            (
+                "B user code backing",
+                ADDRESS_SPACE_B_USER_CODE_BACKING.get(),
+            ),
+            (
+                "B user data backing",
+                ADDRESS_SPACE_B_USER_DATA_BACKING.get(),
+            ),
+            (
+                "B user stack backing",
+                ADDRESS_SPACE_B_USER_STACK_BACKING.get(),
+            ),
         ];
         for (role, address) in reserved {
             if address % LONG_MODE_PAGE_SIZE != 0 {
@@ -302,7 +310,8 @@ pub fn run_address_space_switch_guest(
         PRIVILEGE_KERNEL_ENTRY,
         &KERNEL_BOOT_BYTES,
     )?;
-    let first_user = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &TASK_A_BYTES)?;
+    let first_user =
+        FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &TASK_A_BYTES)?;
     let second_user = FlatGuestImage::new(
         ADDRESS_SPACE_B_USER_CODE_BACKING,
         ADDRESS_SPACE_B_USER_CODE_BACKING,
@@ -386,11 +395,7 @@ pub fn run_address_space_switch_guest(
     )?;
     let first_data_pte = read_pte(guest_memory, PRIVILEGE_PT_ADDR, 0xa000)?;
     let second_data_pte = read_pte(guest_memory, ADDRESS_SPACE_B_PT_ADDR, 0xa000)?;
-    let first_stack_pte = read_pte(
-        guest_memory,
-        PRIVILEGE_PT_ADDR,
-        PRIVILEGE_USER_STACK - 1,
-    )?;
+    let first_stack_pte = read_pte(guest_memory, PRIVILEGE_PT_ADDR, PRIVILEGE_USER_STACK - 1)?;
     let second_stack_pte = read_pte(
         guest_memory,
         ADDRESS_SPACE_B_PT_ADDR,
@@ -661,21 +666,12 @@ mod tests {
         layout.install_tables(&mut memory).unwrap();
 
         let a_code = read_pte(&memory, PRIVILEGE_PT_ADDR, PRIVILEGE_USER_ENTRY.get()).unwrap();
-        let b_code = read_pte(
-            &memory,
-            ADDRESS_SPACE_B_PT_ADDR,
-            PRIVILEGE_USER_ENTRY.get(),
-        )
-        .unwrap();
+        let b_code =
+            read_pte(&memory, ADDRESS_SPACE_B_PT_ADDR, PRIVILEGE_USER_ENTRY.get()).unwrap();
         let a_data = read_pte(&memory, PRIVILEGE_PT_ADDR, 0xa000).unwrap();
         let b_data = read_pte(&memory, ADDRESS_SPACE_B_PT_ADDR, 0xa000).unwrap();
         let a_stack = read_pte(&memory, PRIVILEGE_PT_ADDR, PRIVILEGE_USER_STACK - 1).unwrap();
-        let b_stack = read_pte(
-            &memory,
-            ADDRESS_SPACE_B_PT_ADDR,
-            PRIVILEGE_USER_STACK - 1,
-        )
-        .unwrap();
+        let b_stack = read_pte(&memory, ADDRESS_SPACE_B_PT_ADDR, PRIVILEGE_USER_STACK - 1).unwrap();
         let a_kernel = read_pte(
             &memory,
             PRIVILEGE_PT_ADDR,
