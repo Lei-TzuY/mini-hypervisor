@@ -48,11 +48,7 @@ fn switches_between_isolated_ring3_address_spaces_and_back() {
             assert_eq!(result.first_data(), ADDRESS_SPACE_A_DATA_VALUE);
             assert_eq!(result.second_data(), b'B');
 
-            validate_pte(
-                result.first_code_pte(),
-                PRIVILEGE_USER_ENTRY.get(),
-                true,
-            );
+            validate_pte(result.first_code_pte(), PRIVILEGE_USER_ENTRY.get(), true);
             validate_pte(
                 result.second_code_pte(),
                 ADDRESS_SPACE_B_USER_CODE_BACKING.get(),
