@@ -97,17 +97,29 @@ pub struct TaskContextSnapshot {
 
 impl TaskContextSnapshot {
     #[must_use]
-    pub const fn cr3(self) -> u64 { self.cr3 }
+    pub const fn cr3(self) -> u64 {
+        self.cr3
+    }
     #[must_use]
-    pub const fn rip(self) -> u64 { self.rip }
+    pub const fn rip(self) -> u64 {
+        self.rip
+    }
     #[must_use]
-    pub const fn rsp(self) -> u64 { self.rsp }
+    pub const fn rsp(self) -> u64 {
+        self.rsp
+    }
     #[must_use]
-    pub const fn rflags(self) -> u64 { self.rflags }
+    pub const fn rflags(self) -> u64 {
+        self.rflags
+    }
     #[must_use]
-    pub const fn r12(self) -> u64 { self.r12 }
+    pub const fn r12(self) -> u64 {
+        self.r12
+    }
     #[must_use]
-    pub const fn save_count(self) -> u64 { self.save_count }
+    pub const fn save_count(self) -> u64 {
+        self.save_count
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,13 +132,21 @@ pub struct TaskTerminalObservation {
 
 impl TaskTerminalObservation {
     #[must_use]
-    pub const fn cr3(self) -> u64 { self.cr3 }
+    pub const fn cr3(self) -> u64 {
+        self.cr3
+    }
     #[must_use]
-    pub const fn rip(self) -> u64 { self.rip }
+    pub const fn rip(self) -> u64 {
+        self.rip
+    }
     #[must_use]
-    pub const fn rsp(self) -> u64 { self.rsp }
+    pub const fn rsp(self) -> u64 {
+        self.rsp
+    }
     #[must_use]
-    pub const fn r12(self) -> u64 { self.r12 }
+    pub const fn r12(self) -> u64 {
+        self.r12
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,41 +167,79 @@ pub struct TaskContextSwitchGuestResult {
 
 impl TaskContextSwitchGuestResult {
     #[must_use]
-    pub fn io_exits(&self) -> &[PortIoExit] { &self.io_exits }
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
     #[must_use]
-    pub fn proof(&self) -> &[u8] { &self.proof }
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
     #[must_use]
-    pub const fn report(&self) -> VmExitReport { self.report }
+    pub const fn report(&self) -> VmExitReport {
+        self.report
+    }
     #[must_use]
-    pub const fn task_a(&self) -> TaskContextSnapshot { self.task_a }
+    pub const fn task_a(&self) -> TaskContextSnapshot {
+        self.task_a
+    }
     #[must_use]
-    pub const fn task_b(&self) -> TaskContextSnapshot { self.task_b }
+    pub const fn task_b(&self) -> TaskContextSnapshot {
+        self.task_b
+    }
     #[must_use]
-    pub const fn terminal(&self) -> TaskTerminalObservation { self.terminal }
+    pub const fn terminal(&self) -> TaskTerminalObservation {
+        self.terminal
+    }
     #[must_use]
-    pub const fn final_cr3(&self) -> u64 { self.final_cr3 }
+    pub const fn final_cr3(&self) -> u64 {
+        self.final_cr3
+    }
     #[must_use]
-    pub const fn final_r12(&self) -> u64 { self.final_r12 }
+    pub const fn final_r12(&self) -> u64 {
+        self.final_r12
+    }
     #[must_use]
-    pub const fn task_a_stack_marker(&self) -> u8 { self.task_a_stack_marker }
+    pub const fn task_a_stack_marker(&self) -> u8 {
+        self.task_a_stack_marker
+    }
     #[must_use]
-    pub const fn task_b_stack_marker(&self) -> u8 { self.task_b_stack_marker }
+    pub const fn task_b_stack_marker(&self) -> u8 {
+        self.task_b_stack_marker
+    }
     #[must_use]
-    pub const fn first_context_pte(&self) -> u64 { self.first_context_pte }
+    pub const fn first_context_pte(&self) -> u64 {
+        self.first_context_pte
+    }
     #[must_use]
-    pub const fn second_context_pte(&self) -> u64 { self.second_context_pte }
+    pub const fn second_context_pte(&self) -> u64 {
+        self.second_context_pte
+    }
 }
 
-pub fn run_task_context_switch_guest(config: VmConfig) -> Result<TaskContextSwitchGuestResult, Error> {
-    let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &KERNEL_BOOT_BYTES)?;
+pub fn run_task_context_switch_guest(
+    config: VmConfig,
+) -> Result<TaskContextSwitchGuestResult, Error> {
+    let kernel = FlatGuestImage::new(
+        PRIVILEGE_KERNEL_ENTRY,
+        PRIVILEGE_KERNEL_ENTRY,
+        &KERNEL_BOOT_BYTES,
+    )?;
     let task_a = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &TASK_A_BYTES)?;
     let task_b = FlatGuestImage::new(
         ADDRESS_SPACE_B_USER_CODE_BACKING,
         ADDRESS_SPACE_B_USER_CODE_BACKING,
         &TASK_B_BYTES,
     )?;
-    let scheduler = FlatGuestImage::new(PRIVILEGE_RETURN_HANDLER, PRIVILEGE_RETURN_HANDLER, &SCHEDULER_HANDLER_BYTES)?;
-    let terminal = FlatGuestImage::new(PRIVILEGE_TERMINAL_HANDLER, PRIVILEGE_TERMINAL_HANDLER, &TERMINAL_HANDLER_BYTES)?;
+    let scheduler = FlatGuestImage::new(
+        PRIVILEGE_RETURN_HANDLER,
+        PRIVILEGE_RETURN_HANDLER,
+        &SCHEDULER_HANDLER_BYTES,
+    )?;
+    let terminal = FlatGuestImage::new(
+        PRIVILEGE_TERMINAL_HANDLER,
+        PRIVILEGE_TERMINAL_HANDLER,
+        &TERMINAL_HANDLER_BYTES,
+    )?;
 
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm()?;
@@ -216,7 +274,9 @@ pub fn run_task_context_switch_guest(config: VmConfig) -> Result<TaskContextSwit
     let execution = run_vcpu_until_stopped(&mut vcpu, &mut port_io, TASK_EXIT_BUDGET)?;
 
     let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
-    if proof.as_slice() != TASK_CONTEXT_PROOF || execution.io_exits().len() != TASK_CONTEXT_PROOF.len() {
+    if proof.as_slice() != TASK_CONTEXT_PROOF
+        || execution.io_exits().len() != TASK_CONTEXT_PROOF.len()
+    {
         return Err(verification_error(
             "task context proof",
             format!(
@@ -228,7 +288,11 @@ pub fn run_task_context_switch_guest(config: VmConfig) -> Result<TaskContextSwit
             ),
         ));
     }
-    for (io, expected) in execution.io_exits().iter().zip(TASK_CONTEXT_PROOF.iter().copied()) {
+    for (io, expected) in execution
+        .io_exits()
+        .iter()
+        .zip(TASK_CONTEXT_PROOF.iter().copied())
+    {
         if io.direction() != PortIoDirection::Out
             || io.port() != DEBUG_PORT
             || io.size() != 1
@@ -244,14 +308,24 @@ pub fn run_task_context_switch_guest(config: VmConfig) -> Result<TaskContextSwit
 
     let final_regs = vcpu.capture_register_snapshot()?;
     let final_special = vcpu.capture_special_register_snapshot()?;
-    let guest_memory = vm.guest_memory().expect("registered task memory remains VM-owned");
+    let guest_memory = vm
+        .guest_memory()
+        .expect("registered task memory remains VM-owned");
     let task_a_context = read_context(guest_memory, TASK_A_CONTEXT_ADDR)?;
     let task_b_context = read_context(guest_memory, TASK_B_CONTEXT_ADDR)?;
     let terminal_observation = read_terminal_observation(guest_memory)?;
     let task_a_stack_marker = read_byte(guest_memory, TASK_A_STACK_MARKER_PHYS)?;
     let task_b_stack_marker = read_byte(guest_memory, TASK_B_STACK_MARKER_PHYS)?;
-    let first_context_pte = read_pte(guest_memory, PRIVILEGE_PT_ADDR, TASK_CONTEXT_PAGE_ADDR.get())?;
-    let second_context_pte = read_pte(guest_memory, ADDRESS_SPACE_B_PT_ADDR, TASK_CONTEXT_PAGE_ADDR.get())?;
+    let first_context_pte = read_pte(
+        guest_memory,
+        PRIVILEGE_PT_ADDR,
+        TASK_CONTEXT_PAGE_ADDR.get(),
+    )?;
+    let second_context_pte = read_pte(
+        guest_memory,
+        ADDRESS_SPACE_B_PT_ADDR,
+        TASK_CONTEXT_PAGE_ADDR.get(),
+    )?;
 
     validate_result(
         execution.report(),
@@ -282,15 +356,32 @@ pub fn run_task_context_switch_guest(config: VmConfig) -> Result<TaskContextSwit
     })
 }
 
-fn write_context(memory: &mut GuestMemory, address: GuestPhysAddr, context: TaskContextSnapshot) -> Result<(), Error> {
-    let values = [context.cr3, context.rip, context.rsp, context.rflags, context.r12, context.save_count];
+fn write_context(
+    memory: &mut GuestMemory,
+    address: GuestPhysAddr,
+    context: TaskContextSnapshot,
+) -> Result<(), Error> {
+    let values = [
+        context.cr3,
+        context.rip,
+        context.rsp,
+        context.rflags,
+        context.r12,
+        context.save_count,
+    ];
     for (index, value) in values.into_iter().enumerate() {
-        memory.write(GuestPhysAddr::new(address.get() + index as u64 * 8), &value.to_le_bytes())?;
+        memory.write(
+            GuestPhysAddr::new(address.get() + index as u64 * 8),
+            &value.to_le_bytes(),
+        )?;
     }
     Ok(())
 }
 
-fn read_context(memory: &GuestMemory, address: GuestPhysAddr) -> Result<TaskContextSnapshot, Error> {
+fn read_context(
+    memory: &GuestMemory,
+    address: GuestPhysAddr,
+) -> Result<TaskContextSnapshot, Error> {
     let mut bytes = [0_u8; TASK_CONTEXT_BYTES];
     memory.read(address, &mut bytes)?;
     Ok(TaskContextSnapshot {
@@ -315,7 +406,11 @@ fn read_terminal_observation(memory: &GuestMemory) -> Result<TaskTerminalObserva
 }
 
 fn field(bytes: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("fixed task field"))
+    u64::from_le_bytes(
+        bytes[offset..offset + 8]
+            .try_into()
+            .expect("fixed task field"),
+    )
 }
 
 fn read_byte(memory: &GuestMemory, address: GuestPhysAddr) -> Result<u8, Error> {
@@ -324,7 +419,11 @@ fn read_byte(memory: &GuestMemory, address: GuestPhysAddr) -> Result<u8, Error> 
     Ok(byte[0])
 }
 
-fn read_pte(memory: &GuestMemory, table: GuestPhysAddr, virtual_address: u64) -> Result<u64, Error> {
+fn read_pte(
+    memory: &GuestMemory,
+    table: GuestPhysAddr,
+    virtual_address: u64,
+) -> Result<u64, Error> {
     let index = (virtual_address & !(LONG_MODE_PAGE_SIZE - 1)) / LONG_MODE_PAGE_SIZE;
     let mut bytes = [0_u8; 8];
     memory.read(GuestPhysAddr::new(table.get() + index * 8), &mut bytes)?;
@@ -344,7 +443,10 @@ fn validate_result(
     first_context_pte: u64,
     second_context_pte: u64,
 ) -> Result<(), Error> {
-    if report.exit() != VcpuExit::Hlt || report.rip() != TASK_TERMINAL_RIP || report.rflags() & 0x2 != 0x2 {
+    if report.exit() != VcpuExit::Hlt
+        || report.rip() != TASK_TERMINAL_RIP
+        || report.rflags() & 0x2 != 0x2
+    {
         return Err(verification_error(
             "task context terminal exit",
             format!("expected HLT at {TASK_TERMINAL_RIP:#x} with RFLAGS bit1, got {report}"),
@@ -381,7 +483,11 @@ fn validate_result(
     if final_cr3 != ADDRESS_SPACE_A_CR3.get() || final_r12 != TASK_A_R12 {
         return Err(verification_error(
             "task final register ownership",
-            format!("expected CR3={:#x}, R12={:#x}; got CR3={final_cr3:#x}, R12={final_r12:#x}", ADDRESS_SPACE_A_CR3.get(), TASK_A_R12),
+            format!(
+                "expected CR3={:#x}, R12={:#x}; got CR3={final_cr3:#x}, R12={final_r12:#x}",
+                ADDRESS_SPACE_A_CR3.get(),
+                TASK_A_R12
+            ),
         ));
     }
     if task_a_stack_marker != b'a' || task_b_stack_marker != b'b' {
@@ -390,14 +496,21 @@ fn validate_result(
             format!("expected physical stack markers a/b, got {task_a_stack_marker:#x}/{task_b_stack_marker:#x}"),
         ));
     }
-    for (role, pte) in [("A task-context page", first_context_pte), ("B task-context page", second_context_pte)] {
+    for (role, pte) in [
+        ("A task-context page", first_context_pte),
+        ("B task-context page", second_context_pte),
+    ] {
         if pte & X86_PAGE_ADDRESS_MASK != TASK_CONTEXT_PAGE_ADDR.get()
-            || pte & (X86_PAGE_PRESENT | X86_PAGE_WRITABLE) != (X86_PAGE_PRESENT | X86_PAGE_WRITABLE)
+            || pte & (X86_PAGE_PRESENT | X86_PAGE_WRITABLE)
+                != (X86_PAGE_PRESENT | X86_PAGE_WRITABLE)
             || pte & X86_PAGE_USER != 0
         {
             return Err(verification_error(
                 "task context PTE ownership",
-                format!("{role}: expected supervisor P/W mapping to {:#x}, got {pte:#x}", TASK_CONTEXT_PAGE_ADDR.get()),
+                format!(
+                    "{role}: expected supervisor P/W mapping to {:#x}, got {pte:#x}",
+                    TASK_CONTEXT_PAGE_ADDR.get()
+                ),
             ));
         }
     }
@@ -414,7 +527,10 @@ fn verification_error(stage: &'static str, detail: impl Into<String>) -> Error {
 
 const _: () = {
     assert!(TASK_CONTEXT_PAGE_ADDR.get() % LONG_MODE_PAGE_SIZE == 0);
-    assert!(TASK_TERMINAL_OBSERVATION_ADDR.get() + (TASK_TERMINAL_OBSERVATION_BYTES as u64) < TASK_CONTEXT_PAGE_ADDR.get() + LONG_MODE_PAGE_SIZE);
+    assert!(
+        TASK_TERMINAL_OBSERVATION_ADDR.get() + (TASK_TERMINAL_OBSERVATION_BYTES as u64)
+            < TASK_CONTEXT_PAGE_ADDR.get() + LONG_MODE_PAGE_SIZE
+    );
     assert!(TASK_B_STACK_MARKER_PHYS.get() < LONG_MODE_IDENTITY_MAP_SIZE);
 };
 
@@ -424,11 +540,17 @@ mod tests {
 
     #[test]
     fn fixed_task_context_page_is_supervisor_owned_in_both_roots() {
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let layout = AddressSpaceSwitchLayout::new(memory.region()).unwrap();
         layout.install_tables(&mut memory).unwrap();
         let first = read_pte(&memory, PRIVILEGE_PT_ADDR, TASK_CONTEXT_PAGE_ADDR.get()).unwrap();
-        let second = read_pte(&memory, ADDRESS_SPACE_B_PT_ADDR, TASK_CONTEXT_PAGE_ADDR.get()).unwrap();
+        let second = read_pte(
+            &memory,
+            ADDRESS_SPACE_B_PT_ADDR,
+            TASK_CONTEXT_PAGE_ADDR.get(),
+        )
+        .unwrap();
         for pte in [first, second] {
             assert_eq!(pte & X86_PAGE_ADDRESS_MASK, TASK_CONTEXT_PAGE_ADDR.get());
             assert_eq!(pte & X86_PAGE_PRESENT, X86_PAGE_PRESENT);
@@ -439,7 +561,8 @@ mod tests {
 
     #[test]
     fn context_encoding_round_trips_exact_fields() {
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let expected = TaskContextSnapshot {
             cr3: 0xb000,
             rip: 0x11000,
@@ -449,7 +572,10 @@ mod tests {
             save_count: 7,
         };
         write_context(&mut memory, TASK_B_CONTEXT_ADDR, expected).unwrap();
-        assert_eq!(read_context(&memory, TASK_B_CONTEXT_ADDR).unwrap(), expected);
+        assert_eq!(
+            read_context(&memory, TASK_B_CONTEXT_ADDR).unwrap(),
+            expected
+        );
     }
 
     #[test]
