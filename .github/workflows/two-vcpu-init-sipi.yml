@@ -25,12 +25,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build guest INIT/SIPI AP startup proof
+        run: cargo build --quiet --bin two-vcpu-init-sipi
       - name: Strict KVM guest INIT/SIPI AP startup proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin two-vcpu-init-sipi)"
+          output="$(timeout 30s target/debug/two-vcpu-init-sipi)"
           printf '%s\n' "$output"
           grep -F 'INIT/SIPI vector: 0x8' <<<"$output"
           grep -F 'INIT/SIPI trampoline GPA: 0x8000' <<<"$output"
