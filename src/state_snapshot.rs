@@ -1,5 +1,7 @@
 mod checkpoint;
 pub use checkpoint::*;
+mod page_set;
+pub use page_set::*;
 
 #[path = "vcpu/snapshot_verify.rs"]
 mod component_snapshot_verify;
