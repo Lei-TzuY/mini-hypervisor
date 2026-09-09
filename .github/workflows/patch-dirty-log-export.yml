@@ -1,0 +1,47 @@
+name: Temporary dirty-log export patch
+
+on:
+  push:
+    branches: [milestone/task-wait-dirty-capture]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: milestone/task-wait-dirty-capture
+          fetch-depth: 0
+      - name: Apply exact crate-private export
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/kvm/mod.rs")
+          text = path.read_text()
+          old = "pub(crate) mod sys;\n\n"
+          new = (
+              "pub(crate) mod sys;\n\n"
+              "pub(crate) use sys::{\n"
+              "    harvest_dirty_log, register_guest_memory_with_dirty_log, DirtyLogSlot0,\n"
+              "};\n\n"
+          )
+          if text.count(old) != 1:
+              raise SystemExit(f"expected exactly one kvm::sys declaration boundary, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+          test "$(git status --short | wc -l)" -eq 1
+          git status --short | grep -F ' M src/kvm/mod.rs'
+      - name: Commit exact patch
+        shell: bash
+        run: |
+          git config user.name 'LeiZ'
+          git config user.email '52287354+Lei-TzuY@users.noreply.github.com'
+          git add src/kvm/mod.rs
+          git commit -m 'Expose dirty-log helpers inside crate'
+          git push origin HEAD:milestone/task-wait-dirty-capture
