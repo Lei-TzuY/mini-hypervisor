@@ -7,7 +7,7 @@ pub const TASK_WAIT_CHANNEL_A: u8 = 0x11;
 pub const TASK_WAIT_WRONG_CHANNEL: u8 = 0x22;
 pub const TASK_WAIT_CHANNEL_PROOF: &[u8; 10] = b"K1AXPW0BRD";
 pub const TASK_WAIT_DIRTY_CAPTURE_STAGES: &[u8; 4] = b"KXWD";
-pub const TASK_WAIT_CHECKPOINT_CAPTURE_RIP: u64 = TASK_WAKE_ARM_HANDLER.get() + 0x3e;
+pub const TASK_WAIT_CHECKPOINT_CAPTURE_RIP: u64 = TASK_WAKE_ARM_HANDLER.get() + 0x3d;
 
 const WAIT_TIMER_DELAY_MILLIS: u64 = 10;
 const WAIT_WATCHDOG_SECONDS: u64 = 5;
@@ -767,6 +767,10 @@ fn capture_mutate_restore_wait_checkpoint(
     first_selection: RunnableQueueSnapshot,
 ) -> Result<WaitChannelCheckpointEvidence, Error> {
     let mut no_io = PortIoBus::empty();
+    // The preceding X output is a serviceable KVM_EXIT_IO. Re-entering KVM completes that OUT
+    // before guest debug is considered. With TF enabled, KVM therefore reports Debug at the next
+    // instruction start (the checkpoint NOP at +0x3d). The NOP and the following P output have not
+    // executed, so this is a non-serviceable boundary after X is committed and before P begins.
     vcpu.set_guest_single_step(true)?;
     let checkpoint_execution_result = run_vcpu_until_stopped(vcpu, &mut no_io, 1);
     let disable_result = vcpu.set_guest_single_step(false);
@@ -1092,7 +1096,7 @@ mod wait_channel_tests {
     }
 
     #[test]
-    fn checkpoint_arm_handler_commits_x_then_single_steps_nop_before_p() {
+    fn checkpoint_arm_handler_commits_x_then_debugs_at_nop_before_p() {
         assert_eq!(WAIT_WAKE_ARM_CHECKPOINT_HANDLER_BYTES.len(), 106);
         assert_eq!(
             &WAIT_WAKE_ARM_CHECKPOINT_HANDLER_BYTES[0x39..0x3d],
@@ -1105,7 +1109,7 @@ mod wait_channel_tests {
         );
         assert_eq!(
             TASK_WAIT_CHECKPOINT_CAPTURE_RIP,
-            TASK_WAKE_ARM_HANDLER.get() + 0x3e
+            TASK_WAKE_ARM_HANDLER.get() + 0x3d
         );
     }
 
