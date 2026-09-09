@@ -50,7 +50,7 @@ jobs:
           grep -F 'controller checkpoint PIC IMR: 0xfe' <<<"$output"
           grep -F 'controller checkpoint proof: [65, 73, 77, 68]' <<<"$output"
 
-          capture="$(grep -F 'controller checkpoint capture: vCPU 0 exit Hlt: rip=0x1002e, rflags=' <<<"$output")"
+          capture="$(grep -F 'controller checkpoint capture: KVM_EXIT_DEBUG: rip=0x10032, rflags=' <<<"$output")"
           capture_rflags_hex="${capture##*rflags=}"
           [[ "$capture_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
           capture_rflags=$((capture_rflags_hex))
