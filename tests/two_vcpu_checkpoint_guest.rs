@@ -15,11 +15,20 @@ use mini_hypervisor::vcpu::{PortIoDirection, VcpuExit};
 fn coordinated_checkpoint_restores_two_vcpus_and_shared_pages_before_resume() {
     match run_two_vcpu_checkpoint_guest() {
         Ok(result) => {
-            assert_eq!(result.first_capture().vcpu_id(), TWO_VCPU_CHECKPOINT_FIRST_ID);
+            assert_eq!(
+                result.first_capture().vcpu_id(),
+                TWO_VCPU_CHECKPOINT_FIRST_ID
+            );
             assert_eq!(result.first_capture().exit(), VcpuExit::Hlt);
-            assert_eq!(result.first_capture().rip(), TWO_VCPU_CHECKPOINT_FIRST_CAPTURE_RIP);
+            assert_eq!(
+                result.first_capture().rip(),
+                TWO_VCPU_CHECKPOINT_FIRST_CAPTURE_RIP
+            );
             assert_eq!(result.first_capture().rflags() & 0x2, 0x2);
-            assert_eq!(result.second_capture().vcpu_id(), TWO_VCPU_CHECKPOINT_SECOND_ID);
+            assert_eq!(
+                result.second_capture().vcpu_id(),
+                TWO_VCPU_CHECKPOINT_SECOND_ID
+            );
             assert_eq!(result.second_capture().exit(), VcpuExit::Hlt);
             assert_eq!(
                 result.second_capture().rip(),
@@ -37,7 +46,9 @@ fn coordinated_checkpoint_restores_two_vcpus_and_shared_pages_before_resume() {
                 Some(false)
             );
             assert_eq!(
-                result.corruption().vcpu_exact(TWO_VCPU_CHECKPOINT_SECOND_ID),
+                result
+                    .corruption()
+                    .vcpu_exact(TWO_VCPU_CHECKPOINT_SECOND_ID),
                 Some(false)
             );
             assert_eq!(
@@ -55,8 +66,14 @@ fn coordinated_checkpoint_restores_two_vcpus_and_shared_pages_before_resume() {
             assert_eq!(result.first_io_exits().len(), 1);
             assert_eq!(result.second_io_exits().len(), 1);
             for (io, expected) in [
-                (&result.first_io_exits()[0], TWO_VCPU_CHECKPOINT_FIRST_PROOF[0]),
-                (&result.second_io_exits()[0], TWO_VCPU_CHECKPOINT_SECOND_PROOF[0]),
+                (
+                    &result.first_io_exits()[0],
+                    TWO_VCPU_CHECKPOINT_FIRST_PROOF[0],
+                ),
+                (
+                    &result.second_io_exits()[0],
+                    TWO_VCPU_CHECKPOINT_SECOND_PROOF[0],
+                ),
             ] {
                 assert_eq!(io.direction(), PortIoDirection::Out);
                 assert_eq!(io.port(), DEBUG_PORT);
@@ -65,14 +82,20 @@ fn coordinated_checkpoint_restores_two_vcpus_and_shared_pages_before_resume() {
                 assert_eq!(io.output_data(), &[expected]);
             }
 
-            assert_eq!(result.first_terminal().vcpu_id(), TWO_VCPU_CHECKPOINT_FIRST_ID);
+            assert_eq!(
+                result.first_terminal().vcpu_id(),
+                TWO_VCPU_CHECKPOINT_FIRST_ID
+            );
             assert_eq!(result.first_terminal().exit(), VcpuExit::Hlt);
             assert_eq!(
                 result.first_terminal().rip(),
                 TWO_VCPU_CHECKPOINT_FIRST_TERMINAL_RIP
             );
             assert_eq!(result.first_terminal().rflags() & 0x2, 0x2);
-            assert_eq!(result.second_terminal().vcpu_id(), TWO_VCPU_CHECKPOINT_SECOND_ID);
+            assert_eq!(
+                result.second_terminal().vcpu_id(),
+                TWO_VCPU_CHECKPOINT_SECOND_ID
+            );
             assert_eq!(result.second_terminal().exit(), VcpuExit::Hlt);
             assert_eq!(
                 result.second_terminal().rip(),
