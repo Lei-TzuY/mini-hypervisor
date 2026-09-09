@@ -25,7 +25,7 @@ Acceptance contract:
 - checkpoint exactly one 4 KiB-aligned guest page plus one complete VCPU snapshot; reject a misaligned page rather than silently rounding;
 - use GPA `0x30000`, deliberately matching the scheduler/wait context-page location selected by PR #123 without yet claiming full scheduler checkpoint composition;
 - deterministic long-mode guest writes marker `0x5a` to GPA `0x30000`, reaches a non-serviceable HLT checkpoint boundary at RIP `0x10009`, and has no in-flight PIO/MMIO when state is captured;
-- after capture, deliberately overwrite the entire page with `0xa5` and reinitialize the VCPU into a bounded real-mode state; fresh comparison must independently report both page mismatch and VCPU-state mismatch before restore is attempted;
+- after capture, deliberately overwrite the entire page with `0xa5` and reinitialize the VCPU to a different but valid long-mode entry `0x12000` and stack `0x1fe000`; fresh comparison must independently report both page mismatch and VCPU-state mismatch before restore is attempted. Do not rely on a long-mode→real-mode `KVM_SET_SREGS` transition merely to manufacture divergence;
 - restore the exact page bytes and restore the VCPU through the existing special-register → general-register → MSR dependency order, then perform fresh page readback and fresh VCPU capture; both comparisons must be exact;
 - after restore, require marker `0x5a`, resume from the post-HLT checkpoint state, emit exact debug-port proof `R`, and terminate at a second HLT with RIP `0x1000e` and architectural RFLAGS bit 1;
 - expose an executable and KVM-aware integration test that independently validate capture boundary, deliberate divergence, page/VCPU restore, one exact byte-wide debug-port exit and terminal boundary;
