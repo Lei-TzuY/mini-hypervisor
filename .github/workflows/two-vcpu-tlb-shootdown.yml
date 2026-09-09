@@ -27,12 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build cross-vCPU TLB shootdown proof
+        run: cargo build --quiet --bin two-vcpu-tlb-shootdown
       - name: Strict KVM cross-vCPU TLB shootdown proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin two-vcpu-tlb-shootdown)"
+          output="$(timeout 30s target/debug/two-vcpu-tlb-shootdown)"
           printf '%s\n' "$output"
 
           grep -F 'TLB shootdown vector: 0x54' <<<"$output"
