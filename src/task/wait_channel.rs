@@ -614,7 +614,7 @@ mod wait_channel_tests {
         assert!(WAIT_WAKE_ARM_HANDLER_BYTES
             .windows(4)
             .any(|window| window == [0xb0, b'P', 0xe6, 0xe9]));
-        assert_eq!(&WAIT_WAKE_ARM_HANDLER_BYTES[62..64], &[0xfb, 0xf4]);
+        assert_eq!(&WAIT_WAKE_ARM_HANDLER_BYTES[65..67], &[0xfb, 0xf4]);
         assert!(WAIT_WAKE_TIMER_HANDLER_BYTES
             .windows(4)
             .any(|window| window == [0xb0, b'W', 0xe6, 0xe9]));
