@@ -24,12 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build two-vCPU shared work-dispatch proof
+        run: cargo build --quiet --bin two-vcpu-work-dispatch
       - name: Strict KVM two-vCPU shared work-dispatch proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin two-vcpu-work-dispatch)"
+          output="$(timeout 30s target/debug/two-vcpu-work-dispatch)"
           printf '%s\n' "$output"
 
           grep -F 'work-dispatch BSP proof: [66, 67, 86, 68]' <<<"$output"
