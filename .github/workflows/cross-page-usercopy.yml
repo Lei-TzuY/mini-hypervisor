@@ -35,7 +35,8 @@ jobs:
           set -euo pipefail
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin cross-page-usercopy)"
+          cargo build --quiet --bin cross-page-usercopy
+          output="$(timeout 30s target/debug/cross-page-usercopy)"
           printf '%s\n' "$output"
 
           grep -F 'cross-page proof: [75, 75, 75, 68]' <<<"$output"
