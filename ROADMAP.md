@@ -4,53 +4,53 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `318cd9513e89978728382ae780149d5f3627f7f1` through PR #125 (`Restore a bounded VCPU and guest page checkpoint`). Exact merged-main validation for #125 completed successfully across ordinary CI and every permanent hosted-KVM workflow triggered for that exact commit.
+`main` is `c7c438c735349f0294033f3830e05fd162fbdd04` through PR #126 (`Restore scheduler wait ownership from a bounded checkpoint`). Exact merged-main ordinary CI and every applicable permanent hosted-KVM workflow for that commit are settled successfully.
 
-The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; guest-owned ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe copyin/copyout/usercopy; two isolated ring3 address spaces; opt-in slot-0 dirty-page tracking; bounded guest-owned A→B→A task context switching; host-timer task preemption; one bounded Runnable→Blocked→Runnable lifecycle with external wakeup; a two-entry guest-owned runnable selector; one bounded wait-channel owner with wrong-channel rejection and correct-channel external wake ownership; incremental K/X/W/D dirty capture of the co-located scheduler/wait/task context page; and one bounded checkpoint containing a full VCPU snapshot plus one exact 4 KiB guest page.
+The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; guest-owned ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe copyin/copyout/usercopy; two isolated ring3 address spaces; opt-in slot-0 dirty-page tracking; bounded guest-owned A→B→A task context switching; host-timer task preemption; one bounded Runnable→Blocked→Runnable lifecycle with external wakeup; a two-entry guest-owned runnable selector; one bounded wait-channel owner with wrong-channel rejection and correct-channel external wake ownership; incremental K/X/W/D dirty capture of the co-located scheduler/wait/task context page; one reusable full-VCPU plus one-page checkpoint; and scheduler wait ownership restored compositionally from that checkpoint at a non-serviceable Debug boundary.
 
-PR #118 seals cooperative two-task context switching. PR #119 seals host-timer preemption. PR #120 seals external Blocked→Runnable wakeup. PR #121 seals the bounded `[A,B]` runnable selector. PR #122 seals the fixed one-owner/one-waiter wait-channel proof. PR #123 seals incremental K/X/W/D dirty capture of physical page `0x30000`. PR #124 keeps strict KVM execution timeouts independent of cold compilation. PR #125 seals the reusable one-VCPU/one-page checkpoint primitive: capture at a non-serviceable boundary, prove deliberate VCPU/page divergence, restore through the existing dependency ordering, perform fresh exact verification, then resume execution on real KVM.
+PR #118 seals cooperative two-task context switching. PR #119 seals host-timer preemption. PR #120 seals external Blocked→Runnable wakeup. PR #121 seals the bounded `[A,B]` runnable selector. PR #122 seals the fixed one-owner/one-waiter wait-channel proof. PR #123 seals incremental K/X/W/D dirty capture of physical page `0x30000`. PR #124 keeps strict KVM execution timeouts independent of cold compilation. PR #125 seals the reusable one-VCPU/one-page checkpoint primitive. PR #126 seals scheduler wait ownership composition: capture at typed `Debug@0x1603d`, prove deliberate page/VCPU/wait/queue divergence, restore page and VCPU through the existing dependency order, perform fresh typed ownership verification, then resume unchanged `K1AXPW0BRD` execution on real KVM.
 
-The generic one-page checkpoint primitive is sealed. Do not farm second arbitrary pages, extra marker values or duplicate capture/restore fixtures merely to extend the phase number.
+The one-owner/one-page scheduler composition is sealed. Do not farm alternate channel values, another fixed scheduler barrier or more one-page marker fixtures merely to extend the phase number.
 
-## Selected milestone — scheduler wait ownership checkpoint composition
+## Selected milestone — bounded explicit multi-page VCPU checkpoint
 
-The next architecture boundary is composition of the generic #125 checkpoint with the already integrated scheduler/wait ownership state on physical page `0x30000`. The existing wait-channel execution remains the single scheduler path. Checkpoint mode must capture a proven non-serviceable boundary after the wrong-channel `X` output is committed but before wake-arm output `P` begins, deliberately corrupt both machine state and typed ownership, restore both, perform fresh exact verification, and only then resume the original wait/wakeup path.
+The next architecture boundary is a coherent guest-memory ownership set rather than one arbitrary 4 KiB page. This milestone retains the existing `VcpuStateSnapshot` capture/restore dependency ordering and promotes only the memory side to an explicitly bounded, canonical page set. The executable proof must demonstrate that multiple pages carry independent roles and that resume depends on restoring all of them, rather than merely serializing several decorative pages.
 
-This is deliberately one VCPU, one scheduler context page, one fixed wait owner and one runnable-queue snapshot. It is not device/controller checkpointing, migration-complete snapshotting, multi-page restore or multi-waiter synchronization.
+The deterministic proof uses exactly three owned pages in one VM: control page `0x30000`, data page `0x31000`, and active stack page `0x1fe000`. Before checkpoint capture the guest writes `A` to control, writes `B` to data, pushes `C` onto the owned stack page and reaches HLT. Host code captures all three pages plus one full VCPU snapshot, corrupts all three pages with distinct full-page patterns and moves the VCPU to a different valid long-mode state, requires fresh mismatch evidence for every page and the VCPU, restores all owned pages and the VCPU, performs fresh exact verification, and only then resumes. The restored guest reads `A`, reads `B`, pops `C` from the restored stack and emits `R`, giving exact proof `ABCR`.
 
 Acceptance contract:
 
-- preserve exact merged-green base `318cd9513e89978728382ae780149d5f3627f7f1`, Rust 1.74 shipped-target MSRV, ordinary CI and every applicable permanent hosted-KVM workflow;
-- preserve the integrated plain wait-channel proof `K1AXPW0BRD` and the existing K/X/W/D dirty-capture path unchanged;
-- never capture or restore VCPU state while a PIO/MMIO service exit is in-flight;
-- checkpoint mode uses a dedicated wake-arm byte sequence where `X` occupies offsets `0x39..0x3c`, a NOP is at `0x3d`, and `P` begins at `0x3e`;
-- after observing serviceable `X`, enable KVM guest single-step and re-enter: KVM must complete the prior OUT and report typed `Debug` at RIP `0x1603d`, the NOP instruction start, with architectural RFLAGS bit 1; the NOP and `P` have not executed and the checkpoint execution result must contain no serviced port-I/O exit;
-- reuse `BoundedVcpuPageCheckpoint` and the existing VCPU restore dependency ordering rather than create a second snapshot model;
-- capture typed scheduler ownership at the Debug boundary: wait-channel snapshot, runnable-queue snapshot, task-A context and task-B context;
-- deliberately mutate page-backed wait/queue ownership to a valid-but-wrong state and mutate the VCPU to a different valid state;
-- fresh corruption comparison must independently prove page mismatch, VCPU mismatch, wait mismatch and queue mismatch while the task-A/task-B context entries that were not deliberately changed remain exact;
-- exact restore must restore the captured page, restore VCPU state through the existing ordering, then perform fresh typed ownership reads; no guest resume is allowed until page, VCPU, wait, queue and both task-context comparisons are exact;
-- after restore, continue the original `P→W→0→B→R→D` execution and preserve exact proof `K1AXPW0BRD`;
-- KVM-aware integration must independently validate the Debug boundary, captured ownership, deliberate mismatch surface, exact restore surface and unchanged final wait proof;
-- the permanent hosted-KVM gate must build `task-wait-checkpoint-composition` before the unchanged 30-second execution timeout and require exact `Debug@0x1603d`, ownership/corruption/restore evidence and proof bytes `[75, 49, 65, 88, 80, 87, 48, 66, 82, 68]`;
-- legacy permanent KVM workflows touched by the new typed Debug surface must likewise keep cold compilation outside their unchanged execution timeout; this is CI execution isolation, not an expanded KVM timeout;
-- formatter, Clippy, MSRV, Debug classification, checkpoint capture/restore, typed ownership readback, deliberate mismatch, fresh verification, proof or hosted-KVM failures remain hard failures and must not be skipped, retried into success or hidden by changed expected values.
+- preserve exact merged-green base `c7c438c735349f0294033f3830e05fd162fbdd04`, Rust 1.74 shipped-target MSRV, ordinary CI, #125 one-page checkpoint behavior, #126 scheduler wait checkpoint composition and every applicable permanent hosted-KVM workflow;
+- use one `BoundedVcpuPageSetCheckpoint` model containing 1..=8 explicit pages plus the existing `VcpuStateSnapshot`; do not create a second VCPU snapshot or restore ordering;
+- reject empty ownership sets, more than eight pages, non-4KiB-aligned GPAs and duplicate pages before capture; canonicalize the accepted ownership set by GPA;
+- deterministic owned pages are exactly `0x30000`, `0x31000` and `0x1fe000` and must be returned in canonical order;
+- before capture the guest writes marker `A` to control, marker `B` to data and pushes marker `C` onto the actual stack page, then reaches non-serviceable HLT at RIP `0x10013`; the capture boundary must service no PIO/MMIO exit;
+- deliberately corrupt each owned page with a distinct full-page pattern and change the VCPU to a different valid long-mode entry/stack state;
+- fresh corruption verification must independently report control=false, data=false, stack=false and VCPU exact=false; no page mismatch may be inferred only from an aggregate boolean;
+- restore must write every captured page, restore VCPU special registers/registers/MSRs through the already integrated dependency order, then perform fresh page and VCPU capture/comparison; guest resume is forbidden unless all three page comparisons and VCPU comparison are exact;
+- the stack page is executable state, not decorative data: resumed code must `pop` marker `C` from restored RSP before proof can complete;
+- exact resumed proof is bytes `[65, 66, 67, 82]` (`ABCR`) across four byte-wide debug-port exits and terminal HLT must be RIP `0x1002d` with architectural RFLAGS bit 1;
+- KVM-aware integration must independently validate capture HLT, canonical ownership set, per-page corruption, per-page restore, VCPU mismatch→exact transition, all four debug exits, proof and terminal HLT;
+- a permanent hosted-KVM workflow must build `multi-page-checkpoint` before an unchanged 30-second execution timeout and require exact ownership, mismatch/restore, `ABCR`, capture RIP and terminal RIP evidence; `/dev/kvm` absence is not a successful permanent-gate outcome;
+- formatter, Clippy, MSRV, page-set validation, capture/restore ordering, per-page mismatch, VCPU mismatch, fresh exact verification, proof or hosted-KVM failures remain hard failures and must not be skipped, retried into success or hidden by changed expected values.
 
-Implementation is in progress on `milestone/task-wait-checkpoint-composition` through draft PR #126. The candidate has already demonstrated the corrected serviceable-exit completion boundary on hosted KVM: `Debug` at RIP `0x1603d`, blocked owner `0x11` with one wrong-channel mismatch, deliberate page/VCPU/wait/queue mismatch, exact page/VCPU/wait/queue/task-context restore, and unchanged `K1AXPW0BRD` execution. Only the final docs-synchronized exact candidate with every applicable workflow green may be integrated.
+Implementation is in progress on `milestone/multi-page-checkpoint` through draft PR #127. The production page-set core and executable three-role fixture have already passed ordinary CI software checks and all existing strict KVM gates on an intermediate exact head. Only the final verification-synchronized exact candidate with the new dedicated multi-page hosted-KVM proof and every applicable workflow green may be integrated.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- irqchip/LAPIC/PIC, irqfd/eventfd/ioeventfd, PCI/virtio or arbitrary device/controller-state checkpoint/restore;
-- multi-page or multi-slot checkpoints, automatic dirty-page selection, dirty-ring/manual-protect2, pre-copy/post-copy policy or replay logs;
-- capture or replay from arbitrary in-flight PIO/MMIO exits;
-- a second waiter, multi-waiter/wake-one synchronization, generic scheduler priorities, task/process allocation or SMP task migration;
-- FPU/XSAVE/debug-register checkpointing, migration serialization/versioning, cross-host compatibility or crash-consistent whole-VM snapshots;
+- device/controller, irqchip/LAPIC/PIC, irqfd/eventfd/ioeventfd, PCI or virtio state checkpoint/restore;
+- automatic dirty-page ownership selection, dirty-ring/manual-protect2, pre-copy/post-copy policy or replay logs;
+- capture or replay from arbitrary in-flight PIO/MMIO service exits;
+- an unbounded page list, multi-slot memory image or full guest-RAM snapshot;
+- multi-VCPU coordinated snapshot, SMP quiescence or task migration checkpointing;
+- FPU/XSAVE/debug-register migration claims beyond the already integrated VCPU snapshot contract;
+- migration serialization/versioning, cross-host compatibility or crash-consistent whole-VM snapshots;
 - demand paging, copy-on-write, swapping, DMA/IOMMU or performance/latency claims.
 
 ## Promotion rule
 
-After scheduler wait ownership checkpoint composition is integrated and exact merged-`main` ordinary CI plus every applicable permanent hosted-KVM workflow are green, seal this one-owner/one-page composition rather than adding alternate channel values or another fixed scheduler barrier.
+After the bounded explicit multi-page checkpoint is integrated and exact merged-`main` ordinary CI plus every applicable permanent hosted-KVM workflow are green, seal this three-role page-set proof rather than adding fourth/fifth arbitrary pages or alternate marker values.
 
-The next architecture audit should choose a materially broader checkpoint frontier. Prefer either a coherent multi-page guest-state checkpoint selected by an explicit ownership set, or device/controller-state checkpoint composition only when capture/restore ordering and executable KVM evidence can be made explicit. Migration serialization/versioning, in-flight service-exit replay, multi-waiter synchronization and cross-host portability remain separate higher-order frontiers.
+The next architecture audit should prefer device/controller-state checkpoint composition only when capture/restore ordering, external kernel-owned state, quiescence boundaries and executable KVM evidence can be made explicit. Another valid higher frontier is coordinated multi-VCPU checkpoint/quiescence if ownership and stop-the-world semantics can be proven without weakening existing SMP invariants. Migration serialization/versioning, in-flight service-exit replay and cross-host portability remain separate higher-order frontiers.
