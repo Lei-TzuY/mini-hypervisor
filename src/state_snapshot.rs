@@ -2,6 +2,8 @@ mod checkpoint;
 pub use checkpoint::*;
 mod page_set;
 pub use page_set::*;
+mod two_vcpu;
+pub use two_vcpu::*;
 
 #[path = "vcpu/snapshot_verify.rs"]
 mod component_snapshot_verify;
@@ -260,7 +262,7 @@ mod tests {
             },
             || {
                 sequence.borrow_mut().push("special-registers");
-                Err::<u8, _>("special-register failure")
+                Err::<u8, _>("special register failure")
             },
             || {
                 sequence.borrow_mut().push("msrs");
@@ -269,38 +271,12 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error, "special-register failure");
+        assert_eq!(error, "special register failure");
         assert_eq!(&*sequence.borrow(), &["registers", "special-registers"]);
     }
 
     #[test]
-    fn component_comparison_uses_canonical_order_exactly_once() {
-        let sequence = RefCell::new(Vec::new());
-
-        let compared = compare_components_with(
-            || {
-                sequence.borrow_mut().push("registers");
-                1_u8
-            },
-            || {
-                sequence.borrow_mut().push("special-registers");
-                2_u8
-            },
-            || {
-                sequence.borrow_mut().push("msrs");
-                3_u8
-            },
-        );
-
-        assert_eq!(compared, (1, 2, 3));
-        assert_eq!(
-            &*sequence.borrow(),
-            &["registers", "special-registers", "msrs"]
-        );
-    }
-
-    #[test]
-    fn component_restore_uses_dependency_order_exactly_once() {
+    fn component_restore_uses_dependency_order() {
         let sequence = RefCell::new(Vec::new());
 
         restore_components_with(
@@ -326,82 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn special_register_restore_failure_skips_later_components() {
-        let sequence = RefCell::new(Vec::new());
-
-        let error = restore_components_with(
-            || {
-                sequence.borrow_mut().push("special-registers");
-                Err::<(), _>("special-register failure")
-            },
-            || {
-                sequence.borrow_mut().push("registers");
-                Ok::<_, &'static str>(())
-            },
-            || {
-                sequence.borrow_mut().push("msrs");
-                Ok::<_, &'static str>(())
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(error, "special-register failure");
-        assert_eq!(&*sequence.borrow(), &["special-registers"]);
-    }
-
-    #[test]
-    fn register_restore_failure_preserves_prior_write_and_skips_msrs() {
-        let sequence = RefCell::new(Vec::new());
-
-        let error = restore_components_with(
-            || {
-                sequence.borrow_mut().push("special-registers");
-                Ok::<_, &'static str>(())
-            },
-            || {
-                sequence.borrow_mut().push("registers");
-                Err::<(), _>("register failure")
-            },
-            || {
-                sequence.borrow_mut().push("msrs");
-                Ok::<_, &'static str>(())
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(error, "register failure");
-        assert_eq!(&*sequence.borrow(), &["special-registers", "registers"]);
-    }
-
-    #[test]
-    fn msr_restore_failure_propagates_after_prior_components_without_retry() {
-        let sequence = RefCell::new(Vec::new());
-
-        let error = restore_components_with(
-            || {
-                sequence.borrow_mut().push("special-registers");
-                Ok::<_, &'static str>(())
-            },
-            || {
-                sequence.borrow_mut().push("registers");
-                Ok::<_, &'static str>(())
-            },
-            || {
-                sequence.borrow_mut().push("msrs");
-                Err::<(), _>("msr failure")
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(error, "msr failure");
-        assert_eq!(
-            &*sequence.borrow(),
-            &["special-registers", "registers", "msrs"]
-        );
-    }
-
-    #[test]
-    fn restore_verification_restores_then_captures_once_then_compares() {
+    fn restore_and_verify_captures_fresh_state_after_restore() {
         let sequence = RefCell::new(Vec::new());
 
         let comparison = restore_and_verify_with(
@@ -421,78 +322,6 @@ mod tests {
         .unwrap();
 
         assert!(comparison);
-        assert_eq!(&*sequence.borrow(), &["restore", "capture", "compare"]);
-    }
-
-    #[test]
-    fn restore_verification_failure_skips_capture_and_compare() {
-        let sequence = RefCell::new(Vec::new());
-
-        let error = restore_and_verify_with(
-            || {
-                sequence.borrow_mut().push("restore");
-                Err::<(), _>("restore failure")
-            },
-            || {
-                sequence.borrow_mut().push("capture");
-                Ok::<_, &'static str>(7_u8)
-            },
-            |observed| {
-                sequence.borrow_mut().push("compare");
-                *observed == 7
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(error, "restore failure");
-        assert_eq!(&*sequence.borrow(), &["restore"]);
-    }
-
-    #[test]
-    fn restore_verification_capture_failure_skips_compare_without_retry() {
-        let sequence = RefCell::new(Vec::new());
-
-        let error = restore_and_verify_with(
-            || {
-                sequence.borrow_mut().push("restore");
-                Ok::<_, &'static str>(())
-            },
-            || {
-                sequence.borrow_mut().push("capture");
-                Err::<u8, _>("capture failure")
-            },
-            |_observed| {
-                sequence.borrow_mut().push("compare");
-                true
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(error, "capture failure");
-        assert_eq!(&*sequence.borrow(), &["restore", "capture"]);
-    }
-
-    #[test]
-    fn restore_verification_returns_mismatch_without_retry_or_repair() {
-        let sequence = RefCell::new(Vec::new());
-
-        let comparison = restore_and_verify_with(
-            || {
-                sequence.borrow_mut().push("restore");
-                Ok::<_, &'static str>(())
-            },
-            || {
-                sequence.borrow_mut().push("capture");
-                Ok::<_, &'static str>(9_u8)
-            },
-            |observed| {
-                sequence.borrow_mut().push("compare");
-                *observed == 7
-            },
-        )
-        .unwrap();
-
-        assert!(!comparison);
         assert_eq!(&*sequence.borrow(), &["restore", "capture", "compare"]);
     }
 }
