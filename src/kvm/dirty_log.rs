@@ -41,7 +41,7 @@ impl KvmDirtyLog {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DirtyLogSlot0 {
+pub(crate) struct DirtyLogSlot0 {
     page_count: u64,
     bitmap_words: usize,
 }
@@ -158,7 +158,7 @@ impl crate::kvm::KvmBackend {
     }
 }
 
-fn register_guest_memory_with_dirty_log(
+pub(crate) fn register_guest_memory_with_dirty_log(
     vm: &mut crate::kvm::Vm,
     memory: crate::memory::GuestMemory,
 ) -> Result<DirtyLogSlot0, crate::error::Error> {
@@ -185,7 +185,7 @@ fn register_guest_memory_with_dirty_log(
     Ok(DirtyLogSlot0::for_region(region))
 }
 
-fn harvest_dirty_log(
+pub(crate) fn harvest_dirty_log(
     vm: &crate::kvm::Vm,
     slot: DirtyLogSlot0,
 ) -> Result<Vec<u64>, crate::error::Error> {
