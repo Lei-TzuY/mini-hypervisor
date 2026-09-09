@@ -26,12 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build address-space switch proof
+        run: cargo build --quiet --bin address-space-switch
       - name: Strict KVM two-address-space CR3 switch proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin address-space-switch)"
+          output="$(timeout 30s target/debug/address-space-switch)"
           printf '%s\n' "$output"
 
           grep -F 'address-space roots: first=0x1000 second=0xb000' <<<"$output"

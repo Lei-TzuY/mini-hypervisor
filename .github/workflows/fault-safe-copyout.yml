@@ -29,12 +29,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build fault-safe copyout proof
+        run: cargo build --quiet --bin fault-safe-copyout
       - name: Strict KVM fault-safe copyout proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin fault-safe-copyout)"
+          output="$(timeout 30s target/debug/fault-safe-copyout)"
           printf '%s\n' "$output"
 
           grep -F 'copyout proof: [87, 70, 68]' <<<"$output"
