@@ -35,7 +35,8 @@ jobs:
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin fault-safe-usercopy)"
+          cargo build --quiet --bin fault-safe-usercopy
+          output="$(timeout 30s target/debug/fault-safe-usercopy)"
           printf '%s\n' "$output"
 
           grep -F 'usercopy proof: [67, 82, 87, 68]' <<<"$output"
