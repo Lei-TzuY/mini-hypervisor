@@ -11,7 +11,7 @@ use crate::vcpu::{PortIoDirection, PortIoExit, VcpuExit};
 
 pub const CONTROLLER_CHECKPOINT_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x10000);
 pub const CONTROLLER_CHECKPOINT_PAGE: GuestPhysAddr = GuestPhysAddr::new(0x30000);
-pub const CONTROLLER_CHECKPOINT_CAPTURE_RIP: u64 = 0x10032;
+pub const CONTROLLER_CHECKPOINT_CAPTURE_RIP: u64 = 0x10031;
 pub const CONTROLLER_CHECKPOINT_PROOF: &[u8; 4] = b"AIMD";
 pub const CONTROLLER_CHECKPOINT_MARKER: u8 = b'A';
 const CONTROLLER_CHECKPOINT_CAPTURE_ARM_BYTE: u8 = b'C';
@@ -636,7 +636,7 @@ mod controller_checkpoint_tests {
         assert_eq!(CONTROLLER_CHECKPOINT_GUEST_BYTES[49], 0x90);
         assert_eq!(
             CONTROLLER_CHECKPOINT_CAPTURE_RIP,
-            CONTROLLER_CHECKPOINT_ENTRY.get() + 50
+            CONTROLLER_CHECKPOINT_ENTRY.get() + 49
         );
         assert_eq!(&CONTROLLER_CHECKPOINT_GUEST_BYTES[50..52], &[0xfb, 0x90]);
         assert_eq!(CONTROLLER_CHECKPOINT_GUEST_BYTES[69], 0xf4);
