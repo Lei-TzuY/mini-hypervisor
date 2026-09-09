@@ -247,3 +247,5 @@ mod tests {
         );
     }
 }
+
+include!("page_set/controller.rs");
