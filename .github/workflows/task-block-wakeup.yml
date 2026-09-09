@@ -1,0 +1,85 @@
+name: Strict KVM task block wakeup
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/task.rs'
+      - 'src/task/wakeup.rs'
+      - 'src/bin/task-block-wakeup.rs'
+      - 'tests/task_block_wakeup_guest.rs'
+      - 'src/address_space.rs'
+      - 'src/privilege.rs'
+      - 'src/interrupt.rs'
+      - 'src/kvm/**'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/**'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/lib.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/task-block-wakeup.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  task-block-wakeup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM blocked task external wakeup proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin task-block-wakeup)"
+          printf '%s\n' "$output"
+
+          grep -F 'task wake GSI: 0' <<<"$output"
+          grep -F 'task wake vector: 0x40' <<<"$output"
+          grep -F 'task wake states: blocked=Blocked wake=Runnable final=Runnable' <<<"$output"
+
+          spiv_line="$(grep -F 'task wake LAPIC SPIV:' <<<"$output")"
+          spiv_hex="${spiv_line##*: }"
+          [[ "$spiv_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          spiv=$((spiv_hex))
+          (( (spiv & 0x100) == 0x100 ))
+
+          lint0_line="$(grep -F 'task wake LAPIC LINT0:' <<<"$output")"
+          lint0_hex="${lint0_line##*: }"
+          [[ "$lint0_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          lint0=$((lint0_hex))
+          (( (lint0 & 0x700) == 0x700 ))
+          (( (lint0 & 0x10000) == 0 ))
+
+          armed_line="$(grep -F 'task wake armed rflags:' <<<"$output")"
+          armed_hex="${armed_line##*: }"
+          [[ "$armed_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          armed=$((armed_hex))
+          (( (armed & 0x2) == 0x2 ))
+          (( (armed & 0x200) == 0 ))
+
+          grep -F 'task wake A context: cr3=0x1000 rip=0x11011 rsp=0x1fcff0 rflags=0x202 r12=0x1111 saves=1' <<<"$output"
+          grep -F 'task wake B context: cr3=0xb000 rip=0x11013 rsp=0x1fcfd0 rflags=0x202 r12=0x2223 saves=1' <<<"$output"
+          grep -F 'task wake terminal: cr3=0x1000 rip=0x11013 rsp=0x1fcff0 r12=0x1111' <<<"$output"
+          grep -F 'task wake final registers: cr3=0x1000 r12=0x1111' <<<"$output"
+          grep -F 'task wake stack markers: first=97 second=98' <<<"$output"
+          grep -F 'task wake proof: [75, 65, 80, 87, 66, 82, 68]' <<<"$output"
+
+          check_context_pte() {
+            label="$1"
+            line="$(grep -F "$label" <<<"$output")"
+            value_hex="${line##*: }"
+            [[ "$value_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            value=$((value_hex))
+            (( (value & 0x000ffffffffff000) == 0x30000 ))
+            (( (value & 0x1) == 0x1 ))
+            (( (value & 0x2) == 0x2 ))
+            (( (value & 0x4) == 0 ))
+          }
+
+          check_context_pte 'task wake A context PTE:'
+          check_context_pte 'task wake B context PTE:'
