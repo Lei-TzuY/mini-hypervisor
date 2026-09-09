@@ -1,9 +1,9 @@
 use mini_hypervisor::config::VmConfig;
 use mini_hypervisor::error::{Error, HostEnvironmentError};
 use mini_hypervisor::task::{
-    run_bounded_wait_channel_checkpoint_guest, RunnableTaskId, TaskRunState,
-    TASK_WAIT_CHANNEL_A, TASK_WAIT_CHANNEL_NONE, TASK_WAIT_CHANNEL_PROOF,
-    TASK_WAIT_CHECKPOINT_CAPTURE_RIP, TASK_WAIT_WRONG_CHANNEL,
+    run_bounded_wait_channel_checkpoint_guest, RunnableTaskId, TaskRunState, TASK_WAIT_CHANNEL_A,
+    TASK_WAIT_CHANNEL_NONE, TASK_WAIT_CHANNEL_PROOF, TASK_WAIT_CHECKPOINT_CAPTURE_RIP,
+    TASK_WAIT_WRONG_CHANNEL,
 };
 use mini_hypervisor::vcpu::VcpuExit;
 
@@ -45,7 +45,10 @@ fn wait_ownership_checkpoint_restores_machine_and_typed_scheduler_state() {
             assert!(result.restored().is_exact_match());
 
             assert_eq!(result.guest().proof(), TASK_WAIT_CHANNEL_PROOF);
-            assert_eq!(result.guest().final_wait().task_a_state(), TaskRunState::Runnable);
+            assert_eq!(
+                result.guest().final_wait().task_a_state(),
+                TaskRunState::Runnable
+            );
             assert_eq!(result.guest().final_wait().owner(), TASK_WAIT_CHANNEL_NONE);
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
