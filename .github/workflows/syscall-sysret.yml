@@ -26,12 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build SYSCALL/SYSRET proof
+        run: cargo build --quiet --bin syscall-sysret
       - name: Strict KVM SYSCALL/SYSRET proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin syscall-sysret)"
+          output="$(timeout 30s target/debug/syscall-sysret)"
           printf '%s\n' "$output"
 
           grep -F 'syscall proof: [83, 68]' <<<"$output"
