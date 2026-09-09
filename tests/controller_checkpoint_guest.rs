@@ -2,8 +2,8 @@ use mini_hypervisor::error::{Error, HostEnvironmentError};
 use mini_hypervisor::interrupt::X86_RFLAGS_INTERRUPT_ENABLE;
 use mini_hypervisor::portio::DEBUG_PORT;
 use mini_hypervisor::state_snapshot::{
-    run_controller_checkpoint_guest, CONTROLLER_CHECKPOINT_CAPTURE_RIP,
-    CONTROLLER_CHECKPOINT_PAGE, CONTROLLER_CHECKPOINT_PROOF,
+    run_controller_checkpoint_guest, CONTROLLER_CHECKPOINT_CAPTURE_RIP, CONTROLLER_CHECKPOINT_PAGE,
+    CONTROLLER_CHECKPOINT_PROOF,
 };
 use mini_hypervisor::vcpu::{PortIoDirection, VcpuExit};
 
@@ -19,10 +19,7 @@ fn controller_checkpoint_restores_page_vcpu_pic_lapic_and_resumes_interrupt_deli
             assert_eq!(result.capture().exit(), VcpuExit::Hlt);
             assert_eq!(result.capture().rip(), CONTROLLER_CHECKPOINT_CAPTURE_RIP);
             assert_eq!(result.capture().rflags() & 0x2, 0x2);
-            assert_eq!(
-                result.capture().rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
-                0
-            );
+            assert_eq!(result.capture().rflags() & X86_RFLAGS_INTERRUPT_ENABLE, 0);
 
             assert_eq!(
                 result.corruption().page_exact(CONTROLLER_CHECKPOINT_PAGE),
