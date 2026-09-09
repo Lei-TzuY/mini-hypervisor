@@ -24,12 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build guest-driven AP long-mode proof
+        run: cargo build --quiet --bin two-vcpu-ap-long-mode
       - name: Strict KVM guest-driven AP long-mode proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin two-vcpu-ap-long-mode)"
+          output="$(timeout 30s target/debug/two-vcpu-ap-long-mode)"
           printf '%s\n' "$output"
           grep -F 'AP long-mode SIPI vector: 0x8' <<<"$output"
           grep -F 'AP long-mode startup CS selector: 0x800' <<<"$output"

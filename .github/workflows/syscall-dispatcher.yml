@@ -30,12 +30,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build bounded syscall dispatcher proof
+        run: cargo build --quiet --bin syscall-dispatcher
       - name: Strict KVM bounded syscall dispatcher proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin syscall-dispatcher)"
+          output="$(timeout 30s target/debug/syscall-dispatcher)"
           printf '%s\n' "$output"
 
           grep -F 'dispatch proof: [67, 80, 82, 87, 85, 68]' <<<"$output"
