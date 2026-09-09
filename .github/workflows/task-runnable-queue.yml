@@ -1,0 +1,88 @@
+name: Strict KVM bounded runnable queue
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/task.rs'
+      - 'src/task/runnable_queue.rs'
+      - 'src/bin/task-runnable-queue.rs'
+      - 'tests/task_runnable_queue_guest.rs'
+      - 'src/address_space.rs'
+      - 'src/privilege.rs'
+      - 'src/interrupt.rs'
+      - 'src/kvm/**'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/**'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/lib.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/task-runnable-queue.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  task-runnable-queue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build bounded runnable queue proof
+        run: cargo build --quiet --bin task-runnable-queue
+      - name: Strict KVM bounded runnable queue proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/task-runnable-queue)"
+          printf '%s\n' "$output"
+
+          grep -F 'task queue GSI: 0' <<<"$output"
+          grep -F 'task queue vector: 0x40' <<<"$output"
+          grep -F 'task queue first selection: entry0=A entry1=B head=0 selected=B skips=1 A=Blocked B=Runnable' <<<"$output"
+          grep -F 'task queue second selection: entry0=A entry1=B head=1 selected=A skips=1 A=Runnable B=Runnable' <<<"$output"
+
+          spiv_line="$(grep -F 'task queue LAPIC SPIV:' <<<"$output")"
+          spiv_hex="${spiv_line##*: }"
+          [[ "$spiv_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          spiv=$((spiv_hex))
+          (( (spiv & 0x100) == 0x100 ))
+
+          lint0_line="$(grep -F 'task queue LAPIC LINT0:' <<<"$output")"
+          lint0_hex="${lint0_line##*: }"
+          [[ "$lint0_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          lint0=$((lint0_hex))
+          (( (lint0 & 0x700) == 0x700 ))
+          (( (lint0 & 0x10000) == 0 ))
+
+          armed_line="$(grep -F 'task queue armed rflags:' <<<"$output")"
+          armed_hex="${armed_line##*: }"
+          [[ "$armed_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          armed=$((armed_hex))
+          (( (armed & 0x2) == 0x2 ))
+          (( (armed & 0x200) == 0 ))
+
+          grep -F 'task queue A context: cr3=0x1000 rip=0x11011 rsp=0x1fcff0 rflags=0x202 r12=0x1111 saves=1' <<<"$output"
+          grep -F 'task queue B context: cr3=0xb000 rip=0x11013 rsp=0x1fcfd0 rflags=0x202 r12=0x2223 saves=1' <<<"$output"
+          grep -F 'task queue terminal: cr3=0x1000 rip=0x11013 rsp=0x1fcff0 r12=0x1111' <<<"$output"
+          grep -F 'task queue final registers: cr3=0x1000 r12=0x1111' <<<"$output"
+          grep -F 'task queue stack markers: first=97 second=98' <<<"$output"
+          grep -F 'task queue proof: [75, 49, 65, 80, 87, 48, 66, 82, 68]' <<<"$output"
+
+          check_context_pte() {
+            label="$1"
+            line="$(grep -F "$label" <<<"$output")"
+            value_hex="${line##*: }"
+            [[ "$value_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            value=$((value_hex))
+            (( (value & 0x000ffffffffff000) == 0x30000 ))
+            (( (value & 0x1) == 0x1 ))
+            (( (value & 0x2) == 0x2 ))
+            (( (value & 0x4) == 0 ))
+          }
+
+          check_context_pte 'task queue A context PTE:'
+          check_context_pte 'task queue B context PTE:'
