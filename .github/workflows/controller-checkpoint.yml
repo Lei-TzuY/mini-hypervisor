@@ -12,6 +12,7 @@ on:
       - 'src/state_snapshot/page_set/controller.rs'
       - 'src/bin/controller-checkpoint.rs'
       - 'tests/controller_checkpoint_guest.rs'
+      - 'ROADMAP.md'
       - '.github/workflows/controller-checkpoint.yml'
   pull_request:
     paths:
@@ -23,6 +24,7 @@ on:
       - 'src/state_snapshot/page_set/controller.rs'
       - 'src/bin/controller-checkpoint.rs'
       - 'tests/controller_checkpoint_guest.rs'
+      - 'ROADMAP.md'
       - '.github/workflows/controller-checkpoint.yml'
 
 permissions:
