@@ -29,12 +29,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build SIPI-started AP IPI work-dispatch proof
+        run: cargo build --quiet --bin sipi-ipi-work-dispatch
       - name: Strict KVM SIPI-started AP IPI work-dispatch proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin sipi-ipi-work-dispatch)"
+          output="$(timeout 30s target/debug/sipi-ipi-work-dispatch)"
           printf '%s\n' "$output"
 
           grep -F 'sipi-work BSP proof: [48, 73, 68, 83, 67, 88, 86, 68]' <<<"$output"
