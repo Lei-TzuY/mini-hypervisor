@@ -1,0 +1,67 @@
+name: Strict KVM two-vCPU checkpoint restore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint.rs'
+      - 'src/bin/two-vcpu-checkpoint.rs'
+      - 'tests/two_vcpu_checkpoint_guest.rs'
+      - '.github/workflows/two-vcpu-checkpoint.yml'
+  pull_request:
+    paths:
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint.rs'
+      - 'src/bin/two-vcpu-checkpoint.rs'
+      - 'tests/two_vcpu_checkpoint_guest.rs'
+      - '.github/workflows/two-vcpu-checkpoint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-two-vcpu-checkpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build two-vCPU checkpoint proof
+        run: cargo build --quiet --bin two-vcpu-checkpoint
+      - name: Execute two-vCPU checkpoint proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/two-vcpu-checkpoint)"
+          printf '%s\n' "$output"
+
+          grep -F 'two-vCPU checkpoint pages: 0x30000,0x1fc000,0x1fd000' <<<"$output"
+          grep -F 'two-vCPU checkpoint corruption: shared=false first-stack=false second-stack=false vcpu0=false vcpu1=false' <<<"$output"
+          grep -F 'two-vCPU checkpoint restore: shared=true first-stack=true second-stack=true vcpu0=true vcpu1=true' <<<"$output"
+          grep -F 'two-vCPU checkpoint first proof: [48]' <<<"$output"
+          grep -F 'two-vCPU checkpoint second proof: [49]' <<<"$output"
+
+          first_capture="$(grep -F 'two-vCPU checkpoint first capture: vCPU 0 exit Hlt: rip=0x1000b, rflags=' <<<"$output")"
+          first_capture_rflags_hex="${first_capture##*rflags=}"
+          [[ "$first_capture_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          first_capture_rflags=$((first_capture_rflags_hex))
+          (( (first_capture_rflags & 0x2) == 0x2 ))
+
+          second_capture="$(grep -F 'two-vCPU checkpoint second capture: vCPU 1 exit Hlt: rip=0x11003, rflags=' <<<"$output")"
+          second_capture_rflags_hex="${second_capture##*rflags=}"
+          [[ "$second_capture_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          second_capture_rflags=$((second_capture_rflags_hex))
+          (( (second_capture_rflags & 0x2) == 0x2 ))
+
+          first_terminal="$(grep -F 'two-vCPU checkpoint first terminal: vCPU 0 exit Hlt: rip=0x10020, rflags=' <<<"$output")"
+          first_terminal_rflags_hex="${first_terminal##*rflags=}"
+          [[ "$first_terminal_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          first_terminal_rflags=$((first_terminal_rflags_hex))
+          (( (first_terminal_rflags & 0x2) == 0x2 ))
+
+          second_terminal="$(grep -F 'two-vCPU checkpoint second terminal: vCPU 1 exit Hlt: rip=0x11018, rflags=' <<<"$output")"
+          second_terminal_rflags_hex="${second_terminal##*rflags=}"
+          [[ "$second_terminal_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          second_terminal_rflags=$((second_terminal_rflags_hex))
+          (( (second_terminal_rflags & 0x2) == 0x2 ))

@@ -2,6 +2,8 @@ mod checkpoint;
 pub use checkpoint::*;
 mod page_set;
 pub use page_set::*;
+mod two_vcpu_checkpoint;
+pub use two_vcpu_checkpoint::*;
 
 #[path = "vcpu/snapshot_verify.rs"]
 mod component_snapshot_verify;
