@@ -35,7 +35,8 @@ jobs:
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin timer-task-preemption)"
+          cargo build --quiet --bin timer-task-preemption
+          output="$(timeout 30s target/debug/timer-task-preemption)"
           printf '%s\n' "$output"
 
           grep -F 'timer task GSI: 0' <<<"$output"

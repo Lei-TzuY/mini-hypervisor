@@ -1,0 +1,58 @@
+name: Strict KVM bounded checkpoint restore
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/**'
+      - 'src/bin/task-checkpoint-restore.rs'
+      - 'tests/task_checkpoint_restore_guest.rs'
+      - 'src/kvm/**'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/**'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/execution.rs'
+      - 'src/vmexit.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/task-checkpoint-restore.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  task-checkpoint-restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build bounded checkpoint restore proof
+        run: cargo build --quiet --bin task-checkpoint-restore
+      - name: Strict KVM bounded checkpoint restore proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/task-checkpoint-restore)"
+          printf '%s\n' "$output"
+
+          grep -F 'checkpoint capture: vCPU 0 exit Hlt: rip=0x10009, rflags=' <<<"$output"
+          grep -F 'checkpoint corruption: page_exact=false vcpu_exact=false' <<<"$output"
+          grep -F 'checkpoint restore: page_exact=true vcpu_exact=true' <<<"$output"
+          grep -F 'checkpoint marker: 0x5a' <<<"$output"
+          grep -F 'checkpoint proof: [82]' <<<"$output"
+          grep -F 'checkpoint terminal: vCPU 0 exit Hlt: rip=0x1000e, rflags=' <<<"$output"
+
+          capture="$(grep -F 'checkpoint capture: vCPU 0 exit Hlt: rip=0x10009, rflags=' <<<"$output")"
+          capture_hex="${capture##*rflags=}"
+          [[ "$capture_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          capture_rflags=$((capture_hex))
+          (( (capture_rflags & 0x2) == 0x2 ))
+
+          terminal="$(grep -F 'checkpoint terminal: vCPU 0 exit Hlt: rip=0x1000e, rflags=' <<<"$output")"
+          terminal_hex="${terminal##*rflags=}"
+          [[ "$terminal_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          terminal_rflags=$((terminal_hex))
+          (( (terminal_rflags & 0x2) == 0x2 ))
