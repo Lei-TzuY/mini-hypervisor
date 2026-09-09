@@ -519,7 +519,10 @@ mod tests {
             VcpuExit::from_raw(exception::KVM_EXIT_EXCEPTION),
             VcpuExit::Exception
         );
-        assert_eq!(VcpuExit::from_raw(guest_debug::KVM_EXIT_DEBUG), VcpuExit::Debug);
+        assert_eq!(
+            VcpuExit::from_raw(guest_debug::KVM_EXIT_DEBUG),
+            VcpuExit::Debug
+        );
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_HLT), VcpuExit::Hlt);
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_IO), VcpuExit::Io);
         assert_eq!(VcpuExit::from_raw(mmio::KVM_EXIT_MMIO), VcpuExit::Mmio);
