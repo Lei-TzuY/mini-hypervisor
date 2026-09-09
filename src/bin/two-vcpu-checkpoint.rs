@@ -8,8 +8,14 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     match run_two_vcpu_checkpoint_guest() {
         Ok(result) => {
-            println!("two-vCPU checkpoint first capture: {}", result.first_capture());
-            println!("two-vCPU checkpoint second capture: {}", result.second_capture());
+            println!(
+                "two-vCPU checkpoint first capture: {}",
+                result.first_capture()
+            );
+            println!(
+                "two-vCPU checkpoint second capture: {}",
+                result.second_capture()
+            );
             println!(
                 "two-vCPU checkpoint pages: {:#x},{:#x},{:#x}",
                 TWO_VCPU_CHECKPOINT_SHARED_PAGE.get(),
@@ -62,10 +68,22 @@ fn main() -> ExitCode {
                     .vcpu_exact(TWO_VCPU_CHECKPOINT_SECOND_ID)
                     .expect("second vCPU belongs to the checkpoint")
             );
-            println!("two-vCPU checkpoint first proof: {:?}", result.first_proof());
-            println!("two-vCPU checkpoint second proof: {:?}", result.second_proof());
-            println!("two-vCPU checkpoint first terminal: {}", result.first_terminal());
-            println!("two-vCPU checkpoint second terminal: {}", result.second_terminal());
+            println!(
+                "two-vCPU checkpoint first proof: {:?}",
+                result.first_proof()
+            );
+            println!(
+                "two-vCPU checkpoint second proof: {:?}",
+                result.second_proof()
+            );
+            println!(
+                "two-vCPU checkpoint first terminal: {}",
+                result.first_terminal()
+            );
+            println!(
+                "two-vCPU checkpoint second terminal: {}",
+                result.second_terminal()
+            );
             ExitCode::SUCCESS
         }
         Err(error) => {
