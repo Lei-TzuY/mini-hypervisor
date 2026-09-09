@@ -8,13 +8,13 @@ use crate::loader::FlatGuestImage;
 use crate::long_mode::{LongModeBootLayout, LONG_MODE_IDENTITY_MAP_SIZE};
 use crate::portio::{PortIoBus, PortIoService, DEBUG_PORT};
 use crate::vcpu::{PortIoDirection, PortIoExit, VcpuExit};
-use crate::vmexit::VmExitReport;
 
 pub const CONTROLLER_CHECKPOINT_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x10000);
 pub const CONTROLLER_CHECKPOINT_PAGE: GuestPhysAddr = GuestPhysAddr::new(0x30000);
-pub const CONTROLLER_CHECKPOINT_CAPTURE_RIP: u64 = 0x1002e;
+pub const CONTROLLER_CHECKPOINT_CAPTURE_RIP: u64 = 0x10032;
 pub const CONTROLLER_CHECKPOINT_PROOF: &[u8; 4] = b"AIMD";
 pub const CONTROLLER_CHECKPOINT_MARKER: u8 = b'A';
+const CONTROLLER_CHECKPOINT_CAPTURE_ARM_BYTE: u8 = b'C';
 const CONTROLLER_CHECKPOINT_CORRUPT_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x12000);
 const CONTROLLER_CHECKPOINT_CORRUPT_STACK: u64 = 0x1fdff8;
 const APIC_SPIV_OFFSET: usize = 0x0f0;
@@ -24,7 +24,7 @@ const APIC_LVT_MASKED: u32 = 1 << 16;
 const APIC_LVT_DELIVERY_MODE_MASK: u32 = 0x700;
 const APIC_LVT_DELIVERY_MODE_EXTINT: u32 = 0x700;
 
-const CONTROLLER_CHECKPOINT_GUEST_BYTES: [u8; 66] = [
+const CONTROLLER_CHECKPOINT_GUEST_BYTES: [u8; 70] = [
     0xfa,
     0xb0, 0x11, 0xe6, 0x20, 0xe6, 0xa0,
     0xb0, 0x40, 0xe6, 0x21,
@@ -35,7 +35,8 @@ const CONTROLLER_CHECKPOINT_GUEST_BYTES: [u8; 66] = [
     0xb0, 0xfe, 0xe6, 0x21,
     0xb0, 0xff, 0xe6, 0xa1,
     0xc6, 0x04, 0x25, 0x00, 0x00, 0x03, 0x00, CONTROLLER_CHECKPOINT_MARKER,
-    0xf4,
+    0xb0, CONTROLLER_CHECKPOINT_CAPTURE_ARM_BYTE, 0xe6, 0xe9,
+    0x90,
     0xfb,
     0x90,
     0x8a, 0x04, 0x25, 0x00, 0x00, 0x03, 0x00,
@@ -50,6 +51,34 @@ const CONTROLLER_CHECKPOINT_HANDLER_BYTES: [u8; 10] = [
     0xb0, 0x20, 0xe6, 0x20,
     0x48, 0xcf,
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControllerCheckpointCapture {
+    rip: u64,
+    rflags: u64,
+}
+
+impl ControllerCheckpointCapture {
+    #[must_use]
+    pub const fn rip(self) -> u64 {
+        self.rip
+    }
+
+    #[must_use]
+    pub const fn rflags(self) -> u64 {
+        self.rflags
+    }
+}
+
+impl std::fmt::Display for ControllerCheckpointCapture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "KVM_EXIT_DEBUG: rip={:#x}, rflags={:#x}",
+            self.rip, self.rflags
+        )
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundedControllerCheckpoint {
@@ -185,7 +214,7 @@ impl BoundedControllerCheckpointComparison {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControllerCheckpointGuestResult {
-    capture: VmExitReport,
+    capture: ControllerCheckpointCapture,
     corruption: BoundedControllerCheckpointComparison,
     restored: BoundedControllerCheckpointComparison,
     captured_pic_imr: u8,
@@ -199,25 +228,54 @@ pub struct ControllerCheckpointGuestResult {
 
 impl ControllerCheckpointGuestResult {
     #[must_use]
-    pub const fn capture(&self) -> VmExitReport { self.capture }
+    pub const fn capture(&self) -> ControllerCheckpointCapture {
+        self.capture
+    }
+
     #[must_use]
-    pub const fn corruption(&self) -> &BoundedControllerCheckpointComparison { &self.corruption }
+    pub const fn corruption(&self) -> &BoundedControllerCheckpointComparison {
+        &self.corruption
+    }
+
     #[must_use]
-    pub const fn restored(&self) -> &BoundedControllerCheckpointComparison { &self.restored }
+    pub const fn restored(&self) -> &BoundedControllerCheckpointComparison {
+        &self.restored
+    }
+
     #[must_use]
-    pub const fn captured_pic_imr(&self) -> u8 { self.captured_pic_imr }
+    pub const fn captured_pic_imr(&self) -> u8 {
+        self.captured_pic_imr
+    }
+
     #[must_use]
-    pub const fn captured_lapic_spiv(&self) -> u32 { self.captured_lapic_spiv }
+    pub const fn captured_lapic_spiv(&self) -> u32 {
+        self.captured_lapic_spiv
+    }
+
     #[must_use]
-    pub const fn captured_lapic_lint0(&self) -> u32 { self.captured_lapic_lint0 }
+    pub const fn captured_lapic_lint0(&self) -> u32 {
+        self.captured_lapic_lint0
+    }
+
     #[must_use]
-    pub const fn armed_rflags(&self) -> u64 { self.armed_rflags }
+    pub const fn armed_rflags(&self) -> u64 {
+        self.armed_rflags
+    }
+
     #[must_use]
-    pub const fn completion_rflags(&self) -> u64 { self.completion_rflags }
+    pub const fn completion_rflags(&self) -> u64 {
+        self.completion_rflags
+    }
+
     #[must_use]
-    pub fn io_exits(&self) -> &[PortIoExit] { &self.io_exits }
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
+
     #[must_use]
-    pub fn proof(&self) -> &[u8] { &self.proof }
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
 }
 
 pub fn run_controller_checkpoint_guest() -> Result<ControllerCheckpointGuestResult, Error> {
@@ -260,7 +318,7 @@ pub fn run_controller_checkpoint_guest() -> Result<ControllerCheckpointGuestResu
     let msr_policy = GuestMsrAccessPolicy::from_host(backend.host_msr_indices(), &[])
         .expect("empty controller checkpoint MSR policy is valid by construction");
 
-    let capture = controller_run_to_quiescent_hlt(&mut vcpu)?;
+    let capture = controller_run_to_quiescent_debug(&mut vcpu)?;
     let checkpoint = BoundedControllerCheckpoint::capture(
         &vcpu,
         &vm,
@@ -379,26 +437,54 @@ where
     Ok(())
 }
 
-fn controller_run_to_quiescent_hlt(vcpu: &mut Vcpu) -> Result<VmExitReport, Error> {
-    let mut no_io = PortIoBus::empty();
-    let execution = crate::execution::run_vcpu_until_stopped(vcpu, &mut no_io, 1)?;
-    if !execution.io_exits().is_empty()
-        || execution.report().exit() != VcpuExit::Hlt
-        || execution.report().rip() != CONTROLLER_CHECKPOINT_CAPTURE_RIP
-        || execution.report().rflags() & 0x2 != 0x2
-        || execution.report().rflags() & X86_RFLAGS_INTERRUPT_ENABLE != 0
-    {
+fn controller_run_to_quiescent_debug(
+    vcpu: &mut Vcpu,
+) -> Result<ControllerCheckpointCapture, Error> {
+    let mut capture_io = PortIoBus::with_debug_port();
+    controller_run_expected_debug_output(
+        vcpu,
+        &mut capture_io,
+        CONTROLLER_CHECKPOINT_CAPTURE_ARM_BYTE,
+        "controller checkpoint capture arm barrier",
+    )?;
+
+    vcpu.set_guest_single_step(true)?;
+    let exit_result = vcpu.run_once();
+    let disable_result = vcpu.set_guest_single_step(false);
+    let exit = match (exit_result, disable_result) {
+        (Ok(exit), Ok(())) => exit,
+        (Err(error), _) => return Err(error),
+        (Ok(_), Err(error)) => return Err(error),
+    };
+    if exit != VcpuExit::Debug {
         return Err(page_set_error(
-            "controller checkpoint quiescent capture boundary",
+            "controller checkpoint quiescent debug boundary",
             format!(
-                "expected CLI HLT at rip={:#x}, got {} with {} I/O exits",
-                CONTROLLER_CHECKPOINT_CAPTURE_RIP,
-                execution.report(),
-                execution.io_exits().len()
+                "expected KVM_EXIT_DEBUG reason {}, got {}",
+                VcpuExit::Debug.reason(),
+                exit.reason()
             ),
         ));
     }
-    Ok(execution.report())
+
+    let registers = vcpu.registers()?;
+    if registers.rip != CONTROLLER_CHECKPOINT_CAPTURE_RIP
+        || registers.rflags & 0x2 != 0x2
+        || registers.rflags & X86_RFLAGS_INTERRUPT_ENABLE != 0
+    {
+        return Err(page_set_error(
+            "controller checkpoint quiescent debug boundary",
+            format!(
+                "expected IF-clear debug boundary at rip={:#x}, got rip={:#x}, rflags={:#x}",
+                CONTROLLER_CHECKPOINT_CAPTURE_RIP, registers.rip, registers.rflags
+            ),
+        ));
+    }
+
+    Ok(ControllerCheckpointCapture {
+        rip: registers.rip,
+        rflags: registers.rflags,
+    })
 }
 
 fn controller_require_capture_contract(checkpoint: &BoundedControllerCheckpoint) -> Result<(), Error> {
@@ -542,14 +628,18 @@ mod controller_checkpoint_tests {
 
     #[test]
     fn deterministic_guest_places_capture_and_resume_contract_exactly() {
-        assert_eq!(CONTROLLER_CHECKPOINT_GUEST_BYTES.len(), 66);
-        assert_eq!(CONTROLLER_CHECKPOINT_GUEST_BYTES[45], 0xf4);
+        assert_eq!(CONTROLLER_CHECKPOINT_GUEST_BYTES.len(), 70);
+        assert_eq!(
+            &CONTROLLER_CHECKPOINT_GUEST_BYTES[45..49],
+            &[0xb0, CONTROLLER_CHECKPOINT_CAPTURE_ARM_BYTE, 0xe6, 0xe9]
+        );
+        assert_eq!(CONTROLLER_CHECKPOINT_GUEST_BYTES[49], 0x90);
         assert_eq!(
             CONTROLLER_CHECKPOINT_CAPTURE_RIP,
-            CONTROLLER_CHECKPOINT_ENTRY.get() + 46
+            CONTROLLER_CHECKPOINT_ENTRY.get() + 50
         );
-        assert_eq!(&CONTROLLER_CHECKPOINT_GUEST_BYTES[46..48], &[0xfb, 0x90]);
-        assert_eq!(CONTROLLER_CHECKPOINT_GUEST_BYTES[65], 0xf4);
+        assert_eq!(&CONTROLLER_CHECKPOINT_GUEST_BYTES[50..52], &[0xfb, 0x90]);
+        assert_eq!(CONTROLLER_CHECKPOINT_GUEST_BYTES[69], 0xf4);
         assert_eq!(CONTROLLER_CHECKPOINT_HANDLER_BYTES.len(), 10);
         assert_eq!(CONTROLLER_CHECKPOINT_PROOF, b"AIMD");
     }
