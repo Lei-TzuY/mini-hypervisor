@@ -25,12 +25,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build guest-originated AP long-mode IPI proof
+        run: cargo build --quiet --bin two-vcpu-ap-long-mode-ipi
       - name: Strict KVM guest-originated AP long-mode IPI proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin two-vcpu-ap-long-mode-ipi)"
+          output="$(timeout 30s target/debug/two-vcpu-ap-long-mode-ipi)"
           printf '%s\n' "$output"
 
           grep -F 'AP IPI SIPI vector: 0x8' <<<"$output"
