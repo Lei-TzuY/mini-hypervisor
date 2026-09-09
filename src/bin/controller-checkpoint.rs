@@ -31,7 +31,10 @@ fn main() -> ExitCode {
                 result.restored().master_pic_exact(),
                 result.restored().lapic_exact()
             );
-            println!("controller checkpoint PIC IMR: {:#x}", result.captured_pic_imr());
+            println!(
+                "controller checkpoint PIC IMR: {:#x}",
+                result.captured_pic_imr()
+            );
             println!(
                 "controller checkpoint LAPIC SPIV: {:#x}",
                 result.captured_lapic_spiv()
