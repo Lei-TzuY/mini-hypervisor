@@ -4,8 +4,8 @@ use mini_hypervisor::error::{Error, HostEnvironmentError};
 use mini_hypervisor::interrupt::X86_RFLAGS_INTERRUPT_ENABLE;
 use mini_hypervisor::portio::DEBUG_PORT;
 use mini_hypervisor::task::{
-    run_bounded_wait_channel_guest, RunnableTaskId, TaskRunState, TASK_A_INITIAL_RSP,
-    TASK_A_R12, TASK_A_SAVED_RIP, TASK_B_INITIAL_RSP, TASK_B_SAVED_R12, TASK_B_SAVED_RIP,
+    run_bounded_wait_channel_guest, RunnableTaskId, TaskRunState, TASK_A_INITIAL_RSP, TASK_A_R12,
+    TASK_A_SAVED_RIP, TASK_B_INITIAL_RSP, TASK_B_SAVED_R12, TASK_B_SAVED_RIP,
     TASK_CONTEXT_PAGE_ADDR, TASK_TERMINAL_USER_RIP, TASK_WAIT_CHANNEL_A, TASK_WAIT_CHANNEL_NONE,
     TASK_WAIT_CHANNEL_PROOF, TASK_WAIT_WRONG_CHANNEL, TASK_WAKE_GSI, TASK_WAKE_TIMER_VECTOR,
 };
