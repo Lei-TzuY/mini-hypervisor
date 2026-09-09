@@ -594,3 +594,5 @@ mod tests {
 
 mod preemption;
 pub use preemption::*;
+mod wakeup;
+pub use wakeup::*;
