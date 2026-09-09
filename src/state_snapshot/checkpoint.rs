@@ -15,6 +15,8 @@ use std::io;
 pub const BOUNDED_CHECKPOINT_PAGE: GuestPhysAddr = GuestPhysAddr::new(0x30000);
 pub const BOUNDED_CHECKPOINT_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x10000);
 pub const BOUNDED_CHECKPOINT_STACK: u64 = 0x1ff000;
+pub const BOUNDED_CHECKPOINT_CORRUPT_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x12000);
+pub const BOUNDED_CHECKPOINT_CORRUPT_STACK: u64 = 0x1fe000;
 pub const BOUNDED_CHECKPOINT_MARKER: u8 = 0x5a;
 pub const BOUNDED_CHECKPOINT_CORRUPTION: u8 = 0xa5;
 pub const BOUNDED_CHECKPOINT_PROOF: &[u8; 1] = b"R";
@@ -201,6 +203,12 @@ pub fn run_bounded_checkpoint_guest(
     let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE)?;
     let layout = LongModeBootLayout::new(memory.region(), image.entry(), BOUNDED_CHECKPOINT_STACK)
         .expect("fixed bounded checkpoint layout remains valid");
+    let corrupt_layout = LongModeBootLayout::new(
+        memory.region(),
+        BOUNDED_CHECKPOINT_CORRUPT_ENTRY,
+        BOUNDED_CHECKPOINT_CORRUPT_STACK,
+    )
+    .expect("fixed bounded checkpoint corruption layout remains valid");
     layout.install_page_tables(&mut memory)?;
     image.load(&mut memory)?;
     vm.register_guest_memory(memory)?;
@@ -247,7 +255,7 @@ pub fn run_bounded_checkpoint_guest(
     vm.guest_memory_mut()
         .expect("registered checkpoint memory remains VM-owned")
         .write(BOUNDED_CHECKPOINT_PAGE, &corrupt_page)?;
-    vcpu.initialize_real_mode(GuestPhysAddr::new(0x100))?;
+    vcpu.initialize_long_mode(&corrupt_layout)?;
     let corruption = checkpoint.verify(
         &vcpu,
         vm.guest_memory()
@@ -385,5 +393,7 @@ mod tests {
             BOUNDED_CHECKPOINT_TERMINAL_RIP,
             BOUNDED_CHECKPOINT_ENTRY.get() + 14
         );
+        assert_ne!(BOUNDED_CHECKPOINT_CORRUPT_ENTRY, BOUNDED_CHECKPOINT_ENTRY);
+        assert_ne!(BOUNDED_CHECKPOINT_CORRUPT_STACK, BOUNDED_CHECKPOINT_STACK);
     }
 }
