@@ -71,8 +71,14 @@ fn main() -> ExitCode {
                 result.task_a_stack_marker(),
                 result.task_b_stack_marker()
             );
-            println!("task queue A context PTE: {:#x}", result.first_context_pte());
-            println!("task queue B context PTE: {:#x}", result.second_context_pte());
+            println!(
+                "task queue A context PTE: {:#x}",
+                result.first_context_pte()
+            );
+            println!(
+                "task queue B context PTE: {:#x}",
+                result.second_context_pte()
+            );
             println!("task queue proof: {:?}", result.proof());
             ExitCode::SUCCESS
         }

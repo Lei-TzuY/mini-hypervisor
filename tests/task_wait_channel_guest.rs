@@ -4,10 +4,10 @@ use mini_hypervisor::error::{Error, HostEnvironmentError};
 use mini_hypervisor::interrupt::X86_RFLAGS_INTERRUPT_ENABLE;
 use mini_hypervisor::portio::DEBUG_PORT;
 use mini_hypervisor::task::{
-    run_bounded_runnable_queue_guest, RunnableTaskId, TaskRunState, TASK_A_INITIAL_RSP, TASK_A_R12,
+    run_bounded_wait_channel_guest, RunnableTaskId, TaskRunState, TASK_A_INITIAL_RSP, TASK_A_R12,
     TASK_A_SAVED_RIP, TASK_B_INITIAL_RSP, TASK_B_SAVED_R12, TASK_B_SAVED_RIP,
-    TASK_CONTEXT_PAGE_ADDR, TASK_RUNNABLE_QUEUE_PROOF, TASK_TERMINAL_USER_RIP, TASK_WAKE_GSI,
-    TASK_WAKE_TIMER_VECTOR,
+    TASK_CONTEXT_PAGE_ADDR, TASK_TERMINAL_USER_RIP, TASK_WAIT_CHANNEL_A, TASK_WAIT_CHANNEL_NONE,
+    TASK_WAIT_CHANNEL_PROOF, TASK_WAIT_WRONG_CHANNEL, TASK_WAKE_GSI, TASK_WAKE_TIMER_VECTOR,
 };
 use mini_hypervisor::vcpu::PortIoDirection;
 
@@ -21,8 +21,8 @@ const APIC_LVT_DELIVERY_MODE_MASK: u32 = 0x700;
 const APIC_LVT_DELIVERY_MODE_EXTINT: u32 = 0x700;
 
 #[test]
-fn bounded_queue_skips_blocked_a_then_selects_woken_a() {
-    match run_bounded_runnable_queue_guest(VmConfig::default()) {
+fn bounded_wait_channel_rejects_wrong_wake_then_requeues_correctly_woken_a() {
+    match run_bounded_wait_channel_guest(VmConfig::default()) {
         Ok(result) => {
             assert_eq!(result.gsi(), TASK_WAKE_GSI);
             assert_eq!(result.vector(), TASK_WAKE_TIMER_VECTOR);
@@ -39,8 +39,30 @@ fn bounded_queue_skips_blocked_a_then_selects_woken_a() {
             assert_eq!(
                 result.armed_rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
                 0,
-                "P arm barrier must still have IF clear before sti;hlt"
+                "P arm barrier must retain IF clear before sti;hlt"
             );
+
+            let blocked = result.blocked_wait();
+            assert_eq!(blocked.task_a_state(), TaskRunState::Blocked);
+            assert_eq!(blocked.owner(), TASK_WAIT_CHANNEL_A);
+            assert_eq!(blocked.mismatch_count(), 0);
+            assert_eq!(blocked.wake_count(), 0);
+            assert_eq!(blocked.last_attempt(), TASK_WAIT_CHANNEL_NONE);
+
+            let mismatch = result.mismatch_wait();
+            assert_eq!(mismatch.task_a_state(), TaskRunState::Blocked);
+            assert_eq!(mismatch.owner(), TASK_WAIT_CHANNEL_A);
+            assert_eq!(mismatch.mismatch_count(), 1);
+            assert_eq!(mismatch.wake_count(), 0);
+            assert_eq!(mismatch.last_attempt(), TASK_WAIT_WRONG_CHANNEL);
+
+            for snapshot in [result.wake_wait(), result.final_wait()] {
+                assert_eq!(snapshot.task_a_state(), TaskRunState::Runnable);
+                assert_eq!(snapshot.owner(), TASK_WAIT_CHANNEL_NONE);
+                assert_eq!(snapshot.mismatch_count(), 1);
+                assert_eq!(snapshot.wake_count(), 1);
+                assert_eq!(snapshot.last_attempt(), TASK_WAIT_CHANNEL_A);
+            }
 
             let first = result.first_selection();
             assert_eq!(first.entry0(), RunnableTaskId::A);
@@ -60,12 +82,12 @@ fn bounded_queue_skips_blocked_a_then_selects_woken_a() {
             assert_eq!(second.task_a_state(), TaskRunState::Runnable);
             assert_eq!(second.task_b_state(), TaskRunState::Runnable);
 
-            assert_eq!(result.proof(), TASK_RUNNABLE_QUEUE_PROOF);
-            assert_eq!(result.io_exits().len(), TASK_RUNNABLE_QUEUE_PROOF.len());
+            assert_eq!(result.proof(), TASK_WAIT_CHANNEL_PROOF);
+            assert_eq!(result.io_exits().len(), TASK_WAIT_CHANNEL_PROOF.len());
             for (io, expected) in result
                 .io_exits()
                 .iter()
-                .zip(TASK_RUNNABLE_QUEUE_PROOF.iter().copied())
+                .zip(TASK_WAIT_CHANNEL_PROOF.iter().copied())
             {
                 assert_eq!(io.direction(), PortIoDirection::Out);
                 assert_eq!(io.port(), DEBUG_PORT);
@@ -110,9 +132,9 @@ fn bounded_queue_skips_blocked_a_then_selects_woken_a() {
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
             eprintln!(
-                "skipping runnable-queue integration assertion: /dev/kvm is unavailable to this runner"
+                "skipping wait-channel integration assertion: /dev/kvm is unavailable to this runner"
             );
         }
-        Err(error) => panic!("bounded runnable-queue guest execution failed unexpectedly: {error}"),
+        Err(error) => panic!("bounded wait-channel guest execution failed unexpectedly: {error}"),
     }
 }

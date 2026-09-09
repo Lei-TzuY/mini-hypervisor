@@ -596,5 +596,8 @@ mod preemption;
 pub use preemption::*;
 mod wakeup;
 pub use wakeup::*;
-mod runnable_queue;
+mod runnable_queue {
+    include!("task/runnable_queue.rs");
+    include!("task/wait_channel.rs");
+}
 pub use runnable_queue::*;
