@@ -1,6 +1,6 @@
 use super::{
-    BoundedCheckpointPage, BoundedPageSetCheckpointComparison, BoundedVcpuPageSetCheckpoint,
-    VcpuStateSnapshot, VcpuStateSnapshotComparison,
+    BoundedCheckpointPage, BoundedCheckpointPageComparison, BoundedPageSetCheckpointComparison,
+    BoundedVcpuPageSetCheckpoint, VcpuStateSnapshot, VcpuStateSnapshotComparison,
 };
 use crate::error::{Error, HostEnvironmentError};
 use crate::execution::run_vcpu_until_stopped;
@@ -39,74 +39,37 @@ pub const TWO_VCPU_CHECKPOINT_OWNERSHIP_SET: [GuestPhysAddr; 3] = [
 ];
 
 const FIRST_GUEST_BYTES: [u8; 37] = [
-    0xc6,
-    0x04,
-    0x25,
-    0x00,
-    0x00,
-    0x03,
-    0x00,
-    TWO_VCPU_CHECKPOINT_SHARED_MARKER, // mov byte [0x30000], 'S'
-    0x6a,
-    TWO_VCPU_CHECKPOINT_FIRST_MARKER, // push '0'
-    0xf4,                             // coordinated capture HLT
-    0x58,                             // pop rax => restored '0'
-    0x3c,
-    TWO_VCPU_CHECKPOINT_FIRST_MARKER, // cmp al, '0'
-    0x75,
-    0x10, // jne failure
-    0x8a,
-    0x04,
-    0x25,
-    0x00,
-    0x00,
-    0x03,
-    0x00, // mov al, [0x30000]
-    0x3c,
-    TWO_VCPU_CHECKPOINT_SHARED_MARKER,
-    0x75,
-    0x05, // jne failure
-    0xb0,
-    TWO_VCPU_CHECKPOINT_FIRST_MARKER,
-    0xe6,
-    0xe9, // out 0xe9, al => 0
-    0xf4, // success terminal HLT
-    0xb0,
-    b'F',
-    0xe6,
-    0xe9,
+    0xc6, 0x04, 0x25, 0x00, 0x00, 0x03, 0x00, TWO_VCPU_CHECKPOINT_SHARED_MARKER,
+    0x6a, TWO_VCPU_CHECKPOINT_FIRST_MARKER,
+    0xf4,
+    0x58,
+    0x3c, TWO_VCPU_CHECKPOINT_FIRST_MARKER,
+    0x75, 0x10,
+    0x8a, 0x04, 0x25, 0x00, 0x00, 0x03, 0x00,
+    0x3c, TWO_VCPU_CHECKPOINT_SHARED_MARKER,
+    0x75, 0x05,
+    0xb0, TWO_VCPU_CHECKPOINT_FIRST_MARKER,
+    0xe6, 0xe9,
+    0xf4,
+    0xb0, b'F',
+    0xe6, 0xe9,
     0xf4,
 ];
 
 const SECOND_GUEST_BYTES: [u8; 29] = [
-    0x6a,
-    TWO_VCPU_CHECKPOINT_SECOND_MARKER, // push '1'
-    0xf4,                              // coordinated capture HLT
-    0x58,                              // pop rax => restored '1'
-    0x3c,
-    TWO_VCPU_CHECKPOINT_SECOND_MARKER,
-    0x75,
-    0x10, // jne failure
-    0x8a,
-    0x04,
-    0x25,
-    0x00,
-    0x00,
-    0x03,
-    0x00, // mov al, [0x30000]
-    0x3c,
-    TWO_VCPU_CHECKPOINT_SHARED_MARKER,
-    0x75,
-    0x05, // jne failure
-    0xb0,
-    TWO_VCPU_CHECKPOINT_SECOND_MARKER,
-    0xe6,
-    0xe9, // out 0xe9, al => 1
-    0xf4, // success terminal HLT
-    0xb0,
-    b'F',
-    0xe6,
-    0xe9,
+    0x6a, TWO_VCPU_CHECKPOINT_SECOND_MARKER,
+    0xf4,
+    0x58,
+    0x3c, TWO_VCPU_CHECKPOINT_SECOND_MARKER,
+    0x75, 0x10,
+    0x8a, 0x04, 0x25, 0x00, 0x00, 0x03, 0x00,
+    0x3c, TWO_VCPU_CHECKPOINT_SHARED_MARKER,
+    0x75, 0x05,
+    0xb0, TWO_VCPU_CHECKPOINT_SECOND_MARKER,
+    0xe6, 0xe9,
+    0xf4,
+    0xb0, b'F',
+    0xe6, 0xe9,
     0xf4,
 ];
 
@@ -126,15 +89,21 @@ impl BoundedTwoVcpuCheckpoint {
         memory: &GuestMemory,
         page_addresses: &[GuestPhysAddr],
     ) -> Result<Self, Error> {
-        let (primary, secondary) = canonical_vcpu_pair(first, second)?;
-        let primary =
-            BoundedVcpuPageSetCheckpoint::capture(primary, msr_policy, memory, page_addresses)?;
-        let secondary_snapshot = secondary.capture_state_snapshot(msr_policy)?;
+        let (primary_vcpu, secondary_vcpu) = canonical_vcpu_pair(first, second)?;
+        let primary_id = primary_vcpu.id();
+        let secondary_id = secondary_vcpu.id();
+        let primary = BoundedVcpuPageSetCheckpoint::capture(
+            primary_vcpu,
+            msr_policy,
+            memory,
+            page_addresses,
+        )?;
+        let secondary = secondary_vcpu.capture_state_snapshot(msr_policy)?;
         Ok(Self {
-            primary_id: primary.vcpu().registers().id(),
+            primary_id,
             primary,
-            secondary_id: secondary.id(),
-            secondary: secondary_snapshot,
+            secondary_id,
+            secondary,
         })
     }
 
@@ -209,7 +178,7 @@ pub struct BoundedTwoVcpuCheckpointComparison {
 
 impl BoundedTwoVcpuCheckpointComparison {
     #[must_use]
-    pub fn pages(&self) -> &[super::BoundedCheckpointPageComparison] {
+    pub fn pages(&self) -> &[BoundedCheckpointPageComparison] {
         self.primary.pages()
     }
 
@@ -252,49 +221,27 @@ pub struct TwoVcpuCheckpointGuestResult {
 
 impl TwoVcpuCheckpointGuestResult {
     #[must_use]
-    pub const fn first_capture(&self) -> VmExitReport {
-        self.first_capture
-    }
+    pub const fn first_capture(&self) -> VmExitReport { self.first_capture }
     #[must_use]
-    pub const fn second_capture(&self) -> VmExitReport {
-        self.second_capture
-    }
+    pub const fn second_capture(&self) -> VmExitReport { self.second_capture }
     #[must_use]
-    pub fn captured_pages(&self) -> &[GuestPhysAddr] {
-        &self.captured_pages
-    }
+    pub fn captured_pages(&self) -> &[GuestPhysAddr] { &self.captured_pages }
     #[must_use]
-    pub const fn corruption(&self) -> &BoundedTwoVcpuCheckpointComparison {
-        &self.corruption
-    }
+    pub const fn corruption(&self) -> &BoundedTwoVcpuCheckpointComparison { &self.corruption }
     #[must_use]
-    pub const fn restored(&self) -> &BoundedTwoVcpuCheckpointComparison {
-        &self.restored
-    }
+    pub const fn restored(&self) -> &BoundedTwoVcpuCheckpointComparison { &self.restored }
     #[must_use]
-    pub fn first_io_exits(&self) -> &[PortIoExit] {
-        &self.first_io_exits
-    }
+    pub fn first_io_exits(&self) -> &[PortIoExit] { &self.first_io_exits }
     #[must_use]
-    pub fn second_io_exits(&self) -> &[PortIoExit] {
-        &self.second_io_exits
-    }
+    pub fn second_io_exits(&self) -> &[PortIoExit] { &self.second_io_exits }
     #[must_use]
-    pub fn first_proof(&self) -> &[u8] {
-        &self.first_proof
-    }
+    pub fn first_proof(&self) -> &[u8] { &self.first_proof }
     #[must_use]
-    pub fn second_proof(&self) -> &[u8] {
-        &self.second_proof
-    }
+    pub fn second_proof(&self) -> &[u8] { &self.second_proof }
     #[must_use]
-    pub const fn first_terminal(&self) -> VmExitReport {
-        self.first_terminal
-    }
+    pub const fn first_terminal(&self) -> VmExitReport { self.first_terminal }
     #[must_use]
-    pub const fn second_terminal(&self) -> VmExitReport {
-        self.second_terminal
-    }
+    pub const fn second_terminal(&self) -> VmExitReport { self.second_terminal }
 }
 
 pub fn run_two_vcpu_checkpoint_guest() -> Result<TwoVcpuCheckpointGuestResult, Error> {
@@ -436,10 +383,7 @@ pub fn run_two_vcpu_checkpoint_guest() -> Result<TwoVcpuCheckpointGuestResult, E
     })
 }
 
-fn canonical_vcpu_pair<'a>(
-    first: &'a Vcpu,
-    second: &'a Vcpu,
-) -> Result<(&'a Vcpu, &'a Vcpu), Error> {
+fn canonical_vcpu_pair<'a>(first: &'a Vcpu, second: &'a Vcpu) -> Result<(&'a Vcpu, &'a Vcpu), Error> {
     if first.id() == second.id() {
         return Err(two_vcpu_checkpoint_error(
             first.id(),
@@ -595,10 +539,7 @@ fn require_hlt_report(
         return Err(two_vcpu_checkpoint_error(
             id,
             operation,
-            format!(
-                "expected vCPU {} HLT at rip={expected_rip:#x}, got {report}",
-                id.get()
-            ),
+            format!("expected vCPU {} HLT at rip={expected_rip:#x}, got {report}", id.get()),
         ));
     }
     Ok(())
@@ -621,7 +562,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deterministic_guests_have_distinct_quiescent_and_terminal_boundaries() {
+    fn deterministic_guests_bind_two_quiescent_boundaries_to_two_resume_proofs() {
         assert_eq!(FIRST_GUEST_BYTES.len(), 37);
         assert_eq!(SECOND_GUEST_BYTES.len(), 29);
         assert_eq!(FIRST_GUEST_BYTES[10], 0xf4);
@@ -647,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn ownership_set_contains_shared_and_both_active_stack_pages() {
+    fn ownership_set_is_shared_page_plus_both_active_stack_pages() {
         assert_eq!(
             TWO_VCPU_CHECKPOINT_OWNERSHIP_SET,
             [
