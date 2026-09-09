@@ -12,17 +12,48 @@ fn wait_channel_state_mutations_are_incrementally_dirty_and_cleared() {
         Ok(result) => {
             let guest = result.guest();
             assert_eq!(guest.proof(), TASK_WAIT_CHANNEL_PROOF);
-            assert_eq!(result.captures().len(), TASK_WAIT_DIRTY_CAPTURE_STAGES.len());
             assert_eq!(
-                result.captures().iter().map(|capture| capture.stage()).collect::<Vec<_>>(),
+                result.captures().len(),
+                TASK_WAIT_DIRTY_CAPTURE_STAGES.len()
+            );
+            assert_eq!(
+                result
+                    .captures()
+                    .iter()
+                    .map(|capture| capture.stage())
+                    .collect::<Vec<_>>(),
                 TASK_WAIT_DIRTY_CAPTURE_STAGES
             );
 
             let expected_waits = [
-                (TaskRunState::Blocked, TASK_WAIT_CHANNEL_A, 0, 0, TASK_WAIT_CHANNEL_NONE),
-                (TaskRunState::Blocked, TASK_WAIT_CHANNEL_A, 1, 0, TASK_WAIT_WRONG_CHANNEL),
-                (TaskRunState::Runnable, TASK_WAIT_CHANNEL_NONE, 1, 1, TASK_WAIT_CHANNEL_A),
-                (TaskRunState::Runnable, TASK_WAIT_CHANNEL_NONE, 1, 1, TASK_WAIT_CHANNEL_A),
+                (
+                    TaskRunState::Blocked,
+                    TASK_WAIT_CHANNEL_A,
+                    0,
+                    0,
+                    TASK_WAIT_CHANNEL_NONE,
+                ),
+                (
+                    TaskRunState::Blocked,
+                    TASK_WAIT_CHANNEL_A,
+                    1,
+                    0,
+                    TASK_WAIT_WRONG_CHANNEL,
+                ),
+                (
+                    TaskRunState::Runnable,
+                    TASK_WAIT_CHANNEL_NONE,
+                    1,
+                    1,
+                    TASK_WAIT_CHANNEL_A,
+                ),
+                (
+                    TaskRunState::Runnable,
+                    TASK_WAIT_CHANNEL_NONE,
+                    1,
+                    1,
+                    TASK_WAIT_CHANNEL_A,
+                ),
             ];
 
             for (capture, expected) in result.captures().iter().zip(expected_waits) {
