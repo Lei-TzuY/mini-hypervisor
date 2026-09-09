@@ -55,7 +55,10 @@ fn main() -> ExitCode {
                 result.task_b_stack_marker()
             );
             println!("task wake A context PTE: {:#x}", result.first_context_pte());
-            println!("task wake B context PTE: {:#x}", result.second_context_pte());
+            println!(
+                "task wake B context PTE: {:#x}",
+                result.second_context_pte()
+            );
             println!("task wake proof: {:?}", result.proof());
             ExitCode::SUCCESS
         }
