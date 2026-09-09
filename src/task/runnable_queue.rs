@@ -114,7 +114,9 @@ impl QueueModel {
             if states[task as usize] == TaskRunState::Runnable {
                 return Ok(QueueSelection { task, skipped });
             }
-            skipped = skipped.checked_add(1).expect("two-entry skip count fits u8");
+            skipped = skipped
+                .checked_add(1)
+                .expect("two-entry skip count fits u8");
         }
         Err(verification_error(
             "bounded runnable queue selection",
@@ -124,13 +126,49 @@ impl QueueModel {
 }
 
 const QUEUE_TASK_A_BYTES: [u8; 19] = [
-    0x49, 0xbc, 0x11, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc6, 0x44, 0x24, 0xf8, b'a', 0xcd,
-    TASK_BLOCK_VECTOR, 0xcd, 0x81,
+    0x49,
+    0xbc,
+    0x11,
+    0x11,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0xc6,
+    0x44,
+    0x24,
+    0xf8,
+    b'a',
+    0xcd,
+    TASK_BLOCK_VECTOR,
+    0xcd,
+    0x81,
 ];
 
 const QUEUE_TASK_B_BYTES: [u8; 21] = [
-    0x49, 0x81, 0xfc, 0x22, 0x22, 0x00, 0x00, 0x75, 0x0a, 0xc6, 0x44, 0x24, 0xf8, b'b', 0x49, 0xff,
-    0xc4, 0xcd, TASK_WAKE_ARM_VECTOR, 0xcd, 0x81,
+    0x49,
+    0x81,
+    0xfc,
+    0x22,
+    0x22,
+    0x00,
+    0x00,
+    0x75,
+    0x0a,
+    0xc6,
+    0x44,
+    0x24,
+    0xf8,
+    b'b',
+    0x49,
+    0xff,
+    0xc4,
+    0xcd,
+    TASK_WAKE_ARM_VECTOR,
+    0xcd,
+    0x81,
 ];
 
 const QUEUE_PIC_SETUP_AFTER_CLI: [u8; 36] = [
@@ -324,10 +362,20 @@ impl RunnableQueueGuestResult {
     }
 }
 
-pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueueGuestResult, Error> {
+pub fn run_bounded_runnable_queue_guest(
+    config: VmConfig,
+) -> Result<RunnableQueueGuestResult, Error> {
     let kernel_bytes = queue_kernel_bytes();
-    let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &kernel_bytes)?;
-    let task_a = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &QUEUE_TASK_A_BYTES)?;
+    let kernel = FlatGuestImage::new(
+        PRIVILEGE_KERNEL_ENTRY,
+        PRIVILEGE_KERNEL_ENTRY,
+        &kernel_bytes,
+    )?;
+    let task_a = FlatGuestImage::new(
+        PRIVILEGE_USER_ENTRY,
+        PRIVILEGE_USER_ENTRY,
+        &QUEUE_TASK_A_BYTES,
+    )?;
     let task_b = FlatGuestImage::new(
         ADDRESS_SPACE_B_USER_CODE_BACKING,
         ADDRESS_SPACE_B_USER_CODE_BACKING,
@@ -358,7 +406,8 @@ pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueu
         TASK_WAKE_TIMER_HANDLER,
         &QUEUE_WAKE_TIMER_HANDLER_BYTES,
     )?;
-    let queue_handler = FlatGuestImage::new(TASK_QUEUE_HANDLER, TASK_QUEUE_HANDLER, &QUEUE_HANDLER_BYTES)?;
+    let queue_handler =
+        FlatGuestImage::new(TASK_QUEUE_HANDLER, TASK_QUEUE_HANDLER, &QUEUE_HANDLER_BYTES)?;
 
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm_with_irqchip()?;
@@ -400,7 +449,8 @@ pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueu
 
     let blocked_io = run_queue_debug_output(&mut vcpu, &mut port_io, b'K', "queue block A")?;
     let blocked_state = read_queue_state(
-        vm.guest_memory().expect("registered runnable-queue memory remains VM-owned"),
+        vm.guest_memory()
+            .expect("registered runnable-queue memory remains VM-owned"),
         TASK_QUEUE_A_STATE_ADDR,
     )?;
     if blocked_state != TaskRunState::Blocked {
@@ -417,7 +467,8 @@ pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueu
         "queue select B after blocked A",
     )?;
     let first_selection = read_queue_snapshot(
-        vm.guest_memory().expect("registered runnable-queue memory remains VM-owned"),
+        vm.guest_memory()
+            .expect("registered runnable-queue memory remains VM-owned"),
     )?;
     require_first_queue_selection(first_selection)?;
 
@@ -431,9 +482,9 @@ pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueu
     let armed = vcpu.registers()?;
     require_queue_interrupt_disabled_flags("queue wake arm state", armed.rflags)?;
 
-    let timer_irq = vm
-        .duplicate_irq_line_handle()
-        .map_err(|source| queue_vm_error("duplicate runnable-queue wake IRQ-line handle", source))?;
+    let timer_irq = vm.duplicate_irq_line_handle().map_err(|source| {
+        queue_vm_error("duplicate runnable-queue wake IRQ-line handle", source)
+    })?;
     let watchdog_irq = vm
         .duplicate_irq_line_handle()
         .map_err(|source| queue_vm_error("duplicate runnable-queue watchdog handle", source))?;
@@ -445,14 +496,16 @@ pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueu
         .map_err(|source| queue_vm_error("preflight runnable-queue watchdog line", source))?;
 
     let timer_worker = std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(TASK_QUEUE_TIMER_DELAY_MILLIS));
+        std::thread::sleep(std::time::Duration::from_millis(
+            TASK_QUEUE_TIMER_DELAY_MILLIS,
+        ));
         timer_irq.pulse_gsi_edge(TASK_WAKE_GSI)
     });
     let (watchdog_cancel_tx, watchdog_cancel_rx) = std::sync::mpsc::channel::<()>();
     let watchdog_worker = std::thread::spawn(move || -> io::Result<bool> {
-        match watchdog_cancel_rx.recv_timeout(std::time::Duration::from_secs(
-            TASK_QUEUE_WATCHDOG_SECONDS,
-        )) {
+        match watchdog_cancel_rx
+            .recv_timeout(std::time::Duration::from_secs(TASK_QUEUE_WATCHDOG_SECONDS))
+        {
             Ok(()) => Ok(false),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout)
             | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
@@ -462,7 +515,17 @@ pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueu
         }
     });
 
-    let execution = (|| -> Result<(PortIoExit, PortIoExit, RunnableQueueSnapshot, PortIoExit, PortIoExit, PortIoExit), Error> {
+    let execution = (|| -> Result<
+        (
+            PortIoExit,
+            PortIoExit,
+            RunnableQueueSnapshot,
+            PortIoExit,
+            PortIoExit,
+            PortIoExit,
+        ),
+        Error,
+    > {
         let wake_io = run_queue_debug_output(
             &mut vcpu,
             &mut port_io,
@@ -476,7 +539,8 @@ pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueu
             "queue select woken A",
         )?;
         let second_selection = read_queue_snapshot(
-            vm.guest_memory().expect("registered runnable-queue memory remains VM-owned"),
+            vm.guest_memory()
+                .expect("registered runnable-queue memory remains VM-owned"),
         )?;
         require_second_queue_selection(second_selection)?;
         let scheduler_b_io = run_queue_debug_output(
@@ -497,7 +561,14 @@ pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueu
             b'D',
             "runnable-queue completion barrier",
         )?;
-        Ok((wake_io, second_select_io, second_selection, scheduler_b_io, restored_io, done_io))
+        Ok((
+            wake_io,
+            second_select_io,
+            second_selection,
+            scheduler_b_io,
+            restored_io,
+            done_io,
+        ))
     })();
 
     let _ = watchdog_cancel_tx.send(());
@@ -524,7 +595,8 @@ pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueu
         ));
     }
 
-    let (wake_io, second_select_io, second_selection, scheduler_b_io, restored_io, done_io) = execution?;
+    let (wake_io, second_select_io, second_selection, scheduler_b_io, restored_io, done_io) =
+        execution?;
     let io_exits = vec![
         blocked_io,
         first_select_io,
@@ -537,7 +609,9 @@ pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueu
         done_io,
     ];
     let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
-    if proof.as_slice() != TASK_RUNNABLE_QUEUE_PROOF || io_exits.len() != TASK_RUNNABLE_QUEUE_PROOF.len() {
+    if proof.as_slice() != TASK_RUNNABLE_QUEUE_PROOF
+        || io_exits.len() != TASK_RUNNABLE_QUEUE_PROOF.len()
+    {
         return Err(verification_error(
             "bounded runnable queue proof",
             format!(
@@ -560,7 +634,11 @@ pub fn run_bounded_runnable_queue_guest(config: VmConfig) -> Result<RunnableQueu
     let terminal_observation = read_terminal_observation(guest_memory)?;
     let task_a_stack_marker = read_byte(guest_memory, TASK_A_STACK_MARKER_PHYS)?;
     let task_b_stack_marker = read_byte(guest_memory, TASK_B_STACK_MARKER_PHYS)?;
-    let first_context_pte = read_pte(guest_memory, PRIVILEGE_PT_ADDR, TASK_CONTEXT_PAGE_ADDR.get())?;
+    let first_context_pte = read_pte(
+        guest_memory,
+        PRIVILEGE_PT_ADDR,
+        TASK_CONTEXT_PAGE_ADDR.get(),
+    )?;
     let second_context_pte = read_pte(
         guest_memory,
         ADDRESS_SPACE_B_PT_ADDR,
@@ -644,7 +722,9 @@ fn install_queue_gates(
             ));
         }
         memory.write(
-            GuestPhysAddr::new(PRIVILEGE_IDT_ADDR.get() + u64::from(vector) * X86_INTERRUPT_GATE_SIZE),
+            GuestPhysAddr::new(
+                PRIVILEGE_IDT_ADDR.get() + u64::from(vector) * X86_INTERRUPT_GATE_SIZE,
+            ),
             &encode_queue_interrupt_gate(handler.get(), user_callable),
         )?;
     }
@@ -674,11 +754,13 @@ fn run_queue_debug_output(
 ) -> Result<PortIoExit, Error> {
     let exit = vcpu.run_once()?;
     if exit != VcpuExit::Io {
-        return Err(Error::VmExit(crate::error::VmExitError::UnexpectedSequence {
-            stage,
-            expected_reason: VcpuExit::Io.reason(),
-            actual_reason: exit.reason(),
-        }));
+        return Err(Error::VmExit(
+            crate::error::VmExitError::UnexpectedSequence {
+                stage,
+                expected_reason: VcpuExit::Io.reason(),
+                actual_reason: exit.reason(),
+            },
+        ));
     }
     let io_exit = vcpu.port_io_exit()?;
     if io_exit.direction() != PortIoDirection::Out
@@ -712,7 +794,10 @@ fn read_queue_state(memory: &GuestMemory, address: GuestPhysAddr) -> Result<Task
     }
 }
 
-fn read_queue_task_id(memory: &GuestMemory, address: GuestPhysAddr) -> Result<RunnableTaskId, Error> {
+fn read_queue_task_id(
+    memory: &GuestMemory,
+    address: GuestPhysAddr,
+) -> Result<RunnableTaskId, Error> {
     match read_byte(memory, address)? {
         0 => Ok(RunnableTaskId::A),
         1 => Ok(RunnableTaskId::B),
@@ -912,11 +997,21 @@ mod tests {
 
     #[test]
     fn queue_handlers_preserve_block_wake_and_selection_contract() {
-        assert_eq!(&QUEUE_BLOCK_HANDLER_BYTES[..12], &[0xc6, 0x04, 0x25, 0xc0, 0x00, 0x03, 0x00, 0, 0xb0, b'K', 0xe6, 0xe9]);
+        assert_eq!(
+            &QUEUE_BLOCK_HANDLER_BYTES[..12],
+            &[0xc6, 0x04, 0x25, 0xc0, 0x00, 0x03, 0x00, 0, 0xb0, b'K', 0xe6, 0xe9]
+        );
         assert_eq!(&QUEUE_WAKE_ARM_HANDLER_BYTES[4..6], &[0xfb, 0xf4]);
-        assert_eq!(&QUEUE_WAKE_TIMER_HANDLER_BYTES[8..12], &[0xb0, b'W', 0xe6, 0xe9]);
+        assert_eq!(
+            &QUEUE_WAKE_TIMER_HANDLER_BYTES[8..12],
+            &[0xb0, b'W', 0xe6, 0xe9]
+        );
         assert_eq!(QUEUE_HANDLER_BYTES.len(), 233);
-        assert!(QUEUE_HANDLER_BYTES.windows(4).any(|window| window == [0xb0, b'1', 0xe6, 0xe9]));
-        assert!(QUEUE_HANDLER_BYTES.windows(4).any(|window| window == [0xb0, b'0', 0xe6, 0xe9]));
+        assert!(QUEUE_HANDLER_BYTES
+            .windows(4)
+            .any(|window| window == [0xb0, b'1', 0xe6, 0xe9]));
+        assert!(QUEUE_HANDLER_BYTES
+            .windows(4)
+            .any(|window| window == [0xb0, b'0', 0xe6, 0xe9]));
     }
 }
