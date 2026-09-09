@@ -12,7 +12,7 @@ fn wait_ownership_checkpoint_restores_machine_and_typed_scheduler_state() {
     match run_bounded_wait_channel_checkpoint_guest(VmConfig::default()) {
         Ok(result) => {
             let capture = result.checkpoint_report();
-            assert_eq!(capture.exit(), VcpuExit::Hlt);
+            assert_eq!(capture.exit(), VcpuExit::Debug);
             assert_eq!(capture.rip(), TASK_WAIT_CHECKPOINT_CAPTURE_RIP);
             assert_eq!(capture.rflags() & 0x2, 0x2);
 
