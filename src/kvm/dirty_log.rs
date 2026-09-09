@@ -352,7 +352,6 @@ mod dirty_log_tests {
         );
         assert_eq!(&DIRTY_LOG_GUEST_BYTES[..5], &[0xc6, 0x06, 0x00, 0x10, b'A']);
         assert_eq!(&DIRTY_LOG_GUEST_BYTES[5..10], &[0xc6, 0x06, 0x00, 0x30, b'B']);
-        assert_eq!(&DIRTY_LOG_GUEST_BYTES[10..18], &[0xb0, b'D', 0xe6, 0xe9, b'\0', b'\0', b'\0', b'\0']);
         assert_eq!(&DIRTY_LOG_GUEST_BYTES[10..18], &[0xb0, b'D', 0xe6, 0xe9, 0xb0, b'G', 0xe6, 0xe9]);
         assert_eq!(DIRTY_LOG_GUEST_BYTES[18], 0xf4);
         assert_eq!(DIRTY_LOG_PROOF, b"DG");
