@@ -22,50 +22,99 @@ fn main() -> ExitCode {
             println!("wait channel armed rflags: {:#x}", result.armed_rflags());
             println!(
                 "wait channel blocked: state={:?} owner={:#x} mismatches={} wakes={} last={:#x}",
-                blocked.task_a_state(), blocked.owner(), blocked.mismatch_count(), blocked.wake_count(), blocked.last_attempt()
+                blocked.task_a_state(),
+                blocked.owner(),
+                blocked.mismatch_count(),
+                blocked.wake_count(),
+                blocked.last_attempt()
             );
             println!(
                 "wait channel mismatch: state={:?} owner={:#x} mismatches={} wakes={} last={:#x}",
-                mismatch.task_a_state(), mismatch.owner(), mismatch.mismatch_count(), mismatch.wake_count(), mismatch.last_attempt()
+                mismatch.task_a_state(),
+                mismatch.owner(),
+                mismatch.mismatch_count(),
+                mismatch.wake_count(),
+                mismatch.last_attempt()
             );
             println!(
                 "wait channel wake: state={:?} owner={:#x} mismatches={} wakes={} last={:#x}",
-                wake.task_a_state(), wake.owner(), wake.mismatch_count(), wake.wake_count(), wake.last_attempt()
+                wake.task_a_state(),
+                wake.owner(),
+                wake.mismatch_count(),
+                wake.wake_count(),
+                wake.last_attempt()
             );
             println!(
                 "wait channel final: state={:?} owner={:#x} mismatches={} wakes={} last={:#x}",
-                final_wait.task_a_state(), final_wait.owner(), final_wait.mismatch_count(), final_wait.wake_count(), final_wait.last_attempt()
+                final_wait.task_a_state(),
+                final_wait.owner(),
+                final_wait.mismatch_count(),
+                final_wait.wake_count(),
+                final_wait.last_attempt()
             );
             println!(
                 "wait channel first selection: entry0={:?} entry1={:?} head={} selected={:?} skips={} A={:?} B={:?}",
-                first.entry0(), first.entry1(), first.head(), first.selected(), first.skip_count(), first.task_a_state(), first.task_b_state()
+                first.entry0(),
+                first.entry1(),
+                first.head(),
+                first.selected(),
+                first.skip_count(),
+                first.task_a_state(),
+                first.task_b_state()
             );
             println!(
                 "wait channel second selection: entry0={:?} entry1={:?} head={} selected={:?} skips={} A={:?} B={:?}",
-                second.entry0(), second.entry1(), second.head(), second.selected(), second.skip_count(), second.task_a_state(), second.task_b_state()
+                second.entry0(),
+                second.entry1(),
+                second.head(),
+                second.selected(),
+                second.skip_count(),
+                second.task_a_state(),
+                second.task_b_state()
             );
             println!(
                 "wait channel A context: cr3={:#x} rip={:#x} rsp={:#x} rflags={:#x} r12={:#x} saves={}",
-                a.cr3(), a.rip(), a.rsp(), a.rflags(), a.r12(), a.save_count()
+                a.cr3(),
+                a.rip(),
+                a.rsp(),
+                a.rflags(),
+                a.r12(),
+                a.save_count()
             );
             println!(
                 "wait channel B context: cr3={:#x} rip={:#x} rsp={:#x} rflags={:#x} r12={:#x} saves={}",
-                b.cr3(), b.rip(), b.rsp(), b.rflags(), b.r12(), b.save_count()
+                b.cr3(),
+                b.rip(),
+                b.rsp(),
+                b.rflags(),
+                b.r12(),
+                b.save_count()
             );
             println!(
                 "wait channel terminal: cr3={:#x} rip={:#x} rsp={:#x} r12={:#x}",
-                terminal.cr3(), terminal.rip(), terminal.rsp(), terminal.r12()
+                terminal.cr3(),
+                terminal.rip(),
+                terminal.rsp(),
+                terminal.r12()
             );
             println!(
                 "wait channel final registers: cr3={:#x} r12={:#x}",
-                result.final_cr3(), result.final_r12()
+                result.final_cr3(),
+                result.final_r12()
             );
             println!(
                 "wait channel stack markers: first={} second={}",
-                result.task_a_stack_marker(), result.task_b_stack_marker()
+                result.task_a_stack_marker(),
+                result.task_b_stack_marker()
             );
-            println!("wait channel A context PTE: {:#x}", result.first_context_pte());
-            println!("wait channel B context PTE: {:#x}", result.second_context_pte());
+            println!(
+                "wait channel A context PTE: {:#x}",
+                result.first_context_pte()
+            );
+            println!(
+                "wait channel B context PTE: {:#x}",
+                result.second_context_pte()
+            );
             println!("wait channel proof: {:?}", result.proof());
             ExitCode::SUCCESS
         }
