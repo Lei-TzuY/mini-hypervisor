@@ -591,3 +591,6 @@ mod tests {
         assert_eq!(TERMINAL_HANDLER_BYTES[88], 0xf4);
     }
 }
+
+mod preemption;
+pub use preemption::*;
