@@ -2,9 +2,7 @@ pub mod cpu;
 pub mod msr;
 pub(crate) mod sys;
 
-pub(crate) use sys::{
-    harvest_dirty_log, register_guest_memory_with_dirty_log, DirtyLogSlot0,
-};
+pub(crate) use sys::{harvest_dirty_log, register_guest_memory_with_dirty_log, DirtyLogSlot0};
 
 use crate::error::{Error, GuestMemoryError, HostEnvironmentError, KvmCapabilityError};
 use crate::memory::{GuestMemory, GuestMemoryRegion, GuestPhysAddr, KVM_MEMORY_ALIGNMENT};
