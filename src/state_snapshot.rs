@@ -455,6 +455,10 @@ mod tests {
         let error = restore_and_verify_with(
             || {
                 sequence.borrow_mut().push("restore");
+                Ok::<_, &'static str>(())
+            },
+            || {
+                sequence.borrow_mut().push("capture");
                 Err::<u8, _>("capture failure")
             },
             |_observed| {
