@@ -22,10 +22,19 @@ pub const BOUNDED_CHECKPOINT_CAPTURE_RIP: u64 = 0x10009;
 pub const BOUNDED_CHECKPOINT_TERMINAL_RIP: u64 = 0x1000e;
 
 const BOUNDED_CHECKPOINT_GUEST_BYTES: [u8; 14] = [
-    0xc6, 0x04, 0x25, 0x00, 0x00, 0x03, 0x00, BOUNDED_CHECKPOINT_MARKER, // mov byte [0x30000], 0x5a
-    0xf4, // checkpoint HLT
-    0xb0, b'R', // mov al, 'R'
-    0xe6, 0xe9, // out 0xe9, al
+    0xc6,
+    0x04,
+    0x25,
+    0x00,
+    0x00,
+    0x03,
+    0x00,
+    BOUNDED_CHECKPOINT_MARKER, // mov byte [0x30000], 0x5a
+    0xf4,                      // checkpoint HLT
+    0xb0,
+    b'R', // mov al, 'R'
+    0xe6,
+    0xe9, // out 0xe9, al
     0xf4, // terminal HLT
 ];
 
@@ -46,7 +55,10 @@ impl BoundedVcpuPageCheckpoint {
         if page_address.get() % LONG_MODE_PAGE_SIZE != 0 {
             return Err(checkpoint_verification_error(
                 "bounded checkpoint capture",
-                format!("checkpoint page {:#x} is not 4KiB aligned", page_address.get()),
+                format!(
+                    "checkpoint page {:#x} is not 4KiB aligned",
+                    page_address.get()
+                ),
             ));
         }
 
@@ -187,12 +199,8 @@ pub fn run_bounded_checkpoint_guest(
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm()?;
     let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE)?;
-    let layout = LongModeBootLayout::new(
-        memory.region(),
-        image.entry(),
-        BOUNDED_CHECKPOINT_STACK,
-    )
-    .expect("fixed bounded checkpoint layout remains valid");
+    let layout = LongModeBootLayout::new(memory.region(), image.entry(), BOUNDED_CHECKPOINT_STACK)
+        .expect("fixed bounded checkpoint layout remains valid");
     layout.install_page_tables(&mut memory)?;
     image.load(&mut memory)?;
     vm.register_guest_memory(memory)?;
@@ -245,7 +253,8 @@ pub fn run_bounded_checkpoint_guest(
         vm.guest_memory()
             .expect("registered checkpoint memory remains VM-owned"),
     )?;
-    if corruption.is_exact_match() || corruption.page_exact() || corruption.vcpu().is_exact_match() {
+    if corruption.is_exact_match() || corruption.page_exact() || corruption.vcpu().is_exact_match()
+    {
         return Err(checkpoint_verification_error(
             "bounded checkpoint corruption proof",
             "intentional page and vCPU corruption did not produce both expected mismatches",
@@ -332,7 +341,10 @@ fn require_hlt_report(
     report: VmExitReport,
     expected_rip: u64,
 ) -> Result<(), Error> {
-    if report.exit() != VcpuExit::Hlt || report.rip() != expected_rip || report.rflags() & 0x2 != 0x2 {
+    if report.exit() != VcpuExit::Hlt
+        || report.rip() != expected_rip
+        || report.rflags() & 0x2 != 0x2
+    {
         return Err(checkpoint_verification_error(
             operation,
             format!(
@@ -360,9 +372,18 @@ mod tests {
         assert_eq!(BOUNDED_CHECKPOINT_GUEST_BYTES.len(), 14);
         assert_eq!(BOUNDED_CHECKPOINT_GUEST_BYTES[7], BOUNDED_CHECKPOINT_MARKER);
         assert_eq!(BOUNDED_CHECKPOINT_GUEST_BYTES[8], 0xf4);
-        assert_eq!(&BOUNDED_CHECKPOINT_GUEST_BYTES[9..13], &[0xb0, b'R', 0xe6, 0xe9]);
+        assert_eq!(
+            &BOUNDED_CHECKPOINT_GUEST_BYTES[9..13],
+            &[0xb0, b'R', 0xe6, 0xe9]
+        );
         assert_eq!(BOUNDED_CHECKPOINT_GUEST_BYTES[13], 0xf4);
-        assert_eq!(BOUNDED_CHECKPOINT_CAPTURE_RIP, BOUNDED_CHECKPOINT_ENTRY.get() + 9);
-        assert_eq!(BOUNDED_CHECKPOINT_TERMINAL_RIP, BOUNDED_CHECKPOINT_ENTRY.get() + 14);
+        assert_eq!(
+            BOUNDED_CHECKPOINT_CAPTURE_RIP,
+            BOUNDED_CHECKPOINT_ENTRY.get() + 9
+        );
+        assert_eq!(
+            BOUNDED_CHECKPOINT_TERMINAL_RIP,
+            BOUNDED_CHECKPOINT_ENTRY.get() + 14
+        );
     }
 }
