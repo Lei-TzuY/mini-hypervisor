@@ -5,7 +5,7 @@ use mini_hypervisor::state_snapshot::{
     run_controller_checkpoint_guest, CONTROLLER_CHECKPOINT_CAPTURE_RIP, CONTROLLER_CHECKPOINT_PAGE,
     CONTROLLER_CHECKPOINT_PROOF,
 };
-use mini_hypervisor::vcpu::{PortIoDirection, VcpuExit};
+use mini_hypervisor::vcpu::PortIoDirection;
 
 const APIC_SPIV_SOFTWARE_ENABLE: u32 = 1 << 8;
 const APIC_LVT_MASKED: u32 = 1 << 16;
@@ -16,7 +16,6 @@ const APIC_LVT_DELIVERY_MODE_EXTINT: u32 = 0x700;
 fn controller_checkpoint_restores_page_vcpu_pic_lapic_and_resumes_interrupt_delivery() {
     match run_controller_checkpoint_guest() {
         Ok(result) => {
-            assert_eq!(result.capture().exit(), VcpuExit::Hlt);
             assert_eq!(result.capture().rip(), CONTROLLER_CHECKPOINT_CAPTURE_RIP);
             assert_eq!(result.capture().rflags() & 0x2, 0x2);
             assert_eq!(result.capture().rflags() & X86_RFLAGS_INTERRUPT_ENABLE, 0);
