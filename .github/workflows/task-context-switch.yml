@@ -27,12 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build bounded task context switch proof
+        run: cargo build --quiet --bin task-context-switch
       - name: Strict KVM bounded task context switch proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin task-context-switch)"
+          output="$(timeout 30s target/debug/task-context-switch)"
           printf '%s\n' "$output"
 
           grep -F 'task A context: cr3=0x1000 rip=0x11011 rsp=0x1fcff0 rflags=0x202 r12=0x1111 saves=1' <<<"$output"

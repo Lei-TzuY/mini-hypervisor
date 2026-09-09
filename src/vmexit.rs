@@ -86,7 +86,7 @@ pub fn dispatch_vcpu_exit(
                 access,
             )))
         }
-        VcpuExit::Hlt | VcpuExit::Shutdown => {
+        VcpuExit::Debug | VcpuExit::Hlt | VcpuExit::Shutdown => {
             let registers = vcpu.registers()?;
             Ok(VmExitDisposition::Stopped(stopped_report(
                 vcpu.id(),
@@ -140,7 +140,10 @@ pub fn dispatch_vcpu_exit(
 }
 
 fn stopped_report(vcpu_id: VcpuId, exit: VcpuExit, registers: VcpuRegisters) -> VmExitReport {
-    debug_assert!(matches!(exit, VcpuExit::Hlt | VcpuExit::Shutdown));
+    debug_assert!(matches!(
+        exit,
+        VcpuExit::Debug | VcpuExit::Hlt | VcpuExit::Shutdown
+    ));
     VmExitReport {
         vcpu_id,
         exit,
@@ -218,6 +221,16 @@ mod tests {
         rip: 0x1001,
         rflags: 0x2,
     };
+
+    #[test]
+    fn terminal_dispatch_reports_debug_context() {
+        let report = stopped_report(VcpuId::BOOT, VcpuExit::Debug, REGISTERS);
+
+        assert_eq!(report.vcpu_id(), VcpuId::BOOT);
+        assert_eq!(report.exit(), VcpuExit::Debug);
+        assert_eq!(report.rip(), 0x1001);
+        assert_eq!(report.rflags(), 0x2);
+    }
 
     #[test]
     fn terminal_dispatch_reports_hlt_context() {

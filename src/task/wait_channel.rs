@@ -7,6 +7,7 @@ pub const TASK_WAIT_CHANNEL_A: u8 = 0x11;
 pub const TASK_WAIT_WRONG_CHANNEL: u8 = 0x22;
 pub const TASK_WAIT_CHANNEL_PROOF: &[u8; 10] = b"K1AXPW0BRD";
 pub const TASK_WAIT_DIRTY_CAPTURE_STAGES: &[u8; 4] = b"KXWD";
+pub const TASK_WAIT_CHECKPOINT_CAPTURE_RIP: u64 = TASK_WAKE_ARM_HANDLER.get() + 0x3d;
 
 const WAIT_TIMER_DELAY_MILLIS: u64 = 10;
 const WAIT_WATCHDOG_SECONDS: u64 = 5;
@@ -24,6 +25,16 @@ const WAIT_WAKE_ARM_HANDLER_BYTES: [u8; 105] = [
     0xe9, 0xfb, 0xf4, 0x80, 0x3c, 0x25, 0xc0, 0x00, 0x03, 0x00, 0x01, 0x0f, 0x85, 0x13, 0x00, 0x00,
     0x00, 0x80, 0x3c, 0x25, 0xd0, 0x00, 0x03, 0x00, 0x00, 0x0f, 0x85, 0x05, 0x00, 0x00, 0x00, 0xe9,
     0x9c, 0x1f, 0x00, 0x00, 0xb0, b'F', 0xe6, 0xe9, 0xf4,
+];
+
+const WAIT_WAKE_ARM_CHECKPOINT_HANDLER_BYTES: [u8; 106] = [
+    0xc6, 0x04, 0x25, 0xd3, 0x00, 0x03, 0x00, 0x22, 0x80, 0x3c, 0x25, 0xd0, 0x00, 0x03, 0x00, 0x22,
+    0x0f, 0x84, 0x4f, 0x00, 0x00, 0x00, 0xfe, 0x04, 0x25, 0xd1, 0x00, 0x03, 0x00, 0x80, 0x3c, 0x25,
+    0xc0, 0x00, 0x03, 0x00, 0x00, 0x0f, 0x85, 0x3a, 0x00, 0x00, 0x00, 0x80, 0x3c, 0x25, 0xd0, 0x00,
+    0x03, 0x00, 0x11, 0x0f, 0x85, 0x2c, 0x00, 0x00, 0x00, 0xb0, b'X', 0xe6, 0xe9, 0x90, 0xb0, b'P',
+    0xe6, 0xe9, 0xfb, 0xf4, 0x80, 0x3c, 0x25, 0xc0, 0x00, 0x03, 0x00, 0x01, 0x0f, 0x85, 0x13, 0x00,
+    0x00, 0x00, 0x80, 0x3c, 0x25, 0xd0, 0x00, 0x03, 0x00, 0x00, 0x0f, 0x85, 0x05, 0x00, 0x00, 0x00,
+    0xe9, 0x9b, 0x1f, 0x00, 0x00, 0xb0, b'F', 0xe6, 0xe9, 0xf4,
 ];
 
 const WAIT_WAKE_TIMER_HANDLER_BYTES: [u8; 65] = [
@@ -255,18 +266,119 @@ impl WaitChannelDirtyGuestResult {
     pub fn captures(&self) -> &[WaitChannelDirtyCapture] { &self.captures }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WaitChannelCheckpointOwnership {
+    wait: WaitChannelSnapshot,
+    queue: RunnableQueueSnapshot,
+    task_a: TaskContextSnapshot,
+    task_b: TaskContextSnapshot,
+}
+
+impl WaitChannelCheckpointOwnership {
+    #[must_use]
+    pub const fn wait(self) -> WaitChannelSnapshot { self.wait }
+    #[must_use]
+    pub const fn queue(self) -> RunnableQueueSnapshot { self.queue }
+    #[must_use]
+    pub const fn task_a(self) -> TaskContextSnapshot { self.task_a }
+    #[must_use]
+    pub const fn task_b(self) -> TaskContextSnapshot { self.task_b }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaitChannelCheckpointComparison {
+    machine: crate::state_snapshot::BoundedCheckpointComparison,
+    wait_exact: bool,
+    queue_exact: bool,
+    task_a_exact: bool,
+    task_b_exact: bool,
+}
+
+impl WaitChannelCheckpointComparison {
+    #[must_use]
+    pub const fn machine(&self) -> &crate::state_snapshot::BoundedCheckpointComparison {
+        &self.machine
+    }
+    #[must_use]
+    pub const fn wait_exact(&self) -> bool { self.wait_exact }
+    #[must_use]
+    pub const fn queue_exact(&self) -> bool { self.queue_exact }
+    #[must_use]
+    pub const fn task_a_exact(&self) -> bool { self.task_a_exact }
+    #[must_use]
+    pub const fn task_b_exact(&self) -> bool { self.task_b_exact }
+    #[must_use]
+    pub fn ownership_exact(&self) -> bool {
+        self.wait_exact && self.queue_exact && self.task_a_exact && self.task_b_exact
+    }
+    #[must_use]
+    pub fn is_exact_match(&self) -> bool {
+        self.machine.is_exact_match() && self.ownership_exact()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaitChannelCheckpointGuestResult {
+    guest: WaitChannelGuestResult,
+    checkpoint_report: VmExitReport,
+    captured: WaitChannelCheckpointOwnership,
+    corruption: WaitChannelCheckpointComparison,
+    restored: WaitChannelCheckpointComparison,
+}
+
+impl WaitChannelCheckpointGuestResult {
+    #[must_use]
+    pub const fn guest(&self) -> &WaitChannelGuestResult { &self.guest }
+    #[must_use]
+    pub const fn checkpoint_report(&self) -> VmExitReport { self.checkpoint_report }
+    #[must_use]
+    pub const fn captured(&self) -> WaitChannelCheckpointOwnership { self.captured }
+    #[must_use]
+    pub const fn corruption(&self) -> &WaitChannelCheckpointComparison { &self.corruption }
+    #[must_use]
+    pub const fn restored(&self) -> &WaitChannelCheckpointComparison { &self.restored }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WaitChannelRunMode {
+    Plain,
+    Dirty,
+    Checkpoint,
+}
+
+impl WaitChannelRunMode {
+    const fn track_dirty(self) -> bool { matches!(self, Self::Dirty) }
+    const fn checkpoint(self) -> bool { matches!(self, Self::Checkpoint) }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WaitChannelCheckpointEvidence {
+    checkpoint_report: VmExitReport,
+    captured: WaitChannelCheckpointOwnership,
+    corruption: WaitChannelCheckpointComparison,
+    restored: WaitChannelCheckpointComparison,
+}
+
+struct WaitChannelRunArtifacts {
+    guest: WaitChannelGuestResult,
+    dirty_captures: Vec<WaitChannelDirtyCapture>,
+    checkpoint: Option<WaitChannelCheckpointEvidence>,
+}
+
 pub fn run_bounded_wait_channel_guest(config: VmConfig) -> Result<WaitChannelGuestResult, Error> {
-    let (guest, captures) = run_bounded_wait_channel_guest_inner(config, false)?;
-    debug_assert!(captures.is_empty());
-    Ok(guest)
+    let artifacts = run_bounded_wait_channel_guest_inner(config, WaitChannelRunMode::Plain)?;
+    debug_assert!(artifacts.dirty_captures.is_empty());
+    debug_assert!(artifacts.checkpoint.is_none());
+    Ok(artifacts.guest)
 }
 
 pub fn run_bounded_wait_channel_dirty_guest(
     config: VmConfig,
 ) -> Result<WaitChannelDirtyGuestResult, Error> {
-    let (guest, captures) = run_bounded_wait_channel_guest_inner(config, true)?;
-    if captures.len() != TASK_WAIT_DIRTY_CAPTURE_STAGES.len()
-        || captures
+    let artifacts = run_bounded_wait_channel_guest_inner(config, WaitChannelRunMode::Dirty)?;
+    if artifacts.dirty_captures.len() != TASK_WAIT_DIRTY_CAPTURE_STAGES.len()
+        || artifacts
+            .dirty_captures
             .iter()
             .map(WaitChannelDirtyCapture::stage)
             .ne(TASK_WAIT_DIRTY_CAPTURE_STAGES.iter().copied())
@@ -276,17 +388,49 @@ pub fn run_bounded_wait_channel_dirty_guest(
             format!(
                 "expected stages {:?}, got {:?}",
                 TASK_WAIT_DIRTY_CAPTURE_STAGES,
-                captures.iter().map(WaitChannelDirtyCapture::stage).collect::<Vec<_>>()
+                artifacts
+                    .dirty_captures
+                    .iter()
+                    .map(WaitChannelDirtyCapture::stage)
+                    .collect::<Vec<_>>()
             ),
         ));
     }
-    Ok(WaitChannelDirtyGuestResult { guest, captures })
+    Ok(WaitChannelDirtyGuestResult {
+        guest: artifacts.guest,
+        captures: artifacts.dirty_captures,
+    })
+}
+
+pub fn run_bounded_wait_channel_checkpoint_guest(
+    config: VmConfig,
+) -> Result<WaitChannelCheckpointGuestResult, Error> {
+    let artifacts = run_bounded_wait_channel_guest_inner(config, WaitChannelRunMode::Checkpoint)?;
+    if !artifacts.dirty_captures.is_empty() {
+        return Err(verification_error(
+            "wait-channel checkpoint mode",
+            "checkpoint mode unexpectedly produced dirty-log captures",
+        ));
+    }
+    let Some(checkpoint) = artifacts.checkpoint else {
+        return Err(verification_error(
+            "wait-channel checkpoint mode",
+            "checkpoint mode completed without checkpoint evidence",
+        ));
+    };
+    Ok(WaitChannelCheckpointGuestResult {
+        guest: artifacts.guest,
+        checkpoint_report: checkpoint.checkpoint_report,
+        captured: checkpoint.captured,
+        corruption: checkpoint.corruption,
+        restored: checkpoint.restored,
+    })
 }
 
 fn run_bounded_wait_channel_guest_inner(
     config: VmConfig,
-    track_dirty: bool,
-) -> Result<(WaitChannelGuestResult, Vec<WaitChannelDirtyCapture>), Error> {
+    mode: WaitChannelRunMode,
+) -> Result<WaitChannelRunArtifacts, Error> {
     let kernel_bytes = queue_kernel_bytes();
     let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &kernel_bytes)?;
     let task_a = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &QUEUE_TASK_A_BYTES)?;
@@ -310,10 +454,15 @@ fn run_bounded_wait_channel_guest_inner(
         TASK_BLOCK_HANDLER,
         &WAIT_BLOCK_HANDLER_BYTES,
     )?;
+    let arm_handler_bytes: &[u8] = if mode.checkpoint() {
+        &WAIT_WAKE_ARM_CHECKPOINT_HANDLER_BYTES
+    } else {
+        &WAIT_WAKE_ARM_HANDLER_BYTES
+    };
     let arm_handler = FlatGuestImage::new(
         TASK_WAKE_ARM_HANDLER,
         TASK_WAKE_ARM_HANDLER,
-        &WAIT_WAKE_ARM_HANDLER_BYTES,
+        arm_handler_bytes,
     )?;
     let wake_handler = FlatGuestImage::new(
         TASK_WAKE_TIMER_HANDLER,
@@ -353,7 +502,7 @@ fn run_bounded_wait_channel_guest_inner(
     )?;
     initialize_queue_metadata(&mut memory)?;
     initialize_wait_channel_metadata(&mut memory)?;
-    let dirty_slot = if track_dirty {
+    let dirty_slot = if mode.track_dirty() {
         Some(crate::kvm::register_guest_memory_with_dirty_log(&mut vm, memory)?)
     } else {
         vm.register_guest_memory(memory)?;
@@ -366,6 +515,7 @@ fn run_bounded_wait_channel_guest_inner(
     let lapic = vcpu.configure_legacy_pic_extint()?;
     let mut port_io = PortIoBus::with_debug_port();
     let mut dirty_captures = Vec::new();
+    let mut checkpoint_evidence = None;
     if let Some(slot) = dirty_slot {
         drain_wait_dirty_baseline(&vm, slot)?;
     }
@@ -408,6 +558,17 @@ fn run_bounded_wait_channel_guest_inner(
     require_wait_mismatch(mismatch_wait)?;
     if let Some(slot) = dirty_slot {
         dirty_captures.push(capture_wait_dirty(&vm, slot, b'X', mismatch_wait)?);
+    }
+
+    if mode.checkpoint() {
+        checkpoint_evidence = Some(capture_mutate_restore_wait_checkpoint(
+            &backend,
+            &mut vm,
+            &mut vcpu,
+            &layout,
+            mismatch_wait,
+            first_selection,
+        )?);
     }
 
     let armed_io = run_queue_debug_output(&mut vcpu, &mut port_io, b'P', "wait-channel wake arm")?;
@@ -567,30 +728,200 @@ fn run_bounded_wait_channel_guest_inner(
         second_context_pte,
     )?;
 
-    Ok((WaitChannelGuestResult {
-        gsi: TASK_WAKE_GSI,
-        vector: TASK_WAKE_TIMER_VECTOR,
-        lapic_spiv: lapic.spiv(),
-        lapic_lint0: lapic.lint0(),
-        armed_rflags: armed.rflags,
-        blocked_wait,
-        mismatch_wait,
-        wake_wait,
-        final_wait,
-        first_selection,
-        second_selection,
-        io_exits,
-        proof,
-        task_a: task_a_context,
-        task_b: task_b_context,
-        terminal: terminal_observation,
-        final_cr3: final_special.cr3(),
-        final_r12: final_regs.r12(),
-        task_a_stack_marker,
-        task_b_stack_marker,
-        first_context_pte,
-        second_context_pte,
-    }, dirty_captures))
+    Ok(WaitChannelRunArtifacts {
+        guest: WaitChannelGuestResult {
+            gsi: TASK_WAKE_GSI,
+            vector: TASK_WAKE_TIMER_VECTOR,
+            lapic_spiv: lapic.spiv(),
+            lapic_lint0: lapic.lint0(),
+            armed_rflags: armed.rflags,
+            blocked_wait,
+            mismatch_wait,
+            wake_wait,
+            final_wait,
+            first_selection,
+            second_selection,
+            io_exits,
+            proof,
+            task_a: task_a_context,
+            task_b: task_b_context,
+            terminal: terminal_observation,
+            final_cr3: final_special.cr3(),
+            final_r12: final_regs.r12(),
+            task_a_stack_marker,
+            task_b_stack_marker,
+            first_context_pte,
+            second_context_pte,
+        },
+        dirty_captures,
+        checkpoint: checkpoint_evidence,
+    })
+}
+
+fn capture_mutate_restore_wait_checkpoint(
+    backend: &KvmBackend,
+    vm: &mut crate::kvm::Vm,
+    vcpu: &mut crate::vcpu::Vcpu,
+    layout: &AddressSpaceSwitchLayout,
+    mismatch_wait: WaitChannelSnapshot,
+    first_selection: RunnableQueueSnapshot,
+) -> Result<WaitChannelCheckpointEvidence, Error> {
+    let mut no_io = PortIoBus::empty();
+    // The preceding X output is a serviceable KVM_EXIT_IO. Re-entering KVM completes that OUT
+    // before guest debug is considered. With TF enabled, KVM therefore reports Debug at the next
+    // instruction start (the checkpoint NOP at +0x3d). The NOP and the following P output have not
+    // executed, so this is a non-serviceable boundary after X is committed and before P begins.
+    vcpu.set_guest_single_step(true)?;
+    let checkpoint_execution_result = run_vcpu_until_stopped(vcpu, &mut no_io, 1);
+    let disable_result = vcpu.set_guest_single_step(false);
+    let checkpoint_execution = match (checkpoint_execution_result, disable_result) {
+        (_, Err(error)) => return Err(error),
+        (Err(error), Ok(())) => return Err(error),
+        (Ok(execution), Ok(())) => execution,
+    };
+    let checkpoint_report = checkpoint_execution.report();
+    require_wait_checkpoint_debug(checkpoint_report)?;
+    if !checkpoint_execution.io_exits().is_empty() {
+        return Err(verification_error(
+            "wait-channel checkpoint boundary",
+            "checkpoint Debug unexpectedly serviced port I/O",
+        ));
+    }
+
+    let msr_policy = crate::kvm::msr::GuestMsrAccessPolicy::from_host(backend.host_msr_indices(), &[])
+        .expect("empty wait checkpoint MSR policy is valid by construction");
+    let machine = crate::state_snapshot::BoundedVcpuPageCheckpoint::capture(
+        vcpu,
+        &msr_policy,
+        vm.guest_memory()
+            .expect("registered wait-channel memory remains VM-owned"),
+        TASK_CONTEXT_PAGE_ADDR,
+    )?;
+    let captured = capture_wait_checkpoint_ownership(
+        vm.guest_memory()
+            .expect("registered wait-channel memory remains VM-owned"),
+    )?;
+    if captured.wait != mismatch_wait || captured.queue != first_selection {
+        return Err(verification_error(
+            "wait-channel checkpoint capture ownership",
+            format!(
+                "checkpoint ownership drifted before capture: wait {:?} vs {:?}, queue {:?} vs {:?}",
+                captured.wait, mismatch_wait, captured.queue, first_selection
+            ),
+        ));
+    }
+
+    mutate_wait_checkpoint_ownership(
+        vm.guest_memory_mut()
+            .expect("registered wait-channel memory remains VM-owned"),
+    )?;
+    vcpu.initialize_long_mode_privilege(layout.privilege_layout())?;
+
+    let corruption_machine = machine.verify(
+        vcpu,
+        vm.guest_memory()
+            .expect("registered wait-channel memory remains VM-owned"),
+    )?;
+    let corruption_ownership = capture_wait_checkpoint_ownership(
+        vm.guest_memory()
+            .expect("registered wait-channel memory remains VM-owned"),
+    )?;
+    let corruption = compare_wait_checkpoint(&captured, corruption_machine, corruption_ownership);
+    if corruption.machine().page_exact()
+        || corruption.machine().vcpu().is_exact_match()
+        || corruption.ownership_exact()
+    {
+        return Err(verification_error(
+            "wait-channel checkpoint corruption proof",
+            format!(
+                "expected page, VCPU and typed ownership mismatch; got page_exact={} vcpu_exact={} ownership_exact={}",
+                corruption.machine().page_exact(),
+                corruption.machine().vcpu().is_exact_match(),
+                corruption.ownership_exact()
+            ),
+        ));
+    }
+
+    let restored_machine = machine.restore_and_verify(
+        vcpu,
+        vm.guest_memory_mut()
+            .expect("registered wait-channel memory remains VM-owned"),
+    )?;
+    let restored_ownership = capture_wait_checkpoint_ownership(
+        vm.guest_memory()
+            .expect("registered wait-channel memory remains VM-owned"),
+    )?;
+    let restored = compare_wait_checkpoint(&captured, restored_machine, restored_ownership);
+    if !restored.is_exact_match() {
+        return Err(verification_error(
+            "wait-channel checkpoint restore verification",
+            format!(
+                "restore mismatch: page_exact={} vcpu_exact={} wait_exact={} queue_exact={} task_a_exact={} task_b_exact={}",
+                restored.machine().page_exact(),
+                restored.machine().vcpu().is_exact_match(),
+                restored.wait_exact(),
+                restored.queue_exact(),
+                restored.task_a_exact(),
+                restored.task_b_exact()
+            ),
+        ));
+    }
+
+    Ok(WaitChannelCheckpointEvidence {
+        checkpoint_report,
+        captured,
+        corruption,
+        restored,
+    })
+}
+
+fn require_wait_checkpoint_debug(report: VmExitReport) -> Result<(), Error> {
+    if report.exit() != VcpuExit::Debug
+        || report.rip() != TASK_WAIT_CHECKPOINT_CAPTURE_RIP
+        || report.rflags() & 0x2 != 0x2
+    {
+        return Err(verification_error(
+            "wait-channel checkpoint boundary",
+            format!(
+                "expected single-step Debug at rip={TASK_WAIT_CHECKPOINT_CAPTURE_RIP:#x} with architectural RFLAGS bit1, got {report}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn capture_wait_checkpoint_ownership(
+    memory: &GuestMemory,
+) -> Result<WaitChannelCheckpointOwnership, Error> {
+    Ok(WaitChannelCheckpointOwnership {
+        wait: read_wait_channel_snapshot(memory)?,
+        queue: read_queue_snapshot(memory)?,
+        task_a: read_context(memory, TASK_A_CONTEXT_ADDR)?,
+        task_b: read_context(memory, TASK_B_CONTEXT_ADDR)?,
+    })
+}
+
+fn compare_wait_checkpoint(
+    expected: &WaitChannelCheckpointOwnership,
+    machine: crate::state_snapshot::BoundedCheckpointComparison,
+    observed: WaitChannelCheckpointOwnership,
+) -> WaitChannelCheckpointComparison {
+    WaitChannelCheckpointComparison {
+        machine,
+        wait_exact: observed.wait == expected.wait,
+        queue_exact: observed.queue == expected.queue,
+        task_a_exact: observed.task_a == expected.task_a,
+        task_b_exact: observed.task_b == expected.task_b,
+    }
+}
+
+fn mutate_wait_checkpoint_ownership(memory: &mut GuestMemory) -> Result<(), Error> {
+    memory.write(TASK_QUEUE_A_STATE_ADDR, &[TaskRunState::Runnable as u8])?;
+    memory.write(TASK_QUEUE_SELECTED_ADDR, &[RunnableTaskId::A as u8])?;
+    memory.write(TASK_WAIT_CHANNEL_ADDR, &[TASK_WAIT_CHANNEL_NONE])?;
+    memory.write(TASK_WAIT_MISMATCH_COUNT_ADDR, &[0])?;
+    memory.write(TASK_WAIT_LAST_ATTEMPT_ADDR, &[TASK_WAIT_CHANNEL_NONE])?;
+    Ok(())
 }
 
 fn drain_wait_dirty_baseline(
@@ -762,6 +1093,24 @@ mod wait_channel_tests {
         assert_eq!(QUEUE_TASK_A_BYTES.len(), 19);
         assert_eq!(QUEUE_TASK_B_BYTES.len(), 21);
         assert_eq!(QUEUE_HANDLER_BYTES.len(), 233);
+    }
+
+    #[test]
+    fn checkpoint_arm_handler_commits_x_then_debugs_at_nop_before_p() {
+        assert_eq!(WAIT_WAKE_ARM_CHECKPOINT_HANDLER_BYTES.len(), 106);
+        assert_eq!(
+            &WAIT_WAKE_ARM_CHECKPOINT_HANDLER_BYTES[0x39..0x3d],
+            &[0xb0, b'X', 0xe6, 0xe9]
+        );
+        assert_eq!(WAIT_WAKE_ARM_CHECKPOINT_HANDLER_BYTES[0x3d], 0x90);
+        assert_eq!(
+            &WAIT_WAKE_ARM_CHECKPOINT_HANDLER_BYTES[0x3e..0x42],
+            &[0xb0, b'P', 0xe6, 0xe9]
+        );
+        assert_eq!(
+            TASK_WAIT_CHECKPOINT_CAPTURE_RIP,
+            TASK_WAKE_ARM_HANDLER.get() + 0x3d
+        );
     }
 
     #[test]

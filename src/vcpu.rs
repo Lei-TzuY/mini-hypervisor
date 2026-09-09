@@ -18,6 +18,7 @@ pub use special_register_snapshot::{
     VcpuSpecialRegisterField, VcpuSpecialRegisterMismatch, VcpuSpecialRegisterSnapshot,
     VcpuSpecialRegisterSnapshotComparison,
 };
+mod guest_debug;
 mod interrupt;
 mod special_register_restore;
 
@@ -68,6 +69,7 @@ impl VcpuId {
 pub enum VcpuExit {
     KvmUnknown,
     Exception,
+    Debug,
     Hlt,
     Io,
     Mmio,
@@ -84,6 +86,7 @@ impl VcpuExit {
         match reason {
             kvm_unknown::KVM_EXIT_UNKNOWN => Self::KvmUnknown,
             exception::KVM_EXIT_EXCEPTION => Self::Exception,
+            guest_debug::KVM_EXIT_DEBUG => Self::Debug,
             sys::KVM_EXIT_IO => Self::Io,
             sys::KVM_EXIT_HLT => Self::Hlt,
             mmio::KVM_EXIT_MMIO => Self::Mmio,
@@ -100,6 +103,7 @@ impl VcpuExit {
         match self {
             Self::KvmUnknown => kvm_unknown::KVM_EXIT_UNKNOWN,
             Self::Exception => exception::KVM_EXIT_EXCEPTION,
+            Self::Debug => guest_debug::KVM_EXIT_DEBUG,
             Self::Io => sys::KVM_EXIT_IO,
             Self::Hlt => sys::KVM_EXIT_HLT,
             Self::Mmio => mmio::KVM_EXIT_MMIO,
@@ -515,6 +519,10 @@ mod tests {
             VcpuExit::from_raw(exception::KVM_EXIT_EXCEPTION),
             VcpuExit::Exception
         );
+        assert_eq!(
+            VcpuExit::from_raw(guest_debug::KVM_EXIT_DEBUG),
+            VcpuExit::Debug
+        );
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_HLT), VcpuExit::Hlt);
         assert_eq!(VcpuExit::from_raw(sys::KVM_EXIT_IO), VcpuExit::Io);
         assert_eq!(VcpuExit::from_raw(mmio::KVM_EXIT_MMIO), VcpuExit::Mmio);
@@ -546,6 +554,7 @@ mod tests {
     fn exit_reason_round_trips_typed_classification() {
         assert_eq!(VcpuExit::KvmUnknown.reason(), kvm_unknown::KVM_EXIT_UNKNOWN);
         assert_eq!(VcpuExit::Exception.reason(), exception::KVM_EXIT_EXCEPTION);
+        assert_eq!(VcpuExit::Debug.reason(), guest_debug::KVM_EXIT_DEBUG);
         assert_eq!(VcpuExit::Hlt.reason(), sys::KVM_EXIT_HLT);
         assert_eq!(VcpuExit::Io.reason(), sys::KVM_EXIT_IO);
         assert_eq!(VcpuExit::Mmio.reason(), mmio::KVM_EXIT_MMIO);

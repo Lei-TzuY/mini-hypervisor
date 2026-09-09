@@ -1,0 +1,53 @@
+name: Strict KVM wait checkpoint composition
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/task.rs'
+      - 'src/task/**'
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/**'
+      - 'src/bin/task-wait-checkpoint-composition.rs'
+      - 'tests/task_wait_checkpoint_composition_guest.rs'
+      - 'src/kvm/**'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/**'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/execution.rs'
+      - 'src/vmexit.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/task-wait-checkpoint-composition.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  task-wait-checkpoint-composition:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build wait checkpoint composition proof
+        run: cargo build --quiet --bin task-wait-checkpoint-composition
+      - name: Strict KVM wait checkpoint composition proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/task-wait-checkpoint-composition)"
+          printf '%s\n' "$output"
+
+          grep -F 'wait checkpoint capture: vCPU 0 exit Debug: rip=0x1603d, rflags=' <<<"$output"
+          grep -F 'wait checkpoint ownership: state=Blocked owner=0x11 mismatches=1 wakes=0 last=0x22 selected=B' <<<"$output"
+          grep -F 'wait checkpoint corruption: page_exact=false vcpu_exact=false wait_exact=false queue_exact=false task_a_exact=true task_b_exact=true' <<<"$output"
+          grep -F 'wait checkpoint restore: page_exact=true vcpu_exact=true wait_exact=true queue_exact=true task_a_exact=true task_b_exact=true' <<<"$output"
+          grep -F 'wait checkpoint proof: [75, 49, 65, 88, 80, 87, 48, 66, 82, 68]' <<<"$output"
+
+          capture="$(grep -F 'wait checkpoint capture: vCPU 0 exit Debug: rip=0x1603d, rflags=' <<<"$output")"
+          capture_hex="${capture##*rflags=}"
+          [[ "$capture_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          capture_rflags=$((capture_hex))
+          (( (capture_rflags & 0x2) == 0x2 ))
