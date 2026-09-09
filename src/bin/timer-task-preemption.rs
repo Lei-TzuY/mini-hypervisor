@@ -48,8 +48,14 @@ fn main() -> ExitCode {
                 result.task_a_stack_marker(),
                 result.task_b_stack_marker()
             );
-            println!("timer task A context PTE: {:#x}", result.first_context_pte());
-            println!("timer task B context PTE: {:#x}", result.second_context_pte());
+            println!(
+                "timer task A context PTE: {:#x}",
+                result.first_context_pte()
+            );
+            println!(
+                "timer task B context PTE: {:#x}",
+                result.second_context_pte()
+            );
             println!("timer task proof: {:?}", result.proof());
             ExitCode::SUCCESS
         }
