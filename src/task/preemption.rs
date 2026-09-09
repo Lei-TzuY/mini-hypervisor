@@ -32,17 +32,38 @@ const PIC_SETUP_AFTER_CLI: [u8; 36] = [
 ];
 
 const PREEMPT_TASK_A_BYTES: [u8; 19] = [
-    0x49, 0xbc, 0x11, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov r12,0x1111
-    0xc6, 0x44, 0x24, 0xf8, b'a', // mov byte [rsp-8],'a'
-    0xcd, TASK_PREEMPTION_ARM_VECTOR, // int 0x7f: deterministic arm rendezvous
-    0xcd, 0x81, // terminal only after the preempted A context is restored
+    0x49,
+    0xbc,
+    0x11,
+    0x11,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00, // mov r12,0x1111
+    0xc6,
+    0x44,
+    0x24,
+    0xf8,
+    b'a', // mov byte [rsp-8],'a'
+    0xcd,
+    TASK_PREEMPTION_ARM_VECTOR, // int 0x7f: deterministic arm rendezvous
+    0xcd,
+    0x81, // terminal only after the preempted A context is restored
 ];
 
 const PREEMPT_ARM_HANDLER_BYTES: [u8; 11] = [
-    0xb0, TASK_PREEMPTION_ARM_BYTE, 0xe6, 0xe9, // host-visible arm barrier under IF=0
+    0xb0,
+    TASK_PREEMPTION_ARM_BYTE,
+    0xe6,
+    0xe9, // host-visible arm barrier under IF=0
     0xfb, // sti
     0xf4, // hlt: STI shadow closes the early-edge race
-    0xb0, TASK_PREEMPTION_FAILURE_BYTE, 0xe6, 0xe9, // must never resume directly
+    0xb0,
+    TASK_PREEMPTION_FAILURE_BYTE,
+    0xe6,
+    0xe9, // must never resume directly
     0xf4,
 ];
 
@@ -74,44 +95,80 @@ pub struct TimerTaskPreemptionGuestResult {
 
 impl TimerTaskPreemptionGuestResult {
     #[must_use]
-    pub const fn gsi(&self) -> u32 { self.gsi }
+    pub const fn gsi(&self) -> u32 {
+        self.gsi
+    }
     #[must_use]
-    pub const fn vector(&self) -> u8 { self.vector }
+    pub const fn vector(&self) -> u8 {
+        self.vector
+    }
     #[must_use]
-    pub const fn lapic_spiv(&self) -> u32 { self.lapic_spiv }
+    pub const fn lapic_spiv(&self) -> u32 {
+        self.lapic_spiv
+    }
     #[must_use]
-    pub const fn lapic_lint0(&self) -> u32 { self.lapic_lint0 }
+    pub const fn lapic_lint0(&self) -> u32 {
+        self.lapic_lint0
+    }
     #[must_use]
-    pub const fn armed_rflags(&self) -> u64 { self.armed_rflags }
+    pub const fn armed_rflags(&self) -> u64 {
+        self.armed_rflags
+    }
     #[must_use]
-    pub fn io_exits(&self) -> &[PortIoExit] { &self.io_exits }
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
     #[must_use]
-    pub fn proof(&self) -> &[u8] { &self.proof }
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
     #[must_use]
-    pub const fn task_a(&self) -> TaskContextSnapshot { self.task_a }
+    pub const fn task_a(&self) -> TaskContextSnapshot {
+        self.task_a
+    }
     #[must_use]
-    pub const fn task_b(&self) -> TaskContextSnapshot { self.task_b }
+    pub const fn task_b(&self) -> TaskContextSnapshot {
+        self.task_b
+    }
     #[must_use]
-    pub const fn terminal(&self) -> TaskTerminalObservation { self.terminal }
+    pub const fn terminal(&self) -> TaskTerminalObservation {
+        self.terminal
+    }
     #[must_use]
-    pub const fn final_cr3(&self) -> u64 { self.final_cr3 }
+    pub const fn final_cr3(&self) -> u64 {
+        self.final_cr3
+    }
     #[must_use]
-    pub const fn final_r12(&self) -> u64 { self.final_r12 }
+    pub const fn final_r12(&self) -> u64 {
+        self.final_r12
+    }
     #[must_use]
-    pub const fn task_a_stack_marker(&self) -> u8 { self.task_a_stack_marker }
+    pub const fn task_a_stack_marker(&self) -> u8 {
+        self.task_a_stack_marker
+    }
     #[must_use]
-    pub const fn task_b_stack_marker(&self) -> u8 { self.task_b_stack_marker }
+    pub const fn task_b_stack_marker(&self) -> u8 {
+        self.task_b_stack_marker
+    }
     #[must_use]
-    pub const fn first_context_pte(&self) -> u64 { self.first_context_pte }
+    pub const fn first_context_pte(&self) -> u64 {
+        self.first_context_pte
+    }
     #[must_use]
-    pub const fn second_context_pte(&self) -> u64 { self.second_context_pte }
+    pub const fn second_context_pte(&self) -> u64 {
+        self.second_context_pte
+    }
 }
 
 pub fn run_timer_task_preemption_guest(
     config: VmConfig,
 ) -> Result<TimerTaskPreemptionGuestResult, Error> {
     let kernel_bytes = preemption_kernel_bytes();
-    let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &kernel_bytes)?;
+    let kernel = FlatGuestImage::new(
+        PRIVILEGE_KERNEL_ENTRY,
+        PRIVILEGE_KERNEL_ENTRY,
+        &kernel_bytes,
+    )?;
     let task_a = FlatGuestImage::new(
         PRIVILEGE_USER_ENTRY,
         PRIVILEGE_USER_ENTRY,
@@ -228,7 +285,12 @@ pub fn run_timer_task_preemption_guest(
             (b'R', "restored task A terminal observation"),
             (b'D', "timer task preemption completion barrier"),
         ] {
-            exits.push(run_expected_debug_output(&mut vcpu, &mut port_io, byte, stage)?);
+            exits.push(run_expected_debug_output(
+                &mut vcpu,
+                &mut port_io,
+                byte,
+                stage,
+            )?);
         }
         Ok(exits)
     })();
@@ -281,7 +343,11 @@ pub fn run_timer_task_preemption_guest(
     let terminal_observation = read_terminal_observation(guest_memory)?;
     let task_a_stack_marker = read_byte(guest_memory, TASK_A_STACK_MARKER_PHYS)?;
     let task_b_stack_marker = read_byte(guest_memory, TASK_B_STACK_MARKER_PHYS)?;
-    let first_context_pte = read_pte(guest_memory, PRIVILEGE_PT_ADDR, TASK_CONTEXT_PAGE_ADDR.get())?;
+    let first_context_pte = read_pte(
+        guest_memory,
+        PRIVILEGE_PT_ADDR,
+        TASK_CONTEXT_PAGE_ADDR.get(),
+    )?;
     let second_context_pte = read_pte(
         guest_memory,
         ADDRESS_SPACE_B_PT_ADDR,
@@ -392,11 +458,13 @@ fn run_expected_debug_output(
 ) -> Result<PortIoExit, Error> {
     let exit = vcpu.run_once()?;
     if exit != VcpuExit::Io {
-        return Err(Error::VmExit(crate::error::VmExitError::UnexpectedSequence {
-            stage,
-            expected_reason: VcpuExit::Io.reason(),
-            actual_reason: exit.reason(),
-        }));
+        return Err(Error::VmExit(
+            crate::error::VmExitError::UnexpectedSequence {
+                stage,
+                expected_reason: VcpuExit::Io.reason(),
+                actual_reason: exit.reason(),
+            },
+        ));
     }
     let io_exit = vcpu.port_io_exit()?;
     if io_exit.direction() != PortIoDirection::Out
@@ -538,10 +606,16 @@ mod tests {
     #[test]
     fn timer_wrapper_discards_only_nested_kernel_frame_then_reuses_scheduler() {
         assert_eq!(PREEMPT_TIMER_WRAPPER_BYTES.len(), 13);
-        assert_eq!(&PREEMPT_TIMER_WRAPPER_BYTES[4..8], &[0x48, 0x83, 0xc4, 0x18]);
+        assert_eq!(
+            &PREEMPT_TIMER_WRAPPER_BYTES[4..8],
+            &[0x48, 0x83, 0xc4, 0x18]
+        );
         let delta = i32::from_le_bytes(PREEMPT_TIMER_WRAPPER_BYTES[9..13].try_into().unwrap());
         let next = TASK_PREEMPTION_TIMER_WRAPPER.get() + PREEMPT_TIMER_WRAPPER_BYTES.len() as u64;
-        assert_eq!((next as i64 + i64::from(delta)) as u64, PRIVILEGE_RETURN_HANDLER.get());
+        assert_eq!(
+            (next as i64 + i64::from(delta)) as u64,
+            PRIVILEGE_RETURN_HANDLER.get()
+        );
     }
 
     #[test]
