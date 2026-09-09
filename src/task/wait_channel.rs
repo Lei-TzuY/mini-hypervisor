@@ -6,6 +6,7 @@ pub const TASK_WAIT_CHANNEL_NONE: u8 = 0;
 pub const TASK_WAIT_CHANNEL_A: u8 = 0x11;
 pub const TASK_WAIT_WRONG_CHANNEL: u8 = 0x22;
 pub const TASK_WAIT_CHANNEL_PROOF: &[u8; 10] = b"K1AXPW0BRD";
+pub const TASK_WAIT_DIRTY_CAPTURE_STAGES: &[u8; 4] = b"KXWD";
 
 const WAIT_TIMER_DELAY_MILLIS: u64 = 10;
 const WAIT_WATCHDOG_SECONDS: u64 = 5;
@@ -221,7 +222,71 @@ impl WaitChannelGuestResult {
     pub const fn second_context_pte(&self) -> u64 { self.second_context_pte }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaitChannelDirtyCapture {
+    stage: u8,
+    bitmap: Vec<u64>,
+    wait: WaitChannelSnapshot,
+}
+
+impl WaitChannelDirtyCapture {
+    #[must_use]
+    pub const fn stage(&self) -> u8 { self.stage }
+    #[must_use]
+    pub fn bitmap(&self) -> &[u64] { &self.bitmap }
+    #[must_use]
+    pub const fn wait(&self) -> WaitChannelSnapshot { self.wait }
+    #[must_use]
+    pub fn context_page_dirty(&self) -> bool {
+        dirty_bitmap_contains_gpa(&self.bitmap, TASK_CONTEXT_PAGE_ADDR)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaitChannelDirtyGuestResult {
+    guest: WaitChannelGuestResult,
+    captures: Vec<WaitChannelDirtyCapture>,
+}
+
+impl WaitChannelDirtyGuestResult {
+    #[must_use]
+    pub const fn guest(&self) -> &WaitChannelGuestResult { &self.guest }
+    #[must_use]
+    pub fn captures(&self) -> &[WaitChannelDirtyCapture] { &self.captures }
+}
+
 pub fn run_bounded_wait_channel_guest(config: VmConfig) -> Result<WaitChannelGuestResult, Error> {
+    let (guest, captures) = run_bounded_wait_channel_guest_inner(config, false)?;
+    debug_assert!(captures.is_empty());
+    Ok(guest)
+}
+
+pub fn run_bounded_wait_channel_dirty_guest(
+    config: VmConfig,
+) -> Result<WaitChannelDirtyGuestResult, Error> {
+    let (guest, captures) = run_bounded_wait_channel_guest_inner(config, true)?;
+    if captures.len() != TASK_WAIT_DIRTY_CAPTURE_STAGES.len()
+        || captures
+            .iter()
+            .map(WaitChannelDirtyCapture::stage)
+            .ne(TASK_WAIT_DIRTY_CAPTURE_STAGES.iter().copied())
+    {
+        return Err(verification_error(
+            "wait-channel dirty capture sequence",
+            format!(
+                "expected stages {:?}, got {:?}",
+                TASK_WAIT_DIRTY_CAPTURE_STAGES,
+                captures.iter().map(WaitChannelDirtyCapture::stage).collect::<Vec<_>>()
+            ),
+        ));
+    }
+    Ok(WaitChannelDirtyGuestResult { guest, captures })
+}
+
+fn run_bounded_wait_channel_guest_inner(
+    config: VmConfig,
+    track_dirty: bool,
+) -> Result<(WaitChannelGuestResult, Vec<WaitChannelDirtyCapture>), Error> {
     let kernel_bytes = queue_kernel_bytes();
     let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &kernel_bytes)?;
     let task_a = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &QUEUE_TASK_A_BYTES)?;
@@ -288,19 +353,31 @@ pub fn run_bounded_wait_channel_guest(config: VmConfig) -> Result<WaitChannelGue
     )?;
     initialize_queue_metadata(&mut memory)?;
     initialize_wait_channel_metadata(&mut memory)?;
-    vm.register_guest_memory(memory)?;
+    let dirty_slot = if track_dirty {
+        Some(crate::kvm::register_guest_memory_with_dirty_log(&mut vm, memory)?)
+    } else {
+        vm.register_guest_memory(memory)?;
+        None
+    };
 
     debug_assert_eq!(config.vcpu_count(), 1);
     let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
     vcpu.initialize_long_mode_privilege(layout.privilege_layout())?;
     let lapic = vcpu.configure_legacy_pic_extint()?;
     let mut port_io = PortIoBus::with_debug_port();
+    let mut dirty_captures = Vec::new();
+    if let Some(slot) = dirty_slot {
+        drain_wait_dirty_baseline(&vm, slot)?;
+    }
 
     let blocked_io = run_queue_debug_output(&mut vcpu, &mut port_io, b'K', "wait-channel block A")?;
     let blocked_wait = read_wait_channel_snapshot(
         vm.guest_memory().expect("registered wait-channel memory remains VM-owned"),
     )?;
     require_wait_blocked(blocked_wait)?;
+    if let Some(slot) = dirty_slot {
+        dirty_captures.push(capture_wait_dirty(&vm, slot, b'K', blocked_wait)?);
+    }
 
     let first_select_io = run_queue_debug_output(
         &mut vcpu,
@@ -329,6 +406,9 @@ pub fn run_bounded_wait_channel_guest(config: VmConfig) -> Result<WaitChannelGue
         vm.guest_memory().expect("registered wait-channel memory remains VM-owned"),
     )?;
     require_wait_mismatch(mismatch_wait)?;
+    if let Some(slot) = dirty_slot {
+        dirty_captures.push(capture_wait_dirty(&vm, slot, b'X', mismatch_wait)?);
+    }
 
     let armed_io = run_queue_debug_output(&mut vcpu, &mut port_io, b'P', "wait-channel wake arm")?;
     let armed = vcpu.registers()?;
@@ -374,6 +454,9 @@ pub fn run_bounded_wait_channel_guest(config: VmConfig) -> Result<WaitChannelGue
             vm.guest_memory().expect("registered wait-channel memory remains VM-owned"),
         )?;
         require_wait_woken(wake_wait)?;
+        if let Some(slot) = dirty_slot {
+            dirty_captures.push(capture_wait_dirty(&vm, slot, b'W', wake_wait)?);
+        }
         let second_select_io = run_queue_debug_output(
             &mut vcpu,
             &mut port_io,
@@ -402,6 +485,13 @@ pub fn run_bounded_wait_channel_guest(config: VmConfig) -> Result<WaitChannelGue
             b'D',
             "wait-channel completion",
         )?;
+        let done_wait = read_wait_channel_snapshot(
+            vm.guest_memory().expect("registered wait-channel memory remains VM-owned"),
+        )?;
+        require_wait_woken(done_wait)?;
+        if let Some(slot) = dirty_slot {
+            dirty_captures.push(capture_wait_dirty(&vm, slot, b'D', done_wait)?);
+        }
         Ok((wake_io, wake_wait, second_select_io, second_selection, scheduler_b_io, restored_io, done_io))
     })();
 
@@ -477,7 +567,7 @@ pub fn run_bounded_wait_channel_guest(config: VmConfig) -> Result<WaitChannelGue
         second_context_pte,
     )?;
 
-    Ok(WaitChannelGuestResult {
+    Ok((WaitChannelGuestResult {
         gsi: TASK_WAKE_GSI,
         vector: TASK_WAKE_TIMER_VECTOR,
         lapic_spiv: lapic.spiv(),
@@ -500,7 +590,58 @@ pub fn run_bounded_wait_channel_guest(config: VmConfig) -> Result<WaitChannelGue
         task_b_stack_marker,
         first_context_pte,
         second_context_pte,
-    })
+    }, dirty_captures))
+}
+
+fn drain_wait_dirty_baseline(
+    vm: &crate::kvm::Vm,
+    slot: crate::kvm::DirtyLogSlot0,
+) -> Result<(), Error> {
+    let setup_dirty = crate::kvm::harvest_dirty_log(vm, slot)?;
+    let clean = crate::kvm::harvest_dirty_log(vm, slot)?;
+    if clean.iter().any(|word| *word != 0) {
+        return Err(verification_error(
+            "wait-channel dirty baseline",
+            format!("expected clean bitmap after draining setup dirtiness {setup_dirty:?}, got {clean:?}"),
+        ));
+    }
+    Ok(())
+}
+
+fn capture_wait_dirty(
+    vm: &crate::kvm::Vm,
+    slot: crate::kvm::DirtyLogSlot0,
+    stage: u8,
+    wait: WaitChannelSnapshot,
+) -> Result<WaitChannelDirtyCapture, Error> {
+    let bitmap = crate::kvm::harvest_dirty_log(vm, slot)?;
+    if !dirty_bitmap_contains_gpa(&bitmap, TASK_CONTEXT_PAGE_ADDR) {
+        return Err(verification_error(
+            "wait-channel dirty capture",
+            format!(
+                "stage {} did not mark supervisor task-context page {:#x} dirty: {bitmap:?}",
+                char::from(stage),
+                TASK_CONTEXT_PAGE_ADDR.get()
+            ),
+        ));
+    }
+    let clean = crate::kvm::harvest_dirty_log(vm, slot)?;
+    if clean.iter().any(|word| *word != 0) {
+        return Err(verification_error(
+            "wait-channel dirty clear",
+            format!("stage {} left uncleared dirty bits after harvest: {clean:?}", char::from(stage)),
+        ));
+    }
+    Ok(WaitChannelDirtyCapture { stage, bitmap, wait })
+}
+
+fn dirty_bitmap_contains_gpa(bitmap: &[u64], address: GuestPhysAddr) -> bool {
+    let page = address.get() / crate::memory::KVM_MEMORY_ALIGNMENT;
+    let word_index = usize::try_from(page / 64).expect("guest page index fits host usize");
+    let bit = page % 64;
+    bitmap
+        .get(word_index)
+        .is_some_and(|word| word & (1_u64 << bit) != 0)
 }
 
 fn initialize_wait_channel_metadata(memory: &mut GuestMemory) -> Result<(), Error> {
@@ -621,5 +762,16 @@ mod wait_channel_tests {
         assert_eq!(QUEUE_TASK_A_BYTES.len(), 19);
         assert_eq!(QUEUE_TASK_B_BYTES.len(), 21);
         assert_eq!(QUEUE_HANDLER_BYTES.len(), 233);
+    }
+
+    #[test]
+    fn dirty_bitmap_tracks_the_supervisor_context_page() {
+        let page = TASK_CONTEXT_PAGE_ADDR.get() / crate::memory::KVM_MEMORY_ALIGNMENT;
+        assert_eq!(page, 48);
+        let mut bitmap = vec![0_u64; 8];
+        bitmap[0] = 1_u64 << page;
+        assert!(dirty_bitmap_contains_gpa(&bitmap, TASK_CONTEXT_PAGE_ADDR));
+        assert!(!dirty_bitmap_contains_gpa(&[0; 8], TASK_CONTEXT_PAGE_ADDR));
+        assert_eq!(TASK_WAIT_DIRTY_CAPTURE_STAGES, b"KXWD");
     }
 }
