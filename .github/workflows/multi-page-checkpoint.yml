@@ -1,0 +1,56 @@
+name: Strict KVM multi-page checkpoint restore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/**'
+      - 'src/bin/multi-page-checkpoint.rs'
+      - 'tests/multi_page_checkpoint_guest.rs'
+      - '.github/workflows/multi-page-checkpoint.yml'
+  pull_request:
+    paths:
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/**'
+      - 'src/bin/multi-page-checkpoint.rs'
+      - 'tests/multi_page_checkpoint_guest.rs'
+      - '.github/workflows/multi-page-checkpoint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-multi-page-checkpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build multi-page checkpoint proof
+        run: cargo build --quiet --bin multi-page-checkpoint
+      - name: Execute multi-page checkpoint proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/multi-page-checkpoint)"
+          printf '%s\n' "$output"
+
+          grep -F 'multi-page checkpoint pages: 0x30000,0x31000,0x1fe000' <<<"$output"
+          grep -F 'multi-page checkpoint corruption: control=false data=false stack=false vcpu=false' <<<"$output"
+          grep -F 'multi-page checkpoint restore: control=true data=true stack=true vcpu=true' <<<"$output"
+          grep -F 'multi-page checkpoint proof: [65, 66, 67, 82]' <<<"$output"
+
+          capture="$(grep -F 'multi-page checkpoint capture: vCPU 0 exit Hlt: rip=0x10013, rflags=' <<<"$output")"
+          capture_rflags_hex="${capture##*rflags=}"
+          [[ "$capture_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          capture_rflags=$((capture_rflags_hex))
+          (( (capture_rflags & 0x2) == 0x2 ))
+
+          terminal="$(grep -F 'multi-page checkpoint terminal: vCPU 0 exit Hlt: rip=0x1002d, rflags=' <<<"$output")"
+          terminal_rflags_hex="${terminal##*rflags=}"
+          [[ "$terminal_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          terminal_rflags=$((terminal_rflags_hex))
+          (( (terminal_rflags & 0x2) == 0x2 ))
