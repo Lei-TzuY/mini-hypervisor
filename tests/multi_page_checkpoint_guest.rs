@@ -17,7 +17,10 @@ fn three_owned_pages_and_vcpu_restore_exactly_before_abcr_resume() {
             assert_eq!(capture.exit(), VcpuExit::Hlt);
             assert_eq!(capture.rip(), MULTI_PAGE_CHECKPOINT_CAPTURE_RIP);
             assert_eq!(capture.rflags() & 0x2, 0x2);
-            assert_eq!(result.captured_pages(), &MULTI_PAGE_CHECKPOINT_OWNERSHIP_SET);
+            assert_eq!(
+                result.captured_pages(),
+                &MULTI_PAGE_CHECKPOINT_OWNERSHIP_SET
+            );
 
             for address in [
                 MULTI_PAGE_CHECKPOINT_CONTROL_PAGE,
