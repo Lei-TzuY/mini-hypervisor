@@ -12,7 +12,10 @@ fn bounded_checkpoint_restores_corrupted_page_and_vcpu_then_resumes_guest() {
     match run_bounded_checkpoint_guest(VmConfig::default()) {
         Ok(result) => {
             assert_eq!(result.checkpoint_report().exit(), VcpuExit::Hlt);
-            assert_eq!(result.checkpoint_report().rip(), BOUNDED_CHECKPOINT_CAPTURE_RIP);
+            assert_eq!(
+                result.checkpoint_report().rip(),
+                BOUNDED_CHECKPOINT_CAPTURE_RIP
+            );
             assert_eq!(result.checkpoint_report().rflags() & 0x2, 0x2);
 
             assert!(!result.corruption().page_exact());
@@ -34,7 +37,10 @@ fn bounded_checkpoint_restores_corrupted_page_and_vcpu_then_resumes_guest() {
             assert_eq!(io.output_data(), BOUNDED_CHECKPOINT_PROOF);
 
             assert_eq!(result.terminal_report().exit(), VcpuExit::Hlt);
-            assert_eq!(result.terminal_report().rip(), BOUNDED_CHECKPOINT_TERMINAL_RIP);
+            assert_eq!(
+                result.terminal_report().rip(),
+                BOUNDED_CHECKPOINT_TERMINAL_RIP
+            );
             assert_eq!(result.terminal_report().rflags() & 0x2, 0x2);
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
