@@ -30,15 +30,12 @@ impl BoundedCheckpointPage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BoundedVcpuPageSetCheckpoint {
+pub struct BoundedPageSetSnapshot {
     pages: Vec<BoundedCheckpointPage>,
-    vcpu: VcpuStateSnapshot,
 }
 
-impl BoundedVcpuPageSetCheckpoint {
+impl BoundedPageSetSnapshot {
     pub fn capture(
-        vcpu: &Vcpu,
-        msr_policy: &GuestMsrAccessPolicy,
         memory: &GuestMemory,
         page_addresses: &[GuestPhysAddr],
     ) -> Result<Self, Error> {
@@ -49,8 +46,7 @@ impl BoundedVcpuPageSetCheckpoint {
             memory.read(address, &mut bytes)?;
             pages.push(BoundedCheckpointPage { address, bytes });
         }
-        let vcpu = vcpu.capture_state_snapshot(msr_policy)?;
-        Ok(Self { pages, vcpu })
+        Ok(Self { pages })
     }
 
     #[must_use]
@@ -66,6 +62,57 @@ impl BoundedVcpuPageSetCheckpoint {
             .map(|index| &self.pages[index])
     }
 
+    pub fn verify(
+        &self,
+        memory: &GuestMemory,
+    ) -> Result<Vec<BoundedCheckpointPageComparison>, Error> {
+        compare_pages(&self.pages, memory)
+    }
+
+    pub fn restore(&self, memory: &mut GuestMemory) -> Result<(), Error> {
+        for page in &self.pages {
+            memory.write(page.address, &page.bytes)?;
+        }
+        Ok(())
+    }
+
+    pub fn restore_and_verify(
+        &self,
+        memory: &mut GuestMemory,
+    ) -> Result<Vec<BoundedCheckpointPageComparison>, Error> {
+        self.restore(memory)?;
+        self.verify(memory)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundedVcpuPageSetCheckpoint {
+    pages: BoundedPageSetSnapshot,
+    vcpu: VcpuStateSnapshot,
+}
+
+impl BoundedVcpuPageSetCheckpoint {
+    pub fn capture(
+        vcpu: &Vcpu,
+        msr_policy: &GuestMsrAccessPolicy,
+        memory: &GuestMemory,
+        page_addresses: &[GuestPhysAddr],
+    ) -> Result<Self, Error> {
+        let pages = BoundedPageSetSnapshot::capture(memory, page_addresses)?;
+        let vcpu = vcpu.capture_state_snapshot(msr_policy)?;
+        Ok(Self { pages, vcpu })
+    }
+
+    #[must_use]
+    pub fn pages(&self) -> &[BoundedCheckpointPage] {
+        self.pages.pages()
+    }
+
+    #[must_use]
+    pub fn page(&self, address: GuestPhysAddr) -> Option<&BoundedCheckpointPage> {
+        self.pages.page(address)
+    }
+
     #[must_use]
     pub const fn vcpu(&self) -> &VcpuStateSnapshot {
         &self.vcpu
@@ -76,7 +123,7 @@ impl BoundedVcpuPageSetCheckpoint {
         vcpu: &Vcpu,
         memory: &GuestMemory,
     ) -> Result<BoundedPageSetCheckpointComparison, Error> {
-        let pages = compare_pages(&self.pages, memory)?;
+        let pages = self.pages.verify(memory)?;
         let vcpu = vcpu.verify_state_snapshot(&self.vcpu)?;
         Ok(BoundedPageSetCheckpointComparison { pages, vcpu })
     }
@@ -86,11 +133,9 @@ impl BoundedVcpuPageSetCheckpoint {
         vcpu: &Vcpu,
         memory: &mut GuestMemory,
     ) -> Result<BoundedPageSetCheckpointComparison, Error> {
-        for page in &self.pages {
-            memory.write(page.address, &page.bytes)?;
-        }
+        self.pages.restore(memory)?;
         let vcpu = vcpu.restore_and_verify_state_snapshot(&self.vcpu)?;
-        let pages = compare_pages(&self.pages, memory)?;
+        let pages = self.pages.verify(memory)?;
         Ok(BoundedPageSetCheckpointComparison { pages, vcpu })
     }
 }
@@ -205,7 +250,7 @@ fn validate_page_addresses(page_addresses: &[GuestPhysAddr]) -> Result<Vec<Guest
     Ok(canonical)
 }
 
-fn page_set_error(operation: &'static str, detail: impl Into<String>) -> Error {
+pub(crate) fn page_set_error(operation: &'static str, detail: impl Into<String>) -> Error {
     Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
         id: VcpuId::BOOT.get(),
         operation,
