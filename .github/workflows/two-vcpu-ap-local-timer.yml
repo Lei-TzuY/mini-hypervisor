@@ -27,12 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build SIPI-started AP local LAPIC timer proof
+        run: cargo build --quiet --bin two-vcpu-ap-local-timer
       - name: Strict KVM SIPI-started AP local LAPIC timer proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin two-vcpu-ap-local-timer)"
+          output="$(timeout 30s target/debug/two-vcpu-ap-local-timer)"
           printf '%s\n' "$output"
 
           grep -F 'AP local timer vector: 0x53' <<<"$output"

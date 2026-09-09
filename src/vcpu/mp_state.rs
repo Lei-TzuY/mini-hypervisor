@@ -203,3 +203,5 @@ mod mp_state_tests {
         )));
     }
 }
+
+include!("lapic_checkpoint.rs");

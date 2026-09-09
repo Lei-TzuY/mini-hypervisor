@@ -1,0 +1,82 @@
+name: Strict KVM controller checkpoint restore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/kvm/lapic_uapi.rs'
+      - 'src/vcpu/lapic_checkpoint.rs'
+      - 'src/vcpu/mp_state.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/controller.rs'
+      - 'src/bin/controller-checkpoint.rs'
+      - 'tests/controller_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/controller-checkpoint.yml'
+  pull_request:
+    paths:
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/kvm/lapic_uapi.rs'
+      - 'src/vcpu/lapic_checkpoint.rs'
+      - 'src/vcpu/mp_state.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/controller.rs'
+      - 'src/bin/controller-checkpoint.rs'
+      - 'tests/controller_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/controller-checkpoint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-controller-checkpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build controller checkpoint proof
+        run: cargo build --quiet --bin controller-checkpoint
+      - name: Execute controller checkpoint proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/controller-checkpoint)"
+          printf '%s\n' "$output"
+
+          grep -F 'controller checkpoint page: 0x30000' <<<"$output"
+          grep -F 'controller checkpoint corruption: page=false vcpu=false master-pic=false lapic=false' <<<"$output"
+          grep -F 'controller checkpoint restore: page=true vcpu=true master-pic=true lapic=true' <<<"$output"
+          grep -F 'controller checkpoint PIC IMR: 0xfe' <<<"$output"
+          grep -F 'controller checkpoint proof: [65, 73, 77, 68]' <<<"$output"
+
+          capture="$(grep -F 'controller checkpoint capture: KVM_EXIT_DEBUG: rip=0x10031, rflags=' <<<"$output")"
+          capture_rflags_hex="${capture##*rflags=}"
+          [[ "$capture_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          capture_rflags=$((capture_rflags_hex))
+          (( (capture_rflags & 0x2) == 0x2 ))
+          (( (capture_rflags & 0x200) == 0 ))
+
+          spiv_line="$(grep -F 'controller checkpoint LAPIC SPIV:' <<<"$output")"
+          spiv_hex="${spiv_line##*: }"
+          [[ "$spiv_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          spiv=$((spiv_hex))
+          (( (spiv & 0x100) == 0x100 ))
+
+          lint0_line="$(grep -F 'controller checkpoint LAPIC LINT0:' <<<"$output")"
+          lint0_hex="${lint0_line##*: }"
+          [[ "$lint0_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          lint0=$((lint0_hex))
+          (( (lint0 & 0x700) == 0x700 ))
+          (( (lint0 & 0x10000) == 0 ))
+
+          for label in 'controller checkpoint armed rflags:' 'controller checkpoint completion rflags:'; do
+            line="$(grep -F "$label" <<<"$output")"
+            rflags_hex="${line##*: }"
+            [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            rflags=$((rflags_hex))
+            (( (rflags & 0x2) == 0x2 ))
+            (( (rflags & 0x200) == 0x200 ))
+          done

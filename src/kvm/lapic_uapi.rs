@@ -50,3 +50,4 @@ mod lapic_uapi_tests {
 }
 
 include!("msi.rs");
+include!("irqchip_snapshot.rs");
