@@ -1,0 +1,73 @@
+name: Strict KVM wait-state dirty capture
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/kvm/dirty_log.rs'
+      - 'src/task.rs'
+      - 'src/task/runnable_queue.rs'
+      - 'src/task/wait_channel.rs'
+      - 'src/bin/task-wait-dirty-capture.rs'
+      - 'tests/task_wait_dirty_capture_guest.rs'
+      - 'src/address_space.rs'
+      - 'src/privilege.rs'
+      - 'src/interrupt.rs'
+      - 'src/kvm/**'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/**'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/lib.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/task-wait-dirty-capture.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  task-wait-dirty-capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build wait-state dirty capture proof
+        run: cargo build --quiet --bin task-wait-dirty-capture
+      - name: Strict KVM wait-state dirty capture proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/task-wait-dirty-capture)"
+          printf '%s\n' "$output"
+
+          grep -F 'wait dirty GSI: 0' <<<"$output"
+          grep -F 'wait dirty vector: 0x40' <<<"$output"
+          grep -F 'wait dirty captures: 4' <<<"$output"
+          grep -F 'wait dirty proof: [75, 49, 65, 88, 80, 87, 48, 66, 82, 68]' <<<"$output"
+
+          grep -E '^wait dirty capture K: bitmap=\[[^]]+\] context_page_dirty=true state=Blocked owner=0x11 mismatches=0 wakes=0 last=0x0$' <<<"$output"
+          grep -E '^wait dirty capture X: bitmap=\[[^]]+\] context_page_dirty=true state=Blocked owner=0x11 mismatches=1 wakes=0 last=0x22$' <<<"$output"
+          grep -E '^wait dirty capture W: bitmap=\[[^]]+\] context_page_dirty=true state=Runnable owner=0x0 mismatches=1 wakes=1 last=0x11$' <<<"$output"
+          grep -E '^wait dirty capture D: bitmap=\[[^]]+\] context_page_dirty=true state=Runnable owner=0x0 mismatches=1 wakes=1 last=0x11$' <<<"$output"
+
+          spiv_line="$(grep -F 'wait dirty LAPIC SPIV:' <<<"$output")"
+          spiv_hex="${spiv_line##*: }"
+          [[ "$spiv_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          spiv=$((spiv_hex))
+          (( (spiv & 0x100) == 0x100 ))
+
+          lint0_line="$(grep -F 'wait dirty LAPIC LINT0:' <<<"$output")"
+          lint0_hex="${lint0_line##*: }"
+          [[ "$lint0_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          lint0=$((lint0_hex))
+          (( (lint0 & 0x700) == 0x700 ))
+          (( (lint0 & 0x10000) == 0 ))
+
+          armed_line="$(grep -F 'wait dirty armed rflags:' <<<"$output")"
+          armed_hex="${armed_line##*: }"
+          [[ "$armed_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          armed=$((armed_hex))
+          (( (armed & 0x2) == 0x2 ))
+          (( (armed & 0x200) == 0 ))
