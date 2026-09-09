@@ -26,12 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build dirty-log proof
+        run: cargo build --quiet --bin dirty-log
       - name: Strict KVM slot-0 dirty bitmap proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin dirty-log)"
+          output="$(timeout 30s target/debug/dirty-log)"
           printf '%s\n' "$output"
 
           grep -F 'dirty-log first bitmap: [10]' <<<"$output"
