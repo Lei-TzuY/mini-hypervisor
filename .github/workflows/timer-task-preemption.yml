@@ -1,0 +1,84 @@
+name: Strict KVM timer task preemption
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'src/task.rs'
+      - 'src/task/preemption.rs'
+      - 'src/bin/timer-task-preemption.rs'
+      - 'tests/timer_task_preemption_guest.rs'
+      - 'src/address_space.rs'
+      - 'src/privilege.rs'
+      - 'src/interrupt.rs'
+      - 'src/kvm/**'
+      - 'src/vcpu.rs'
+      - 'src/vcpu/**'
+      - 'src/long_mode.rs'
+      - 'src/memory.rs'
+      - 'src/lib.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/timer-task-preemption.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  timer-task-preemption:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Strict KVM timer-preempted task context switch proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s cargo run --quiet --bin timer-task-preemption)"
+          printf '%s\n' "$output"
+
+          grep -F 'timer task GSI: 0' <<<"$output"
+          grep -F 'timer task vector: 0x40' <<<"$output"
+
+          spiv_line="$(grep -F 'timer task LAPIC SPIV:' <<<"$output")"
+          spiv_hex="${spiv_line##*: }"
+          [[ "$spiv_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          spiv=$((spiv_hex))
+          (( (spiv & 0x100) == 0x100 ))
+
+          lint0_line="$(grep -F 'timer task LAPIC LINT0:' <<<"$output")"
+          lint0_hex="${lint0_line##*: }"
+          [[ "$lint0_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          lint0=$((lint0_hex))
+          (( (lint0 & 0x700) == 0x700 ))
+          (( (lint0 & 0x10000) == 0 ))
+
+          armed_line="$(grep -F 'timer task armed rflags:' <<<"$output")"
+          armed_hex="${armed_line##*: }"
+          [[ "$armed_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          armed=$((armed_hex))
+          (( (armed & 0x2) == 0x2 ))
+          (( (armed & 0x200) == 0 ))
+
+          grep -F 'timer task A context: cr3=0x1000 rip=0x11011 rsp=0x1fcff0 rflags=0x202 r12=0x1111 saves=1' <<<"$output"
+          grep -F 'timer task B context: cr3=0xb000 rip=0x11013 rsp=0x1fcfd0 rflags=0x202 r12=0x2223 saves=1' <<<"$output"
+          grep -F 'timer task terminal: cr3=0x1000 rip=0x11013 rsp=0x1fcff0 r12=0x1111' <<<"$output"
+          grep -F 'timer task final registers: cr3=0x1000 r12=0x1111' <<<"$output"
+          grep -F 'timer task stack markers: first=97 second=98' <<<"$output"
+          grep -F 'timer task proof: [80, 65, 66, 82, 68]' <<<"$output"
+
+          check_context_pte() {
+            label="$1"
+            line="$(grep -F "$label" <<<"$output")"
+            value_hex="${line##*: }"
+            [[ "$value_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            value=$((value_hex))
+            (( (value & 0x000ffffffffff000) == 0x30000 ))
+            (( (value & 0x1) == 0x1 ))
+            (( (value & 0x2) == 0x2 ))
+            (( (value & 0x4) == 0 ))
+          }
+
+          check_context_pte 'timer task A context PTE:'
+          check_context_pte 'timer task B context PTE:'
