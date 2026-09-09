@@ -563,7 +563,7 @@ fn run_bounded_wait_channel_guest_inner(
     if mode.checkpoint() {
         checkpoint_evidence = Some(capture_mutate_restore_wait_checkpoint(
             &backend,
-            &vm,
+            &mut vm,
             &mut vcpu,
             &layout,
             mismatch_wait,
@@ -760,7 +760,7 @@ fn run_bounded_wait_channel_guest_inner(
 
 fn capture_mutate_restore_wait_checkpoint(
     backend: &KvmBackend,
-    vm: &crate::kvm::Vm,
+    vm: &mut crate::kvm::Vm,
     vcpu: &mut crate::vcpu::Vcpu,
     layout: &AddressSpaceSwitchLayout,
     mismatch_wait: WaitChannelSnapshot,
