@@ -4,54 +4,53 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `d8d7970ba7390b49da9dc9951599d2e3c8effba9` through PR #117 (`Track exact guest dirty pages through KVM`). Exact merged-main ordinary CI, the permanent hosted-KVM workflows triggered for that commit, and the independent dirty-log proof have converged without a failed, queued, in-progress or cancelled check on the exact main SHA.
+`main` is `59c9f28a1fb955dba3902d742b00de5e4ef68c83` through PR #118 (`Switch between bounded guest task contexts`). Every workflow triggered for that exact main has completed successfully; there are no failed, cancelled, queued, or in-progress checks on the integrated SHA.
 
-The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; guest-owned ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall-number dispatcher; fault-safe copyin/copyout/usercopy with bounded cross-page partial progress; two isolated ring3 address spaces with distinct CR3/page-table ownership and physical backing; and opt-in slot-0 KVM dirty-page tracking with exact clear-on-read hosted-KVM evidence.
+The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; guest-owned ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe copyin/copyout/usercopy; two isolated ring3 address spaces; opt-in slot-0 dirty-page tracking; and bounded guest-owned A→B→A task context switching.
 
-PR #116 seals the fixed A/B address-space proof. The same user code/data/stack virtual addresses are backed by different physical pages, the guest switches A→B→A through a shared CPL0 handler, CR3 observations are `[0x1000, 0xb000, 0x1000]`, physical data remains isolated, and exact proof `ABAD` completes at the validated CPL0 terminal path. Do not farm a third fixed address space, more hard-coded switch vectors or duplicate page-table variants.
+PR #117 seals the basic dirty-log observability primitive. Slot 0 can opt into `KVM_MEM_LOG_DIRTY_PAGES`; the exact four-page fixture reports first bitmap `0b1010`, readback bytes `[A,B]`, and an immediate second harvest of zero without vCPU re-entry. This remains an observability/incremental-state prerequisite, not a migration-complete snapshot claim.
 
-PR #117 independently seals the basic dirty-log observability primitive. Slot 0 can opt into `KVM_MEM_LOG_DIRTY_PAGES`; the exact four-page fixture reports first bitmap `0b1010`, readback bytes `[A,B]`, and an immediate second harvest of zero without vCPU re-entry. This remains an observability/incremental-snapshot prerequisite, not a claim of migration-complete snapshots, dirty-ring/manual-protect support or multi-slot tracking.
+PR #118 seals the fixed cooperative two-task context-switch proof. Task A (`CR3=0x1000`, `R12=0x1111`, user RSP `0x1fcff0`) and task B (`CR3=0xb000`, initial `R12=0x2222`, user RSP `0x1fcfd0`) share supervisor scheduler/context state while retaining isolated user mappings. The guest-owned vector `0x80` scheduler saves/restores bounded user context, switches CR3, returns with `iretq`, and proves A→B→A with exact `ABRD`, independent physical stack markers, exact context save counts, final A CR3/R12 and supervisor-only context PTEs. Do not farm task C, more fixed cooperative vectors, or additional saved-field clones merely to extend this phase.
 
-## Selected milestone — bounded guest-owned task context switching
+## Selected milestone — bounded timer-driven task preemption
 
-The next architecture boundary is execution-context ownership. Reuse the two integrated A/B address spaces, but add explicit per-task saved user execution state and a real guest-owned dispatch transition. A shared supervisor-only vector `0x80` handler must save the interrupted task context, select the other fixed task from the active CR3, switch address spaces, restore the next user frame/register state and return with `iretq`. Task A must later resume with its own register and stack state intact.
+The next architecture boundary is preemption ownership. Reuse the integrated A/B address spaces, task-context page and guest scheduler, but replace task A's cooperative scheduler trap with one host-driven timer interrupt. Task B remains cooperative so the proof can demonstrate that the timer-preempted A context was genuinely saved, B ran, and A later resumed from the interrupted state.
 
-This remains a deliberately bounded cooperative two-task proof. It is not a general process object model, runqueue, timer-preemptive scheduler or claim that every architectural register is part of a stable task ABI. The task implementation is intentionally orthogonal to the integrated dirty-log path; synchronizing this milestone onto #117 must preserve both capabilities unchanged.
+This is deliberately one bounded preemption path, not a general preemptive scheduler, runqueue, periodic scheduling policy or complete process ABI.
 
 Acceptance contract:
 
-- preserve exact merged-green base `d8d7970ba7390b49da9dc9951599d2e3c8effba9`, including PR #117 dirty-log behavior, Rust 1.74 shipped-target MSRV, ordinary CI and every permanent hosted-KVM workflow green on that exact main;
-- reuse address-space A at `CR3=0x1000` and address-space B at `CR3=0xb000`, including the already-validated distinct user code/stack physical backing and shared supervisor mappings;
-- reserve one shared supervisor-only task-context page at physical `0x30000`; both roots must map it P/W with U clear;
-- task A owns initial user RSP `0x1fcff0` and representative register `R12=0x1111`; task B owns initial user RSP `0x1fcfd0` and initial `R12=0x2222`;
-- task A writes physical stack marker `a`, invokes vector `0x80`, and must save context `(CR3=0x1000, RIP=0x11011, RSP=0x1fcff0, RFLAGS=0x202, R12=0x1111, save_count=1)`;
-- task B must start with restored `R12=0x2222`, write its independently backed stack marker `b`, increment R12 to `0x2223`, invoke the same scheduler vector, and save `(CR3=0xb000, RIP=0x11013, RSP=0x1fcfd0, RFLAGS=0x202, R12=0x2223, save_count=1)`;
-- the CPL0 scheduler handler must choose A/B from the active CR3, fail closed on an unexpected root or representative-register value, save the current interrupted RIP/RSP/RFLAGS/R12 and CR3, rewrite a complete user `iretq` frame from the next context, restore next-task R12, switch CR3 and `iretq`; no host-side register or CR3 rewrite may substitute for the guest scheduler;
-- after B→A, task A must reach terminal vector `0x81` with CR3 `0x1000`, user RIP `0x11013`, RSP `0x1fcff0` and R12 `0x1111`; final vCPU CR3/R12 must retain those A values;
-- physical stack markers must be exactly `a` for A and `b` for B, proving the same user stack virtual page resolves to each task's independent backing while context state is restored;
-- exact debug proof is `ABRD`: scheduler first observes A, scheduler then observes B, the terminal handler proves restored A state with `R`, then emits `D` before halting;
-- terminal execution must halt in CPL0 at RIP `0x13059` with architectural RFLAGS bit 1 set;
-- KVM-aware integration must independently validate every context field, both save counts, both physical stack markers, both supervisor task-context PTEs, all four byte-wide debug-port exits, final CR3/R12 and terminal state;
-- a permanent `task-context-switch` hosted-KVM workflow must run the standalone binary under a bounded timeout with mandatory `/dev/kvm` and hard-check the same context, PTE, stack-marker, proof and terminal invariants;
-- the existing dirty-log workflow and all previously integrated permanent hosted-KVM workflows must remain green on the same candidate;
-- formatter, Clippy, Rust 1.74 MSRV, page-table ownership, context encoding, scheduler dispatch, user return frame, proof, dirty-log regression or hosted-KVM failures remain hard failures and must not be hidden by changed expectations.
+- preserve exact merged-green base `59c9f28a1fb955dba3902d742b00de5e4ef68c83`, including the #118 task-context proof, #117 dirty-log behavior, Rust 1.74 shipped-target MSRV, ordinary CI and every permanent hosted-KVM workflow;
+- keep the exact #118 A/B address spaces, shared supervisor scheduler state, task-context page, physical stack markers and bounded saved-context ABI;
+- task A must not cooperatively invoke vector `0x80`; ring3 arms preemption through DPL3 vector `0x7f`;
+- the arm handler must emit `P` while IF is clear and execute adjacent `sti; hlt`, using the x86 STI interrupt shadow as the race-safe handoff to a pending or later timer edge;
+- a host worker may own only a duplicated VM IRQ-line fd, delay one bounded one-shot event and pulse GSI0; it must not own guest RAM, rewrite CR3/register state or substitute host scheduling for the guest scheduler;
+- the in-kernel PIC must remain remapped to vectors `0x40..0x47`, only IRQ0 is unmasked, and LAPIC SPIV/LINT0 must retain the integrated software-enabled/unmasked ExtINT state;
+- vector `0x40` must enter a CPL0 timer wrapper, send master-PIC EOI, discard only the nested CPL0 timer frame, and transfer control into the already-integrated guest scheduler;
+- the scheduler must save preempted task A, dispatch B, accept B's existing cooperative return, restore A's original user context and resume it without host-side register/CR3 rewriting;
+- exact debug proof is `PABRD`: `P` arm barrier, `A` timer-preempted task-A scheduler entry, `B` task-B scheduler entry, `R` restored-A terminal observation, `D` completion;
+- exact task A context remains `(CR3=0x1000, RIP=0x11011, RSP=0x1fcff0, RFLAGS=0x202, R12=0x1111, save_count=1)`;
+- exact task B context remains `(CR3=0xb000, RIP=0x11013, RSP=0x1fcfd0, RFLAGS=0x202, R12=0x2223, save_count=1)`;
+- terminal/final state must restore A with `CR3=0x1000`, user RIP `0x11013`, RSP `0x1fcff0`, R12 `0x1111`, physical stack markers `a`/`b`, and supervisor-only task-context PTEs backed by physical `0x30000`;
+- the arm observation must have architectural RFLAGS bit 1 set and IF clear; watchdog fallback may exist only to prevent a broken timer from wedging KVM and any watchdog intervention is a hard failure;
+- KVM-aware integration and a permanent hosted-KVM `timer-task-preemption` workflow must hard-check GSI0/vector0x40, LAPIC state, arm flags, both contexts/save counts, terminal/final state, stack markers, context PTEs and exact `PABRD` proof;
+- formatter, Clippy, MSRV, context encoding, timer-frame handling, scheduler dispatch, page-table ownership, proof or hosted-KVM failures remain hard failures and must not be skipped, retried into success, or hidden by changing expected values.
 
-Implementation is in progress on `milestone/task-context-switch`. The branch was originally based on PR #116 and is being synchronized with PR #117 through a history-preserving merge before formal PR validation. It must pass ordinary CI and the permanent task-context hosted-KVM proof on one exact candidate before integration.
+Implementation is in progress on `milestone/timer-task-preemption`. The current executable candidate has already demonstrated the intended hosted-KVM path, but any documentation/status synchronization changes the exact head and therefore requires a fresh complete workflow convergence before integration.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- more than two fixed tasks, dynamic task/process allocation, PID namespaces, fork/exec, process teardown or a general process model;
-- a runqueue, priorities, fairness policy, timer preemption, blocking/wakeup primitives or arbitrary scheduler selection;
-- a claim that the bounded saved fields form a complete x86-64 process ABI; FPU/XSAVE, debug registers, signal state and every general register are not promoted here;
-- a third address space, dynamic virtual mappings, mmap, copy-on-write, demand paging, swapping, PCID/ASID or KPTI;
-- multi-vCPU user-task migration, cross-vCPU scheduling, per-process TSS ownership or signals;
-- dirty-ring/manual-protect2, multi-slot dirty tracking, incremental-copy or migration-complete snapshot semantics;
-- new filesystem/device/syscall surfaces, PCI/virtio capability, DMA/IOMMU or performance claims.
+- task C, dynamic task/process allocation, a runqueue, priorities, fairness, timeslices or periodic scheduling;
+- a general preemptive scheduler, blocking/wakeup primitives, cross-vCPU task migration or per-process TSS ownership;
+- a claim that the bounded saved fields form a complete x86-64 task ABI; FPU/XSAVE, debug registers, signals and complete register state remain outside this slice;
+- more address spaces, mmap, demand paging, copy-on-write, swapping, PCID/ASID or KPTI;
+- migration-complete snapshot semantics, dirty-ring/manual-protect2 or multi-slot dirty tracking;
+- new filesystem/device/syscall surfaces, PCI/virtio capability, DMA/IOMMU or performance/latency claims.
 
 ## Promotion rule
 
-After the bounded A→B→A task-context switch is integrated and exact merged-`main` ordinary CI plus every triggered permanent hosted-KVM workflow are green, seal the fixed cooperative two-task proof rather than adding task C or more saved-field clones.
+After timer-preempted A→B→A is integrated and exact merged-`main` ordinary CI plus every permanent hosted-KVM workflow are green, seal the fixed one-shot preemption proof rather than adding more fixed timer delays, task C or scheduler-vector variants.
 
-The next architecture audit should promote only to a materially new scheduling/control boundary with executable evidence. A strong candidate is bounded timer-driven preemption that combines the already integrated asynchronous interrupt source with saved task-context/address-space ownership, but only if the slice can prove an interrupt-triggered context switch and deterministic resume without weakening the existing interrupt or task invariants. Another legitimate frontier is composition of task-owned memory state with the integrated dirty-log/snapshot primitives if it produces a real incremental-state lifecycle rather than another observability-only fixture. Otherwise choose another higher-value runtime boundary rather than inflating the task fixture.
+The next architecture audit should promote to a materially different scheduling or lifecycle capability. Strong candidates include a bounded runnable/blocked task lifecycle with a real wakeup source, composition of task-owned state with dirty/incremental-state capture, or another higher-order execution boundary that can be demonstrated end-to-end. A generic runqueue, periodic scheduler, fairness policy or migration claim must not be introduced without executable invariants and hosted-KVM evidence.
