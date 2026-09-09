@@ -44,41 +44,119 @@ const PIC_SETUP_AFTER_CLI: [u8; 36] = [
 ];
 
 const BLOCK_TASK_A_BYTES: [u8; 19] = [
-    0x49, 0xbc, 0x11, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov r12,0x1111
-    0xc6, 0x44, 0x24, 0xf8, b'a', // mov byte [rsp-8],'a'
-    0xcd, TASK_BLOCK_VECTOR, // enter the block wrapper instead of yielding directly
-    0xcd, 0x81, // terminal only after A is made runnable and restored
+    0x49,
+    0xbc,
+    0x11,
+    0x11,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00, // mov r12,0x1111
+    0xc6,
+    0x44,
+    0x24,
+    0xf8,
+    b'a', // mov byte [rsp-8],'a'
+    0xcd,
+    TASK_BLOCK_VECTOR, // enter the block wrapper instead of yielding directly
+    0xcd,
+    0x81, // terminal only after A is made runnable and restored
 ];
 
 const WAKE_TASK_B_BYTES: [u8; 21] = [
-    0x49, 0x81, 0xfc, 0x22, 0x22, 0x00, 0x00, // cmp r12,0x2222
-    0x75, 0x0a, // jne failure path in the shared fixture contract
-    0xc6, 0x44, 0x24, 0xf8, b'b', // mov byte [rsp-8],'b'
-    0x49, 0xff, 0xc4, // inc r12 -> 0x2223
-    0xcd, TASK_WAKE_ARM_VECTOR, // arm external wakeup, then scheduler handoff
-    0xcd, 0x81,
+    0x49,
+    0x81,
+    0xfc,
+    0x22,
+    0x22,
+    0x00,
+    0x00, // cmp r12,0x2222
+    0x75,
+    0x0a, // jne failure path in the shared fixture contract
+    0xc6,
+    0x44,
+    0x24,
+    0xf8,
+    b'b', // mov byte [rsp-8],'b'
+    0x49,
+    0xff,
+    0xc4, // inc r12 -> 0x2223
+    0xcd,
+    TASK_WAKE_ARM_VECTOR, // arm external wakeup, then scheduler handoff
+    0xcd,
+    0x81,
 ];
 
 const BLOCK_HANDLER_BYTES: [u8; 17] = [
-    0xc6, 0x04, 0x25, 0xc0, 0x00, 0x03, 0x00, TaskRunState::Blocked as u8,
-    0xb0, TASK_BLOCK_BYTE, 0xe6, 0xe9,
-    0xe9, 0xef, 0x0f, 0x00, 0x00, // jmp 0x15000 existing scheduler
+    0xc6,
+    0x04,
+    0x25,
+    0xc0,
+    0x00,
+    0x03,
+    0x00,
+    TaskRunState::Blocked as u8,
+    0xb0,
+    TASK_BLOCK_BYTE,
+    0xe6,
+    0xe9,
+    0xe9,
+    0xef,
+    0x0f,
+    0x00,
+    0x00, // jmp 0x15000 existing scheduler
 ];
 
 const WAKE_ARM_HANDLER_BYTES: [u8; 26] = [
-    0xb0, TASK_WAKE_ARM_BYTE, 0xe6, 0xe9, // P under interrupt-gate IF=0
-    0xfb, 0xf4, // sti; hlt race-safe wait handoff
-    0x80, 0x3c, 0x25, 0xc0, 0x00, 0x03, 0x00, TaskRunState::Runnable as u8,
-    0x75, 0x05, // jne failure
-    0xe9, 0xeb, 0xef, 0xff, 0xff, // jmp 0x15000 existing scheduler
-    0xb0, TASK_WAKE_FAILURE_BYTE, 0xe6, 0xe9, 0xf4,
+    0xb0,
+    TASK_WAKE_ARM_BYTE,
+    0xe6,
+    0xe9, // P under interrupt-gate IF=0
+    0xfb,
+    0xf4, // sti; hlt race-safe wait handoff
+    0x80,
+    0x3c,
+    0x25,
+    0xc0,
+    0x00,
+    0x03,
+    0x00,
+    TaskRunState::Runnable as u8,
+    0x75,
+    0x05, // jne failure
+    0xe9,
+    0xeb,
+    0xef,
+    0xff,
+    0xff, // jmp 0x15000 existing scheduler
+    0xb0,
+    TASK_WAKE_FAILURE_BYTE,
+    0xe6,
+    0xe9,
+    0xf4,
 ];
 
 const WAKE_TIMER_HANDLER_BYTES: [u8; 18] = [
-    0xc6, 0x04, 0x25, 0xc0, 0x00, 0x03, 0x00, TaskRunState::Runnable as u8,
-    0xb0, TASK_WAKE_BYTE, 0xe6, 0xe9, // W proves the external handler ran
-    0xb0, 0x20, 0xe6, 0x20, // EOI master PIC
-    0x48, 0xcf, // iretq to the arm wrapper after HLT
+    0xc6,
+    0x04,
+    0x25,
+    0xc0,
+    0x00,
+    0x03,
+    0x00,
+    TaskRunState::Runnable as u8,
+    0xb0,
+    TASK_WAKE_BYTE,
+    0xe6,
+    0xe9, // W proves the external handler ran
+    0xb0,
+    0x20,
+    0xe6,
+    0x20, // EOI master PIC
+    0x48,
+    0xcf, // iretq to the arm wrapper after HLT
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,31 +183,96 @@ pub struct TaskBlockWakeGuestResult {
 }
 
 impl TaskBlockWakeGuestResult {
-    #[must_use] pub const fn gsi(&self) -> u32 { self.gsi }
-    #[must_use] pub const fn vector(&self) -> u8 { self.vector }
-    #[must_use] pub const fn lapic_spiv(&self) -> u32 { self.lapic_spiv }
-    #[must_use] pub const fn lapic_lint0(&self) -> u32 { self.lapic_lint0 }
-    #[must_use] pub const fn armed_rflags(&self) -> u64 { self.armed_rflags }
-    #[must_use] pub const fn blocked_state(&self) -> TaskRunState { self.blocked_state }
-    #[must_use] pub const fn wake_state(&self) -> TaskRunState { self.wake_state }
-    #[must_use] pub const fn final_state(&self) -> TaskRunState { self.final_state }
-    #[must_use] pub fn io_exits(&self) -> &[PortIoExit] { &self.io_exits }
-    #[must_use] pub fn proof(&self) -> &[u8] { &self.proof }
-    #[must_use] pub const fn task_a(&self) -> TaskContextSnapshot { self.task_a }
-    #[must_use] pub const fn task_b(&self) -> TaskContextSnapshot { self.task_b }
-    #[must_use] pub const fn terminal(&self) -> TaskTerminalObservation { self.terminal }
-    #[must_use] pub const fn final_cr3(&self) -> u64 { self.final_cr3 }
-    #[must_use] pub const fn final_r12(&self) -> u64 { self.final_r12 }
-    #[must_use] pub const fn task_a_stack_marker(&self) -> u8 { self.task_a_stack_marker }
-    #[must_use] pub const fn task_b_stack_marker(&self) -> u8 { self.task_b_stack_marker }
-    #[must_use] pub const fn first_context_pte(&self) -> u64 { self.first_context_pte }
-    #[must_use] pub const fn second_context_pte(&self) -> u64 { self.second_context_pte }
+    #[must_use]
+    pub const fn gsi(&self) -> u32 {
+        self.gsi
+    }
+    #[must_use]
+    pub const fn vector(&self) -> u8 {
+        self.vector
+    }
+    #[must_use]
+    pub const fn lapic_spiv(&self) -> u32 {
+        self.lapic_spiv
+    }
+    #[must_use]
+    pub const fn lapic_lint0(&self) -> u32 {
+        self.lapic_lint0
+    }
+    #[must_use]
+    pub const fn armed_rflags(&self) -> u64 {
+        self.armed_rflags
+    }
+    #[must_use]
+    pub const fn blocked_state(&self) -> TaskRunState {
+        self.blocked_state
+    }
+    #[must_use]
+    pub const fn wake_state(&self) -> TaskRunState {
+        self.wake_state
+    }
+    #[must_use]
+    pub const fn final_state(&self) -> TaskRunState {
+        self.final_state
+    }
+    #[must_use]
+    pub fn io_exits(&self) -> &[PortIoExit] {
+        &self.io_exits
+    }
+    #[must_use]
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
+    #[must_use]
+    pub const fn task_a(&self) -> TaskContextSnapshot {
+        self.task_a
+    }
+    #[must_use]
+    pub const fn task_b(&self) -> TaskContextSnapshot {
+        self.task_b
+    }
+    #[must_use]
+    pub const fn terminal(&self) -> TaskTerminalObservation {
+        self.terminal
+    }
+    #[must_use]
+    pub const fn final_cr3(&self) -> u64 {
+        self.final_cr3
+    }
+    #[must_use]
+    pub const fn final_r12(&self) -> u64 {
+        self.final_r12
+    }
+    #[must_use]
+    pub const fn task_a_stack_marker(&self) -> u8 {
+        self.task_a_stack_marker
+    }
+    #[must_use]
+    pub const fn task_b_stack_marker(&self) -> u8 {
+        self.task_b_stack_marker
+    }
+    #[must_use]
+    pub const fn first_context_pte(&self) -> u64 {
+        self.first_context_pte
+    }
+    #[must_use]
+    pub const fn second_context_pte(&self) -> u64 {
+        self.second_context_pte
+    }
 }
 
 pub fn run_task_block_wake_guest(config: VmConfig) -> Result<TaskBlockWakeGuestResult, Error> {
     let kernel_bytes = wakeup_kernel_bytes();
-    let kernel = FlatGuestImage::new(PRIVILEGE_KERNEL_ENTRY, PRIVILEGE_KERNEL_ENTRY, &kernel_bytes)?;
-    let task_a = FlatGuestImage::new(PRIVILEGE_USER_ENTRY, PRIVILEGE_USER_ENTRY, &BLOCK_TASK_A_BYTES)?;
+    let kernel = FlatGuestImage::new(
+        PRIVILEGE_KERNEL_ENTRY,
+        PRIVILEGE_KERNEL_ENTRY,
+        &kernel_bytes,
+    )?;
+    let task_a = FlatGuestImage::new(
+        PRIVILEGE_USER_ENTRY,
+        PRIVILEGE_USER_ENTRY,
+        &BLOCK_TASK_A_BYTES,
+    )?;
     let task_b = FlatGuestImage::new(
         ADDRESS_SPACE_B_USER_CODE_BACKING,
         ADDRESS_SPACE_B_USER_CODE_BACKING,
@@ -145,7 +288,8 @@ pub fn run_task_block_wake_guest(config: VmConfig) -> Result<TaskBlockWakeGuestR
         PRIVILEGE_TERMINAL_HANDLER,
         &TERMINAL_HANDLER_BYTES,
     )?;
-    let block_handler = FlatGuestImage::new(TASK_BLOCK_HANDLER, TASK_BLOCK_HANDLER, &BLOCK_HANDLER_BYTES)?;
+    let block_handler =
+        FlatGuestImage::new(TASK_BLOCK_HANDLER, TASK_BLOCK_HANDLER, &BLOCK_HANDLER_BYTES)?;
     let arm_handler = FlatGuestImage::new(
         TASK_WAKE_ARM_HANDLER,
         TASK_WAKE_ARM_HANDLER,
@@ -194,14 +338,34 @@ pub fn run_task_block_wake_guest(config: VmConfig) -> Result<TaskBlockWakeGuestR
     let lapic = vcpu.configure_legacy_pic_extint()?;
     let mut port_io = PortIoBus::with_debug_port();
 
-    let blocked_io = run_wakeup_debug_output(&mut vcpu, &mut port_io, TASK_BLOCK_BYTE, "task block transition")?;
-    let blocked_state = read_task_run_state(
-        vm.guest_memory().expect("registered block/wakeup memory remains VM-owned"),
+    let blocked_io = run_wakeup_debug_output(
+        &mut vcpu,
+        &mut port_io,
+        TASK_BLOCK_BYTE,
+        "task block transition",
     )?;
-    require_task_state("task block transition", blocked_state, TaskRunState::Blocked)?;
+    let blocked_state = read_task_run_state(
+        vm.guest_memory()
+            .expect("registered block/wakeup memory remains VM-owned"),
+    )?;
+    require_task_state(
+        "task block transition",
+        blocked_state,
+        TaskRunState::Blocked,
+    )?;
 
-    let scheduler_a_io = run_wakeup_debug_output(&mut vcpu, &mut port_io, b'A', "blocked task A scheduler entry")?;
-    let armed_io = run_wakeup_debug_output(&mut vcpu, &mut port_io, TASK_WAKE_ARM_BYTE, "task wake arm barrier")?;
+    let scheduler_a_io = run_wakeup_debug_output(
+        &mut vcpu,
+        &mut port_io,
+        b'A',
+        "blocked task A scheduler entry",
+    )?;
+    let armed_io = run_wakeup_debug_output(
+        &mut vcpu,
+        &mut port_io,
+        TASK_WAKE_ARM_BYTE,
+        "task wake arm barrier",
+    )?;
     let armed = vcpu.registers()?;
     require_wakeup_interrupt_disabled_flags("task wake arm state", armed.rflags)?;
 
@@ -219,14 +383,16 @@ pub fn run_task_block_wake_guest(config: VmConfig) -> Result<TaskBlockWakeGuestR
         .map_err(|source| wakeup_vm_error("preflight task wake watchdog line", source))?;
 
     let timer_worker = std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(TASK_WAKE_TIMER_DELAY_MILLIS));
+        std::thread::sleep(std::time::Duration::from_millis(
+            TASK_WAKE_TIMER_DELAY_MILLIS,
+        ));
         timer_irq.pulse_gsi_edge(TASK_WAKE_GSI)
     });
     let (watchdog_cancel_tx, watchdog_cancel_rx) = std::sync::mpsc::channel::<()>();
     let watchdog_worker = std::thread::spawn(move || -> io::Result<bool> {
-        match watchdog_cancel_rx.recv_timeout(std::time::Duration::from_secs(
-            TASK_WAKE_WATCHDOG_SECONDS,
-        )) {
+        match watchdog_cancel_rx
+            .recv_timeout(std::time::Duration::from_secs(TASK_WAKE_WATCHDOG_SECONDS))
+        {
             Ok(()) => Ok(false),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout)
             | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
@@ -236,17 +402,43 @@ pub fn run_task_block_wake_guest(config: VmConfig) -> Result<TaskBlockWakeGuestR
         }
     });
 
-    let execution = (|| -> Result<(PortIoExit, TaskRunState, PortIoExit, PortIoExit, PortIoExit), Error> {
-        let wake_io = run_wakeup_debug_output(&mut vcpu, &mut port_io, TASK_WAKE_BYTE, "external task wake handler")?;
-        let wake_state = read_task_run_state(
-            vm.guest_memory().expect("registered block/wakeup memory remains VM-owned"),
-        )?;
-        require_task_state("external task wake handler", wake_state, TaskRunState::Runnable)?;
-        let scheduler_b_io = run_wakeup_debug_output(&mut vcpu, &mut port_io, b'B', "woken task handoff from B")?;
-        let restored_io = run_wakeup_debug_output(&mut vcpu, &mut port_io, b'R', "restored task A terminal observation")?;
-        let done_io = run_wakeup_debug_output(&mut vcpu, &mut port_io, b'D', "task block/wakeup completion barrier")?;
-        Ok((wake_io, wake_state, scheduler_b_io, restored_io, done_io))
-    })();
+    let execution =
+        (|| -> Result<(PortIoExit, TaskRunState, PortIoExit, PortIoExit, PortIoExit), Error> {
+            let wake_io = run_wakeup_debug_output(
+                &mut vcpu,
+                &mut port_io,
+                TASK_WAKE_BYTE,
+                "external task wake handler",
+            )?;
+            let wake_state = read_task_run_state(
+                vm.guest_memory()
+                    .expect("registered block/wakeup memory remains VM-owned"),
+            )?;
+            require_task_state(
+                "external task wake handler",
+                wake_state,
+                TaskRunState::Runnable,
+            )?;
+            let scheduler_b_io = run_wakeup_debug_output(
+                &mut vcpu,
+                &mut port_io,
+                b'B',
+                "woken task handoff from B",
+            )?;
+            let restored_io = run_wakeup_debug_output(
+                &mut vcpu,
+                &mut port_io,
+                b'R',
+                "restored task A terminal observation",
+            )?;
+            let done_io = run_wakeup_debug_output(
+                &mut vcpu,
+                &mut port_io,
+                b'D',
+                "task block/wakeup completion barrier",
+            )?;
+            Ok((wake_io, wake_state, scheduler_b_io, restored_io, done_io))
+        })();
 
     let _ = watchdog_cancel_tx.send(());
     let timer_result = timer_worker.join().map_err(|_| {
@@ -301,14 +493,26 @@ pub fn run_task_block_wake_guest(config: VmConfig) -> Result<TaskBlockWakeGuestR
         .guest_memory()
         .expect("registered block/wakeup memory remains VM-owned");
     let final_state = read_task_run_state(guest_memory)?;
-    require_task_state("task block/wakeup final state", final_state, TaskRunState::Runnable)?;
+    require_task_state(
+        "task block/wakeup final state",
+        final_state,
+        TaskRunState::Runnable,
+    )?;
     let task_a_context = read_context(guest_memory, TASK_A_CONTEXT_ADDR)?;
     let task_b_context = read_context(guest_memory, TASK_B_CONTEXT_ADDR)?;
     let terminal_observation = read_terminal_observation(guest_memory)?;
     let task_a_stack_marker = read_byte(guest_memory, TASK_A_STACK_MARKER_PHYS)?;
     let task_b_stack_marker = read_byte(guest_memory, TASK_B_STACK_MARKER_PHYS)?;
-    let first_context_pte = read_pte(guest_memory, PRIVILEGE_PT_ADDR, TASK_CONTEXT_PAGE_ADDR.get())?;
-    let second_context_pte = read_pte(guest_memory, ADDRESS_SPACE_B_PT_ADDR, TASK_CONTEXT_PAGE_ADDR.get())?;
+    let first_context_pte = read_pte(
+        guest_memory,
+        PRIVILEGE_PT_ADDR,
+        TASK_CONTEXT_PAGE_ADDR.get(),
+    )?;
+    let second_context_pte = read_pte(
+        guest_memory,
+        ADDRESS_SPACE_B_PT_ADDR,
+        TASK_CONTEXT_PAGE_ADDR.get(),
+    )?;
 
     validate_wakeup_task_state(
         task_a_context,
@@ -353,7 +557,10 @@ fn wakeup_kernel_bytes() -> Vec<u8> {
     bytes
 }
 
-fn install_wakeup_gates(memory: &mut GuestMemory, layout: &AddressSpaceSwitchLayout) -> Result<(), Error> {
+fn install_wakeup_gates(
+    memory: &mut GuestMemory,
+    layout: &AddressSpaceSwitchLayout,
+) -> Result<(), Error> {
     for (vector, handler, user_callable) in [
         (TASK_WAKE_TIMER_VECTOR, TASK_WAKE_TIMER_HANDLER, false),
         (TASK_BLOCK_VECTOR, TASK_BLOCK_HANDLER, true),
@@ -376,7 +583,10 @@ fn install_wakeup_gates(memory: &mut GuestMemory, layout: &AddressSpaceSwitchLay
         let gate_address = GuestPhysAddr::new(
             PRIVILEGE_IDT_ADDR.get() + u64::from(vector) * X86_INTERRUPT_GATE_SIZE,
         );
-        memory.write(gate_address, &encode_wakeup_interrupt_gate(handler.get(), user_callable))?;
+        memory.write(
+            gate_address,
+            &encode_wakeup_interrupt_gate(handler.get(), user_callable),
+        )?;
     }
     Ok(())
 }
@@ -386,7 +596,11 @@ fn encode_wakeup_interrupt_gate(handler: u64, user_callable: bool) -> [u8; 16] {
     gate[0..2].copy_from_slice(&(handler as u16).to_le_bytes());
     gate[2..4].copy_from_slice(&X86_KERNEL_CODE_SELECTOR.to_le_bytes());
     gate[4] = 0;
-    gate[5] = if user_callable { X86_RING3_INTERRUPT_GATE } else { X86_RING0_INTERRUPT_GATE };
+    gate[5] = if user_callable {
+        X86_RING3_INTERRUPT_GATE
+    } else {
+        X86_RING0_INTERRUPT_GATE
+    };
     gate[6..8].copy_from_slice(&((handler >> 16) as u16).to_le_bytes());
     gate[8..12].copy_from_slice(&((handler >> 32) as u32).to_le_bytes());
     gate
@@ -400,11 +614,13 @@ fn run_wakeup_debug_output(
 ) -> Result<PortIoExit, Error> {
     let exit = vcpu.run_once()?;
     if exit != VcpuExit::Io {
-        return Err(Error::VmExit(crate::error::VmExitError::UnexpectedSequence {
-            stage,
-            expected_reason: VcpuExit::Io.reason(),
-            actual_reason: exit.reason(),
-        }));
+        return Err(Error::VmExit(
+            crate::error::VmExitError::UnexpectedSequence {
+                stage,
+                expected_reason: VcpuExit::Io.reason(),
+                actual_reason: exit.reason(),
+            },
+        ));
     }
     let io_exit = vcpu.port_io_exit()?;
     if io_exit.direction() != PortIoDirection::Out
@@ -438,7 +654,11 @@ fn read_task_run_state(memory: &GuestMemory) -> Result<TaskRunState, Error> {
     }
 }
 
-fn require_task_state(stage: &'static str, actual: TaskRunState, expected: TaskRunState) -> Result<(), Error> {
+fn require_task_state(
+    stage: &'static str,
+    actual: TaskRunState,
+    expected: TaskRunState,
+) -> Result<(), Error> {
     if actual != expected {
         return Err(verification_error(
             stage,
@@ -559,32 +779,60 @@ mod tests {
     fn task_vectors_preserve_existing_saved_rips() {
         assert_eq!(BLOCK_TASK_A_BYTES.len(), TASK_A_BYTES.len());
         assert_eq!(WAKE_TASK_B_BYTES.len(), TASK_B_BYTES.len());
-        assert_eq!(&BLOCK_TASK_A_BYTES[15..19], &[0xcd, TASK_BLOCK_VECTOR, 0xcd, 0x81]);
-        assert_eq!(&WAKE_TASK_B_BYTES[17..21], &[0xcd, TASK_WAKE_ARM_VECTOR, 0xcd, 0x81]);
+        assert_eq!(
+            &BLOCK_TASK_A_BYTES[15..19],
+            &[0xcd, TASK_BLOCK_VECTOR, 0xcd, 0x81]
+        );
+        assert_eq!(
+            &WAKE_TASK_B_BYTES[17..21],
+            &[0xcd, TASK_WAKE_ARM_VECTOR, 0xcd, 0x81]
+        );
         assert_eq!(PRIVILEGE_USER_ENTRY.get() + 17, TASK_A_SAVED_RIP);
         assert_eq!(PRIVILEGE_USER_ENTRY.get() + 19, TASK_B_SAVED_RIP);
     }
 
     #[test]
     fn block_and_wake_handlers_encode_state_transition_and_scheduler_handoff() {
-        assert_eq!(&BLOCK_HANDLER_BYTES[..8], &[0xc6, 0x04, 0x25, 0xc0, 0x00, 0x03, 0x00, 0]);
+        assert_eq!(
+            &BLOCK_HANDLER_BYTES[..8],
+            &[0xc6, 0x04, 0x25, 0xc0, 0x00, 0x03, 0x00, 0]
+        );
         assert_eq!(&BLOCK_HANDLER_BYTES[8..12], &[0xb0, b'K', 0xe6, 0xe9]);
         assert_eq!(&WAKE_ARM_HANDLER_BYTES[4..6], &[0xfb, 0xf4]);
-        assert_eq!(&WAKE_ARM_HANDLER_BYTES[6..14], &[0x80, 0x3c, 0x25, 0xc0, 0x00, 0x03, 0x00, 1]);
-        assert_eq!(&WAKE_TIMER_HANDLER_BYTES[..8], &[0xc6, 0x04, 0x25, 0xc0, 0x00, 0x03, 0x00, 1]);
+        assert_eq!(
+            &WAKE_ARM_HANDLER_BYTES[6..14],
+            &[0x80, 0x3c, 0x25, 0xc0, 0x00, 0x03, 0x00, 1]
+        );
+        assert_eq!(
+            &WAKE_TIMER_HANDLER_BYTES[..8],
+            &[0xc6, 0x04, 0x25, 0xc0, 0x00, 0x03, 0x00, 1]
+        );
         assert_eq!(&WAKE_TIMER_HANDLER_BYTES[8..12], &[0xb0, b'W', 0xe6, 0xe9]);
     }
 
     #[test]
     fn wakeup_gates_are_installed_for_timer_block_and_arm_vectors() {
-        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
+        let mut memory =
+            GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE).unwrap();
         let layout = AddressSpaceSwitchLayout::new(memory.region()).unwrap();
         layout.install_tables(&mut memory).unwrap();
         install_wakeup_gates(&mut memory, &layout).unwrap();
         for (vector, handler, access) in [
-            (TASK_WAKE_TIMER_VECTOR, TASK_WAKE_TIMER_HANDLER.get(), X86_RING0_INTERRUPT_GATE),
-            (TASK_BLOCK_VECTOR, TASK_BLOCK_HANDLER.get(), X86_RING3_INTERRUPT_GATE),
-            (TASK_WAKE_ARM_VECTOR, TASK_WAKE_ARM_HANDLER.get(), X86_RING3_INTERRUPT_GATE),
+            (
+                TASK_WAKE_TIMER_VECTOR,
+                TASK_WAKE_TIMER_HANDLER.get(),
+                X86_RING0_INTERRUPT_GATE,
+            ),
+            (
+                TASK_BLOCK_VECTOR,
+                TASK_BLOCK_HANDLER.get(),
+                X86_RING3_INTERRUPT_GATE,
+            ),
+            (
+                TASK_WAKE_ARM_VECTOR,
+                TASK_WAKE_ARM_HANDLER.get(),
+                X86_RING3_INTERRUPT_GATE,
+            ),
         ] {
             let address = GuestPhysAddr::new(PRIVILEGE_IDT_ADDR.get() + u64::from(vector) * 16);
             let mut gate = [0_u8; 16];
