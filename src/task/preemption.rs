@@ -67,10 +67,10 @@ const PREEMPT_ARM_HANDLER_BYTES: [u8; 11] = [
     0xf4,
 ];
 
-const PREEMPT_TIMER_WRAPPER_BYTES: [u8; 13] = [
+const PREEMPT_TIMER_WRAPPER_BYTES: [u8; 14] = [
     0xb0, 0x20, 0xe6, 0x20, // EOI master PIC before leaving the timer path
-    0x48, 0x83, 0xc4, 0x28, // discard long-mode SS/RSP/RFLAGS/CS/RIP timer frame
-    0xe9, 0xf3, 0xef, 0xff, 0xff, // jmp 0x15000 existing scheduler from 0x1600d
+    0x48, 0x8b, 0x64, 0x24, 0x18, // mov rsp,[rsp+0x18]: restore pre-alignment handler RSP
+    0xe9, 0xf2, 0xef, 0xff, 0xff, // jmp 0x15000 existing scheduler from 0x1600e
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -604,13 +604,13 @@ mod tests {
     }
 
     #[test]
-    fn timer_wrapper_discards_five_qword_long_mode_frame_then_reuses_scheduler() {
-        assert_eq!(PREEMPT_TIMER_WRAPPER_BYTES.len(), 13);
+    fn timer_wrapper_restores_pre_alignment_rsp_then_reuses_scheduler() {
+        assert_eq!(PREEMPT_TIMER_WRAPPER_BYTES.len(), 14);
         assert_eq!(
-            &PREEMPT_TIMER_WRAPPER_BYTES[4..8],
-            &[0x48, 0x83, 0xc4, 0x28]
+            &PREEMPT_TIMER_WRAPPER_BYTES[4..9],
+            &[0x48, 0x8b, 0x64, 0x24, 0x18]
         );
-        let delta = i32::from_le_bytes(PREEMPT_TIMER_WRAPPER_BYTES[9..13].try_into().unwrap());
+        let delta = i32::from_le_bytes(PREEMPT_TIMER_WRAPPER_BYTES[10..14].try_into().unwrap());
         let next = TASK_PREEMPTION_TIMER_WRAPPER.get() + PREEMPT_TIMER_WRAPPER_BYTES.len() as u64;
         assert_eq!(
             (next as i64 + i64::from(delta)) as u64,
