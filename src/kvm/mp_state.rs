@@ -24,3 +24,4 @@ mod mp_state_capability_tests {
 }
 
 include!("dirty_log.rs");
+include!("dirty_log_live.rs");
