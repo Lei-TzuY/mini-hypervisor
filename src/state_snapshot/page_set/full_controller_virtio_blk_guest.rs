@@ -12,8 +12,8 @@ use crate::portio::pci::virtio::{
     VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
 use crate::portio::pci::virtio_blk::{
-    deterministic_sector, VirtioBlkQueueCompletion, VIRTIO_BLK_CAPACITY_SECTORS,
-    VIRTIO_BLK_SECTOR_SIZE, VIRTIO_BLK_S_OK, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
+    deterministic_sector, VIRTIO_BLK_CAPACITY_SECTORS, VIRTIO_BLK_SECTOR_SIZE, VIRTIO_BLK_S_OK,
+    VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
 };
 use crate::portio::virtio_blk_completion_interrupt_fixture::{
     VIRTIO_BLK_INTERRUPT_AVAIL_GPA, VIRTIO_BLK_INTERRUPT_BAR0_GPA,
