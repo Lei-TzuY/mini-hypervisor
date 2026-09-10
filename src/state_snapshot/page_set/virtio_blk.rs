@@ -127,4 +127,5 @@ impl BoundedVirtioBlkCheckpointComparison {
     }
 }
 
-include!("virtio_blk_guest.rs");
+mod virtio_blk_guest;
+pub use virtio_blk_guest::*;
