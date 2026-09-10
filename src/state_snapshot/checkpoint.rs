@@ -110,6 +110,15 @@ impl BoundedVcpuPageCheckpoint {
     ) -> Result<BoundedCheckpointComparison, Error> {
         memory.write(self.page_address, &self.page)?;
         let vcpu = vcpu.restore_and_verify_state_snapshot(&self.vcpu)?;
+        if !vcpu.is_exact_match() {
+            eprintln!(
+                "bounded checkpoint VCPU restore mismatch: registers={:?} special_registers={:?} msr_policy_exact={} msrs={:?}",
+                vcpu.registers().mismatches(),
+                vcpu.special_registers().mismatches(),
+                vcpu.msrs().policy_matches(),
+                vcpu.msrs().value_mismatches(),
+            );
+        }
         let mut observed_page = vec![0_u8; self.page.len()];
         memory.read(self.page_address, &mut observed_page)?;
         Ok(BoundedCheckpointComparison {
