@@ -251,3 +251,4 @@ mod tests {
 include!("page_set/controller.rs");
 include!("page_set/full_controller.rs");
 include!("page_set/virtio_blk.rs");
+include!("page_set/full_controller_virtio_blk.rs");
