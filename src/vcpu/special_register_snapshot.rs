@@ -343,7 +343,7 @@ pub struct VcpuSpecialRegisterSnapshot {
 }
 
 impl VcpuSpecialRegisterSnapshot {
-    const fn from_kvm_sregs(sregs: sys::KvmSregs) -> Self {
+    pub(crate) const fn from_kvm_sregs(sregs: sys::KvmSregs) -> Self {
         Self {
             cs: VcpuSegmentState::from_kvm_segment(sregs.cs),
             ds: VcpuSegmentState::from_kvm_segment(sregs.ds),
