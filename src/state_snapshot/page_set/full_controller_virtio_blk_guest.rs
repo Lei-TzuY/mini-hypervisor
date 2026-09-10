@@ -659,8 +659,7 @@ fn validate_request_mmio(exits: &[MmioExit], stage: &'static str) -> Result<(), 
     if exits.len() != expected.len() {
         return Err(checkpoint_error(format!(
             "{stage}: expected {} request MMIO exits, got {}",
-            expected.len(),
-            exits.len()
+            expected.len()
         )));
     }
     for (exit, (offset, direction, length)) in exits.iter().zip(expected) {
@@ -764,8 +763,8 @@ fn build_program() -> CheckpointProgram {
     );
     emit_ring_setup(&mut code);
     emit_debug(&mut code, CAPTURE_BYTE);
-    code.push(0x90);
     let capture_rip = crate::mmio::long_mode::LONG_MODE_MMIO_GUEST_ENTRY.get() + code.len() as u64;
+    code.push(0x90);
 
     code.extend_from_slice(&[0x66, 0xc7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
     emit_debug(&mut code, NOTIFY_BYTE);
@@ -776,9 +775,9 @@ fn build_program() -> CheckpointProgram {
     emit_cmp_al(&mut code, 0);
     emit_debug(&mut code, READBACK_BYTE);
     emit_debug(&mut code, DONE_BYTE);
-    code.push(0x90);
     let request_quiescent_rip =
         crate::mmio::long_mode::LONG_MODE_MMIO_GUEST_ENTRY.get() + code.len() as u64;
+    code.push(0x90);
     code.push(0xf4);
 
     CheckpointProgram {
