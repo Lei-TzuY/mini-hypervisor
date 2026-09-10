@@ -612,7 +612,7 @@ fn build_virtio_blk_checkpoint_guest() -> VirtioBlkCheckpointProgram {
     code.extend_from_slice(&[0x8b, 0x43, 0x04]);
     checkpoint_emit_cmp_eax(&mut code, 1);
     checkpoint_emit_mmio_dword_write(&mut code, 0x08, 1);
-    checkpoint_emit_mmio_dword_write(&mut code, 0x0c, VIRTIO_F_VERSION_1 as u32);
+    checkpoint_emit_mmio_dword_write(&mut code, 0x0c, (VIRTIO_F_VERSION_1 >> 32) as u32);
     checkpoint_emit_mmio_byte_write(
         &mut code,
         0x14,
@@ -841,6 +841,20 @@ mod virtio_blk_checkpoint_guest_tests {
             assert!(address >= start && address < end);
         }
         assert!(VIRTIO_BLK_DATA_GPA + VIRTIO_BLK_SECTOR_SIZE as u64 <= end);
+    }
+
+    #[test]
+    fn guest_projects_version_1_into_selected_driver_feature_page() {
+        assert_eq!((VIRTIO_F_VERSION_1 >> 32) as u32, 1);
+        let program = build_virtio_blk_checkpoint_guest();
+        let page1_driver_feature_write = [
+            0xc7, 0x43, 0x08, 0x01, 0x00, 0x00, 0x00, // driver_feature_select = 1
+            0xc7, 0x43, 0x0c, 0x01, 0x00, 0x00, 0x00, // page-local VERSION_1 bit
+        ];
+        assert!(program
+            .bytes
+            .windows(page1_driver_feature_write.len())
+            .any(|window| window == page1_driver_feature_write));
     }
 
     #[test]
