@@ -22,7 +22,7 @@ use crate::portio::virtio_blk_completion_interrupt_fixture::{
     VIRTIO_BLK_INTERRUPT_USED_GPA,
 };
 use crate::portio::{PortIoBus, DEBUG_PORT};
-use crate::vcpu::{MmioDirection, MmioExit, PortIoDirection, PortIoExit, VcpuExit};
+use crate::vcpu::{MmioDirection, MmioExit, PortIoDirection, VcpuExit};
 use crate::vmexit::{dispatch_vcpu_exit, VmExitContinuation, VmExitDisposition};
 use std::io;
 
@@ -161,8 +161,6 @@ struct CheckpointProgram {
 #[derive(Debug)]
 struct RequestPhase {
     proof: Vec<u8>,
-    mmio_exits: Vec<MmioExit>,
-    completion: VirtioBlkQueueCompletion,
     assert_count: u32,
     deassert_count: u32,
     rflags: u64,
@@ -486,8 +484,6 @@ fn run_request_phase(
 
     Ok(RequestPhase {
         proof,
-        mmio_exits,
-        completion,
         assert_count,
         deassert_count,
         rflags,
