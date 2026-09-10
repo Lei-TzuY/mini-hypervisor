@@ -877,7 +877,7 @@ fn emit_ring_setup(code: &mut Vec<u8>) {
     emit_movabs(code, 7, VIRTIO_BLK_INTERRUPT_HEADER_GPA);
     code.extend_from_slice(&[0x48, 0xc7, 0x07, 0, 0, 0, 0]);
     code.extend_from_slice(&[0x48, 0xc7, 0x47, 0x08, 0, 0, 0, 0]);
-    emit_movabs(code, 7, VIRTIO_BLK_INTERRUPT_HEADER_GPA);
+    emit_movabs(code, 7, VIRTIO_BLK_INTERRUPT_STATUS_GPA);
     code.extend_from_slice(&[0xc6, 0x07, 0xff]);
     emit_movabs(code, 7, VIRTIO_BLK_INTERRUPT_AVAIL_GPA);
     code.extend_from_slice(&[0xc7, 0x07, 0, 0, 1, 0]);
