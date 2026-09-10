@@ -107,16 +107,6 @@ impl IoapicStateSnapshot {
     }
 
     #[must_use]
-    pub(crate) const fn ioregsel(&self) -> u32 {
-        self.state.ioregsel
-    }
-
-    #[must_use]
-    pub(crate) const fn id(&self) -> u32 {
-        self.state.id
-    }
-
-    #[must_use]
     pub(crate) const fn irr(&self) -> u32 {
         self.state.irr
     }
@@ -421,9 +411,6 @@ mod irqchip_snapshot_uapi_tests {
         assert_eq!(payload[KVM_IOAPIC_STATE_SIZE..], [0xa5; KVM_IRQCHIP_PAYLOAD_SIZE - KVM_IOAPIC_STATE_SIZE]);
 
         let snapshot = IoapicStateSnapshot { state };
-        assert_eq!(snapshot.base_address(), 0xfec0_0000);
-        assert_eq!(snapshot.ioregsel(), 0x12);
-        assert_eq!(snapshot.id(), 0x0f00_0000);
         assert_eq!(snapshot.irr(), 0);
         assert_eq!(snapshot.pad(), 0);
         assert_eq!(snapshot.redirection_entry(16), Some(state.redirtbl[16]));
