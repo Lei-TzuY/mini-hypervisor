@@ -10,6 +10,21 @@ impl VirtioBlkDevice {
             .expect("sector0 range has fixed sector size")
     }
 
+    #[must_use]
+    pub const fn checkpoint_quiescent(&self) -> bool {
+        !self.notify_pending
+    }
+
+    #[must_use]
+    pub const fn checkpoint_last_avail_idx(&self) -> u16 {
+        self.last_avail_idx
+    }
+
+    #[must_use]
+    pub const fn checkpoint_last_used_idx(&self) -> u16 {
+        self.last_used_idx
+    }
+
     pub fn process_notified_queue_atomic(
         &mut self,
         memory: &mut GuestMemory,
