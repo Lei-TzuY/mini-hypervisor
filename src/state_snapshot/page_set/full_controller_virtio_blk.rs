@@ -66,7 +66,7 @@ impl BoundedFullControllerVirtioBlkCheckpoint {
         mmio: &mut crate::mmio::MmioBus,
     ) -> Result<BoundedFullControllerVirtioBlkCheckpointComparison, Error> {
         let controller = self.controller.restore_and_verify(vcpu, vm)?;
-        restore_device_only_after_controller_exact(&controller, || {
+        restore_device_only_after_controller_exact(controller.is_exact_match(), || {
             mmio.restore_virtio_blk_checkpoint_at(self.bar0, &self.device)?
                 .ok_or_else(|| {
                     page_set_error(
@@ -104,10 +104,10 @@ impl BoundedFullControllerVirtioBlkCheckpointComparison {
 }
 
 fn restore_device_only_after_controller_exact(
-    controller: &BoundedFullControllerCheckpointComparison,
+    controller_exact: bool,
     restore_device: impl FnOnce() -> Result<(), Error>,
 ) -> Result<(), Error> {
-    if !controller.is_exact_match() {
+    if !controller_exact {
         return Err(page_set_error(
             "full-controller virtio-blk checkpoint controller restore verification",
             "page/VCPU/controller state was not exact after restore; device state was not mutated",
@@ -121,42 +121,17 @@ mod full_controller_virtio_blk_tests {
     use super::*;
     use std::cell::Cell;
 
-    fn comparison_with_exactness(exact: bool) -> BoundedFullControllerCheckpointComparison {
-        let page = GuestPhysAddr::new(0x30000);
-        BoundedFullControllerCheckpointComparison {
-            base: BoundedControllerCheckpointComparison {
-                guest: BoundedPageSetCheckpointComparison {
-                    pages: vec![BoundedCheckpointPageComparison {
-                        address: page,
-                        exact,
-                    }],
-                    vcpu: VcpuStateSnapshotComparison {
-                        registers: exact,
-                        special_registers: exact,
-                        msrs: exact,
-                    },
-                },
-                master_pic: exact,
-                lapic: exact,
-            },
-            slave_pic: exact,
-            ioapic: exact,
-        }
-    }
-
     #[test]
     fn device_restore_is_blocked_until_full_controller_restore_is_exact() {
         let called = Cell::new(false);
-        let mismatch = comparison_with_exactness(false);
-        assert!(restore_device_only_after_controller_exact(&mismatch, || {
+        assert!(restore_device_only_after_controller_exact(false, || {
             called.set(true);
             Ok(())
         })
         .is_err());
         assert!(!called.get());
 
-        let exact = comparison_with_exactness(true);
-        restore_device_only_after_controller_exact(&exact, || {
+        restore_device_only_after_controller_exact(true, || {
             called.set(true);
             Ok(())
         })
