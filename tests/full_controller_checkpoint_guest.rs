@@ -92,6 +92,8 @@ fn full_controller_checkpoint_restores_pic_ioapic_lapic_and_resumes_both_routes(
                 "skipping full controller checkpoint integration assertion: /dev/kvm is unavailable to this runner"
             );
         }
-        Err(error) => panic!("full controller checkpoint guest execution failed unexpectedly: {error}"),
+        Err(error) => {
+            panic!("full controller checkpoint guest execution failed unexpectedly: {error}")
+        }
     }
 }
