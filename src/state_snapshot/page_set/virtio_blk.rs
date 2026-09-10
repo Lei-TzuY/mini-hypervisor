@@ -130,8 +130,10 @@ impl BoundedVirtioBlkCheckpointComparison {
 mod virtio_blk_guest {
     use super::{
         page_set_error, BoundedVirtioBlkCheckpoint, BoundedVirtioBlkCheckpointComparison, Error,
-        GuestMemory, GuestMsrAccessPolicy, GuestPhysAddr, VcpuId, LONG_MODE_PAGE_SIZE,
+        GuestMemory, GuestMsrAccessPolicy, GuestPhysAddr, VcpuId,
     };
+    #[cfg(test)]
+    use super::LONG_MODE_PAGE_SIZE;
     include!("virtio_blk_guest.rs");
 }
 pub use virtio_blk_guest::*;
