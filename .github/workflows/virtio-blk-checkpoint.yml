@@ -1,0 +1,66 @@
+name: Strict KVM virtio-blk device checkpoint restore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/virtio_blk.rs'
+      - 'src/state_snapshot/page_set/virtio_blk_guest.rs'
+      - 'src/bin/virtio-blk-checkpoint.rs'
+      - 'tests/virtio_blk_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/virtio-blk-checkpoint.yml'
+  pull_request:
+    paths:
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/virtio_blk.rs'
+      - 'src/state_snapshot/page_set/virtio_blk_guest.rs'
+      - 'src/bin/virtio-blk-checkpoint.rs'
+      - 'tests/virtio_blk_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/virtio-blk-checkpoint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  virtio-blk-checkpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build proof binary
+        run: cargo build --quiet --bin virtio-blk-checkpoint
+      - name: Strict KVM virtio-blk checkpoint restore proof
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/virtio-blk-checkpoint)"
+          printf '%s\n' "$output"
+
+          grep -F 'virtio-blk checkpoint page: 0x18000' <<<"$output"
+          grep -F 'virtio-blk checkpoint captured queue: avail=1 used=1' <<<"$output"
+          grep -F 'virtio-blk checkpoint capture proof: [66, 87, 79]' <<<"$output"
+          grep -F 'virtio-blk checkpoint mutation exact: page=false vcpu=false device=false' <<<"$output"
+          grep -F 'virtio-blk checkpoint mutation proof: [78, 82, 68]' <<<"$output"
+          grep -F 'virtio-blk checkpoint restore exact: page=true vcpu=true device=true' <<<"$output"
+          grep -F 'virtio-blk checkpoint replay queue: avail=2 used=2' <<<"$output"
+          grep -F 'virtio-blk checkpoint replay proof: [78, 82, 68]' <<<"$output"
+          grep -F 'virtio-blk checkpoint backing/readback match: true' <<<"$output"
+
+          for prefix in \
+            'virtio-blk checkpoint capture: vCPU 0 exit Hlt: rip=' \
+            'virtio-blk checkpoint mutation: vCPU 0 exit Hlt: rip=' \
+            'virtio-blk checkpoint replay: vCPU 0 exit Hlt: rip='; do
+            report="$(grep -F "$prefix" <<<"$output")"
+            rflags_hex="${report##*rflags=}"
+            [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            rflags=$((rflags_hex))
+            (( (rflags & 0x2) == 0x2 ))
+          done
