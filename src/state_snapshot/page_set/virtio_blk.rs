@@ -126,3 +126,5 @@ impl BoundedVirtioBlkCheckpointComparison {
         self.guest.is_exact_match() && self.device
     }
 }
+
+include!("virtio_blk_guest.rs");
