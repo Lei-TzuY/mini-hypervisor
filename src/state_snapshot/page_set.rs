@@ -249,3 +249,4 @@ mod tests {
 }
 
 include!("page_set/controller.rs");
+include!("page_set/full_controller.rs");
