@@ -47,10 +47,7 @@ fn main() -> ExitCode {
                 result.restored().vcpu_exact(),
                 result.restored().device_exact()
             );
-            println!(
-                "virtio-blk checkpoint replay: {}",
-                result.replay_report()
-            );
+            println!("virtio-blk checkpoint replay: {}", result.replay_report());
             println!(
                 "virtio-blk checkpoint replay queue: avail={} used={}",
                 result.replay_avail_idx(),
