@@ -31,7 +31,10 @@ fn full_controller_and_virtio_blk_checkpoint_restore_then_replay_on_kvm() {
             assert!(!mutation_controller.lapic_exact());
             assert!(!mutation.device_exact());
             assert!(!mutation.is_exact_match());
-            assert_eq!(result.mutation_proof(), FULL_CONTROLLER_VIRTIO_BLK_REQUEST_PROOF);
+            assert_eq!(
+                result.mutation_proof(),
+                FULL_CONTROLLER_VIRTIO_BLK_REQUEST_PROOF
+            );
             assert_eq!(result.mutation_assert_count(), 1);
             assert_eq!(result.mutation_deassert_count(), 1);
 
@@ -49,7 +52,10 @@ fn full_controller_and_virtio_blk_checkpoint_restore_then_replay_on_kvm() {
             assert!(restored.device_exact());
             assert!(restored.is_exact_match());
 
-            assert_eq!(result.replay_proof(), FULL_CONTROLLER_VIRTIO_BLK_REQUEST_PROOF);
+            assert_eq!(
+                result.replay_proof(),
+                FULL_CONTROLLER_VIRTIO_BLK_REQUEST_PROOF
+            );
             assert_eq!(result.replay_assert_count(), 1);
             assert_eq!(result.replay_deassert_count(), 1);
             assert_eq!(result.replay_avail_idx(), 1);
