@@ -147,7 +147,11 @@ impl DebugPort {
                     });
                 }
 
-                self.bytes.push(io.output_data()[0]);
+                let byte = io.output_data()[0];
+                self.bytes.push(byte);
+                if std::env::var_os("MINI_HYPERVISOR_TRACE_DEBUG_PORT").is_some() {
+                    eprintln!("debug-port trace: {byte:#04x}");
+                }
                 Ok(PortIoService::Output)
             }
             PortIoDirection::In => Ok(PortIoService::Input(vec![self.input_byte])),
