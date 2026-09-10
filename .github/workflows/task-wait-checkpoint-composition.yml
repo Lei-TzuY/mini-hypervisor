@@ -26,19 +26,29 @@ permissions:
 
 jobs:
   task-wait-checkpoint-composition:
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [0, 1, 2, 3, 4, 5, 6, 7]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Build wait checkpoint composition proof
         run: cargo build --quiet --bin task-wait-checkpoint-composition
+      - name: Host diagnostic
+        shell: bash
+        run: |
+          echo "diagnostic lane: ${{ matrix.lane }}"
+          uname -a
+          cat /proc/version
       - name: Stress strict KVM wait checkpoint composition proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          for attempt in $(seq 1 32); do
-            echo "wait checkpoint diagnostic attempt: $attempt"
+          for attempt in $(seq 1 16); do
+            echo "wait checkpoint diagnostic lane ${{ matrix.lane }} attempt: $attempt"
             output="$(timeout 30s target/debug/task-wait-checkpoint-composition)"
             printf '%s\n' "$output"
 
