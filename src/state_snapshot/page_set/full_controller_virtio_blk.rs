@@ -139,3 +139,9 @@ mod full_controller_virtio_blk_tests {
         assert!(called.get());
     }
 }
+
+mod full_controller_virtio_blk_guest {
+    use super::*;
+    include!("full_controller_virtio_blk_guest.rs");
+}
+pub use full_controller_virtio_blk_guest::*;
