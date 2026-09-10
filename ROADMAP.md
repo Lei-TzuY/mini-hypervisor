@@ -4,51 +4,49 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `282d9e3b5068ee01d3339c762324cfd7dfde250a` through PR #133 (`Keep SIPI work-dispatch timeout independent of cold build`). Exact ordinary CI and all permanent hosted-KVM workflows for that integrated frontier are settled successfully.
+`main` is `d5eb5cd0783153e0d90fc7d8b2433075a5ceca8c` through PR #135 (`Canonicalize unusable segment restore state`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; guest-owned ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe copyin/copyout/usercopy; isolated ring3 address spaces; dirty-page tracking; bounded guest-owned scheduling/wait ownership; one-page and bounded multi-page VCPU checkpoints; scheduler/wait checkpoint composition; one coordinated two-VCPU stop-the-world checkpoint; and bounded in-kernel x86 controller checkpoints.
 
-The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; guest-owned ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe copyin/copyout/usercopy; isolated ring3 address spaces; dirty-page tracking; bounded guest-owned task scheduling/wait ownership; one-page and bounded multi-page VCPU checkpoints; scheduler/wait checkpoint composition; one coordinated two-VCPU stop-the-world checkpoint; and one bounded page/VCPU/master-PIC/LAPIC controller checkpoint.
+PR #134 seals the bounded full-controller checkpoint at merged commit `13a1fe1635b591afd7b1c2b38bf621a45067008b`. It composes the existing bounded page/VCPU checkpoint with master PIC, slave PIC, IOAPIC and boot-VCPU LAPIC ownership, restores them in dependency order, requires a fresh exact comparison, and resumes both restored slave-PIC and IOAPIC interrupt routes on real KVM. PR #135 changes no capability boundary; it is a correctness repair that canonicalizes only x86 unusable-segment type bit 0 so the same strict restore proof remains deterministic across hosted KVM implementations without weakening usable-segment/register/MSR equality.
 
-PR #132 seals the first kernel-owned controller-state checkpoint at merged commit `0acd69fb33c4e8882f7d19c8317be2228e61754c`. It reuses `BoundedVcpuPageSetCheckpoint`, captures only from the validated non-serviceable `KVM_EXIT_DEBUG` quiescent boundary at RIP `0x10031` with IF clear, owns page `0x30000`, canonical boot-VCPU state, master PIC and LAPIC, proves independent corruption, restores in dependency order and resumes exact `AIMD` interrupt delivery. PR #133 changes no guest-visible behavior; it moves the remaining SIPI work-dispatch cold build outside the unchanged strict 30-second KVM execution budget. The exact `main` workflow matrix after #133 has no failed, queued or in-progress run.
+The fixed full-controller checkpoint phase is sealed. Do not farm alternate IOAPIC pins, PIC masks, vectors or LAPIC bits merely to extend the phase number.
 
-The fixed master-PIC/LAPIC checkpoint phase is sealed. Do not farm alternate PIC masks, marker pages, vectors or LAPIC bits merely to extend the phase number.
+## Selected milestone — bounded quiescent virtio-blk device checkpoint
 
-## Selected milestone — bounded full in-kernel controller checkpoint
-
-The next state-ownership boundary completes the bounded x86 in-kernel irqchip snapshot surface already selected by the previous architecture audit: compose slave PIC and IOAPIC state with the existing page/VCPU/master-PIC/LAPIC checkpoint. This must extend the established checkpoint object and quiescence boundary rather than fork a second snapshot/restore pipeline.
+The next ownership boundary is one real device model. Compose one exact quiescent virtio-blk device with the existing `BoundedVcpuPageSetCheckpoint`; do not fork page/VCPU restore machinery and do not pretend host file descriptors, registrations or in-flight queue work are migration-safe.
 
 Acceptance contract:
 
-- preserve exact base `282d9e3b5068ee01d3339c762324cfd7dfde250a`, Rust 1.74 shipped-target MSRV, ordinary CI and every applicable permanent hosted-KVM workflow;
-- reuse `BoundedControllerCheckpoint` / `BoundedVcpuPageSetCheckpoint` for page, canonical boot-VCPU, master-PIC and LAPIC ownership; do not duplicate those capture/restore paths;
-- model Linux x86 `KVM_GET_IRQCHIP` / `KVM_SET_IRQCHIP` for chip id 1 (slave PIC) and chip id 2 (IOAPIC) using the existing fixed 520-byte outer request; model the IOAPIC payload as base address, ioregsel, id, IRR, pad and 24 redirection entries;
-- capture is allowed only at the existing capture-arm PIO plus single-step `KVM_EXIT_DEBUG` boundary at RIP `0x10031` with architectural bit 1 set and IF clear; guest single-step must already be disabled before checkpoint state is owned;
-- capture page `0x30000` marker `A`, canonical VCPU state, master PIC IMR `0xfb`, slave PIC IMR `0xfe`, a quiescent IOAPIC with IRR zero, IOAPIC pin8 masked, IOAPIC pin16 configured as fixed vector `0x50`, software-enabled LAPIC SPIV and unmasked ExtINT LINT0;
-- reject capture when IOAPIC IRR is nonzero; pending in-kernel interrupt state is outside this bounded quiescent checkpoint contract;
-- deliberately corrupt page, VCPU, master PIC, slave PIC, IOAPIC pin16 and LAPIC LINT0 independently; fresh verification must report all six components non-exact;
-- restore page/VCPU first and require that layer exact before controller mutation; restore controller state in explicit master PIC → slave PIC → IOAPIC → LAPIC order; any failure stops later restore steps;
-- require a fresh six-component exact verification before resumed guest execution;
-- after restore, prove both newly-owned controller paths on real KVM: restored marker `A`, GSI8 through slave-PIC vector `0x48` handler `S` with slave+master EOI, bridge byte `B`, then GSI16 through IOAPIC vector `0x50` handler `J`, resumed-main `M`, completion `D`;
-- exact executable proof is `ASBJMD` across six byte-wide debug-port exits; the slave-PIC armed, IOAPIC armed and completion states must retain architectural bit 1 and IF;
-- KVM-aware integration must independently validate capture RIP/RFLAGS, six mismatch→exact transitions, PIC IMRs, IOAPIC pin16, LAPIC semantics, all six proof exits and both resumed interrupt routes;
-- a dedicated permanent hosted-KVM workflow must build `full-controller-checkpoint` outside the unchanged 30-second execution timeout, then require the same capture, restore, `ASBJMD`, controller and RFLAGS evidence; `/dev/kvm` absence, timeout, changed expected values or skipped verification are not successful outcomes;
-- `ROADMAP.md` is part of that workflow path filter so the final documentation-synchronized candidate must independently rerun the full-controller proof.
+- preserve exact base `d5eb5cd0783153e0d90fc7d8b2433075a5ceca8c`, ordinary CI, Rust 1.74 shipped-target MSRV and every existing permanent hosted-KVM workflow;
+- capture only at a non-serviceable `KVM_EXIT_HLT` boundary after a completed virtio-blk request, with no pending MMIO device event/queue notification;
+- own exactly one guest page at GPA `0x18000`, which contains the deterministic descriptor/avail/used/header/data/status request state, plus canonical boot-VCPU state and one exact virtio-blk device snapshot at its fixed BAR;
+- device snapshot ownership includes negotiated/configuration state, queue indices, ISR state and deterministic in-memory backing; it excludes host fds and external registration state;
+- reject non-quiescent device capture or restore, missing/wrong BAR identity, and guest-layer restore mismatch before device mutation;
+- deterministic first phase must configure the device, complete one T_OUT request, commit the deterministic sector backing, emit exact debug proof `BWO`, and halt with captured queue indices `avail=1 used=1`;
+- checkpoint the one page, VCPU and quiescent device at that first HLT and require the captured device to own the committed backing and queue indices 1/1;
+- resume normally and complete one T_IN request from the same queue; this legitimate post-capture execution must advance device queue indices to 2/2 and make fresh page, VCPU and device verification all non-exact;
+- restore page/VCPU first and require that layer exact before restoring the device; then restore the same-BAR quiescent device and require a fresh aggregate exact comparison for page, VCPU and device;
+- after restore, re-enter real KVM from the restored first HLT and replay the same T_IN request; exact replay proof is `NRD`, queue indices must advance from restored 1/1 to 2/2, and guest readback plus device backing must equal the checkpointed deterministic sector;
+- the mutation phase must also produce exact `NRD`, so the proof demonstrates capture → legitimate mismatch → exact restore → executable replay rather than clone equality alone;
+- KVM-aware integration must independently validate all three HLT boundaries/RFLAGS bit 1, exact capture/mutation/replay proof bytes, 1/1→2/2 queue transitions, full mismatch→exact comparison, and backing/readback continuity;
+- a dedicated permanent hosted-KVM workflow must build `virtio-blk-checkpoint` outside its execution timeout, require `/dev/kvm`, execute the proof under a strict timeout, and require the same page/queue/proof/mismatch/restore/backing evidence; timeout, KVM absence or skipped verification are failures;
+- `ROADMAP.md` is part of that workflow path filter, so the final documentation-synchronized candidate must rerun the actual device checkpoint proof.
 
-Implementation is in progress on `milestone/full-controller-checkpoint`. The branch extends the existing irqchip snapshot UAPI with slave-PIC and IOAPIC state, composes them into the existing bounded checkpoint, and includes an executable two-route restore proof. Real-KVM evidence is required before this milestone may be integrated.
+Implementation is in progress on `milestone/virtio-blk-checkpoint` through PR #136. The checkpoint object and quiescent MMIO-bus capture/verify/restore boundary exist, and the executable proof reuses the integrated atomic virtio-blk queue processor rather than introducing a parallel request path. Real hosted-KVM evidence on the final exact candidate is required before integration.
 
 ## Scope boundary
 
 This milestone deliberately does **not** add:
 
-- arbitrary irqchip serialization beyond master PIC, slave PIC, IOAPIC and the existing boot-VCPU LAPIC;
-- irqfd/eventfd/ioeventfd registration checkpointing, replay or host-fd migration;
-- PCI/virtio device-state checkpointing, DMA/IOMMU state or device inflight replay;
-- capture or replay from arbitrary in-flight PIO/MMIO service exits;
-- SMP controller checkpointing, cross-VCPU pending interrupt replay or a whole-VM migration transaction;
-- migration serialization/versioning, cross-host compatibility, pre-copy/post-copy or crash-consistency claims;
-- performance, downtime or portability claims beyond the exact hosted-KVM evidence.
+- cross-host serialization, schema/version compatibility, migration save files, pre-copy/post-copy or downtime claims;
+- PCI configuration-space checkpointing or reconstruction of PCI discovery state;
+- irqfd, ioeventfd, eventfd or other host-fd registration capture/replay;
+- in-flight virtqueue/request capture, partially serviced MMIO exits, DMA/IOMMU state or external storage durability semantics;
+- multiple virtio devices, multi-device atomic checkpoint transactions or controller+virtio all-in-one restore;
+- SMP device checkpointing, cross-VCPU in-flight ownership or whole-VM migration orchestration;
+- performance, latency, portability or crash-consistency claims beyond the exact same-process hosted-KVM evidence.
 
 ## Promotion rule
 
-After the bounded full-controller checkpoint is integrated and exact merged-`main` ordinary CI plus every applicable permanent hosted-KVM workflow are green, seal this fixed controller-coverage proof rather than farming extra IOAPIC pins, PIC masks or vectors.
+After the bounded quiescent virtio-blk checkpoint is integrated and exact merged-`main` ordinary CI plus every applicable permanent hosted-KVM workflow are green, seal this one-device/one-page queue-state proof rather than farming sectors, queue-index variants or alternate payloads.
 
-The next architecture audit should promote to a materially broader ownership boundary. Strong candidates are bounded PCI/virtio device-state checkpoint composition or explicit event-registration state/replay only if ownership, restore ordering and resumed real-KVM behavior can be represented without pretending host file descriptors or in-flight device work are migration-safe. SMP controller checkpointing and migration serialization/versioning remain separate higher-order frontiers.
+The next architecture audit should promote to a materially broader ownership boundary. Strong candidates are explicit event-registration state/reconstruction only if host-resource ownership can be modeled without serializing raw fds, a bounded controller+device checkpoint transaction that proves restore ordering across both subsystems, or later migration serialization/versioning once the owned state surface has a stable schema. Multi-device and SMP device transactions remain separate higher-order frontiers.
