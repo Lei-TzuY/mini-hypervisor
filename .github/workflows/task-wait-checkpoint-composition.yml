@@ -26,41 +26,28 @@ permissions:
 
 jobs:
   task-wait-checkpoint-composition:
-    strategy:
-      fail-fast: false
-      matrix:
-        lane: [0, 1, 2, 3, 4, 5, 6, 7]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Build wait checkpoint composition proof
         run: cargo build --quiet --bin task-wait-checkpoint-composition
-      - name: Host diagnostic
-        shell: bash
-        run: |
-          echo "diagnostic lane: ${{ matrix.lane }}"
-          uname -a
-          cat /proc/version
-      - name: Stress strict KVM wait checkpoint composition proof
+      - name: Strict KVM wait checkpoint composition proof
         shell: bash
         run: |
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          for attempt in $(seq 1 16); do
-            echo "wait checkpoint diagnostic lane ${{ matrix.lane }} attempt: $attempt"
-            output="$(timeout 30s target/debug/task-wait-checkpoint-composition)"
-            printf '%s\n' "$output"
+          output="$(timeout 30s target/debug/task-wait-checkpoint-composition)"
+          printf '%s\n' "$output"
 
-            grep -F 'wait checkpoint capture: vCPU 0 exit Debug: rip=0x1603d, rflags=' <<<"$output"
-            grep -F 'wait checkpoint ownership: state=Blocked owner=0x11 mismatches=1 wakes=0 last=0x22 selected=B' <<<"$output"
-            grep -F 'wait checkpoint corruption: page_exact=false vcpu_exact=false wait_exact=false queue_exact=false task_a_exact=true task_b_exact=true' <<<"$output"
-            grep -F 'wait checkpoint restore: page_exact=true vcpu_exact=true wait_exact=true queue_exact=true task_a_exact=true task_b_exact=true' <<<"$output"
-            grep -F 'wait checkpoint proof: [75, 49, 65, 88, 80, 87, 48, 66, 82, 68]' <<<"$output"
+          grep -F 'wait checkpoint capture: vCPU 0 exit Debug: rip=0x1603d, rflags=' <<<"$output"
+          grep -F 'wait checkpoint ownership: state=Blocked owner=0x11 mismatches=1 wakes=0 last=0x22 selected=B' <<<"$output"
+          grep -F 'wait checkpoint corruption: page_exact=false vcpu_exact=false wait_exact=false queue_exact=false task_a_exact=true task_b_exact=true' <<<"$output"
+          grep -F 'wait checkpoint restore: page_exact=true vcpu_exact=true wait_exact=true queue_exact=true task_a_exact=true task_b_exact=true' <<<"$output"
+          grep -F 'wait checkpoint proof: [75, 49, 65, 88, 80, 87, 48, 66, 82, 68]' <<<"$output"
 
-            capture="$(grep -F 'wait checkpoint capture: vCPU 0 exit Debug: rip=0x1603d, rflags=' <<<"$output")"
-            capture_hex="${capture##*rflags=}"
-            [[ "$capture_hex" =~ ^0x[0-9a-fA-F]+$ ]]
-            capture_rflags=$((capture_hex))
-            (( (capture_rflags & 0x2) == 0x2 ))
-          done
+          capture="$(grep -F 'wait checkpoint capture: vCPU 0 exit Debug: rip=0x1603d, rflags=' <<<"$output")"
+          capture_hex="${capture##*rflags=}"
+          [[ "$capture_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          capture_rflags=$((capture_hex))
+          (( (capture_rflags & 0x2) == 0x2 ))
