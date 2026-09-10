@@ -162,6 +162,20 @@ impl VcpuSpecialRegisterMismatch {
     }
 }
 
+const SEGMENT_TYPE_BIT_ZERO: u8 = 1;
+
+const fn canonical_segment_type(segment_type: u8, unusable: u8) -> u8 {
+    if unusable != 0 {
+        // Hosted KVM can canonicalize type bit 0 while an x86 segment is unusable across a
+        // KVM_SET_SREGS/KVM_GET_SREGS round trip. The type nibble is inactive for an unusable
+        // segment, so canonicalize only the observed volatile bit and retain every other type bit.
+        // Usable segments remain exact, including bit 0.
+        segment_type & !SEGMENT_TYPE_BIT_ZERO
+    } else {
+        segment_type
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VcpuSegmentState {
     base: u64,
@@ -184,7 +198,7 @@ impl VcpuSegmentState {
             base: segment.base,
             limit: segment.limit,
             selector: segment.selector,
-            segment_type: segment.type_,
+            segment_type: canonical_segment_type(segment.type_, segment.unusable),
             present: segment.present,
             dpl: segment.dpl,
             db: segment.db,
@@ -636,7 +650,8 @@ mod tests {
 
     #[test]
     fn segment_snapshot_copies_semantic_fields_and_ignores_uapi_padding() {
-        let a = segment(3, 0xaa);
+        let mut a = segment(3, 0xaa);
+        a.unusable = 0;
         let mut b = a;
         b.padding = 0x55;
 
@@ -655,7 +670,60 @@ mod tests {
         assert_eq!(a.l(), 8);
         assert_eq!(a.g(), 9);
         assert_eq!(a.avl(), 10);
-        assert_eq!(a.unusable(), 11);
+        assert_eq!(a.unusable(), 0);
+    }
+
+    #[test]
+    fn unusable_segment_type_bit_zero_is_canonical_but_other_type_bits_remain_exact() {
+        let mut reference_raw = special_registers();
+        reference_raw.ss.unusable = 1;
+        reference_raw.ss.type_ = 0;
+        let mut observed_raw = reference_raw;
+        observed_raw.ss.type_ = 1;
+
+        let reference = VcpuSpecialRegisterSnapshot::from_kvm_sregs(reference_raw);
+        let observed = VcpuSpecialRegisterSnapshot::from_kvm_sregs(observed_raw);
+        assert!(reference.compare(&observed).is_exact_match());
+        assert_eq!(reference.ss().segment_type(), 0);
+        assert_eq!(observed.ss().segment_type(), 0);
+
+        observed_raw.ss.type_ = 3;
+        let observed = VcpuSpecialRegisterSnapshot::from_kvm_sregs(observed_raw);
+        let comparison = reference.compare(&observed);
+        assert_eq!(comparison.mismatches().len(), 1);
+        assert_eq!(
+            comparison.mismatches()[0].field(),
+            VcpuSpecialRegisterField::Segment {
+                register: VcpuSegmentRegister::Ss,
+                field: VcpuSegmentField::SegmentType,
+            }
+        );
+        assert_eq!(comparison.mismatches()[0].reference_value(), 0);
+        assert_eq!(comparison.mismatches()[0].observed_value(), 2);
+    }
+
+    #[test]
+    fn usable_segment_type_bit_zero_remains_exact() {
+        let mut reference_raw = special_registers();
+        reference_raw.ss.unusable = 0;
+        reference_raw.ss.type_ = 2;
+        let mut observed_raw = reference_raw;
+        observed_raw.ss.type_ = 3;
+
+        let reference = VcpuSpecialRegisterSnapshot::from_kvm_sregs(reference_raw);
+        let observed = VcpuSpecialRegisterSnapshot::from_kvm_sregs(observed_raw);
+        let comparison = reference.compare(&observed);
+
+        assert_eq!(comparison.mismatches().len(), 1);
+        assert_eq!(
+            comparison.mismatches()[0].field(),
+            VcpuSpecialRegisterField::Segment {
+                register: VcpuSegmentRegister::Ss,
+                field: VcpuSegmentField::SegmentType,
+            }
+        );
+        assert_eq!(comparison.mismatches()[0].reference_value(), 2);
+        assert_eq!(comparison.mismatches()[0].observed_value(), 3);
     }
 
     #[test]
