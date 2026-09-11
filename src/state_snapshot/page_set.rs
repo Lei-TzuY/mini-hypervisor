@@ -1,5 +1,7 @@
 mod guest;
 pub use guest::*;
+mod schema_v1;
+pub use schema_v1::*;
 
 use super::{VcpuStateSnapshot, VcpuStateSnapshotComparison};
 use crate::error::{Error, HostEnvironmentError};
