@@ -1,0 +1,102 @@
+name: Strict KVM versioned full controller checkpoint restore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/kvm/lapic_uapi.rs'
+      - 'src/vcpu/lapic_checkpoint.rs'
+      - 'src/vcpu/mp_state.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/**'
+      - 'src/bin/versioned-full-controller-checkpoint.rs'
+      - 'tests/versioned_full_controller_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-full-controller-checkpoint.yml'
+  pull_request:
+    paths:
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/kvm/lapic_uapi.rs'
+      - 'src/vcpu/lapic_checkpoint.rs'
+      - 'src/vcpu/mp_state.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/**'
+      - 'src/bin/versioned-full-controller-checkpoint.rs'
+      - 'tests/versioned_full_controller_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-full-controller-checkpoint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-versioned-full-controller-checkpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build versioned full controller checkpoint proof
+        run: cargo build --quiet --bin versioned-full-controller-checkpoint
+      - name: Execute versioned full controller checkpoint proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/versioned-full-controller-checkpoint)"
+          printf '%s\n' "$output"
+
+          schema="$(grep -F 'versioned full controller schema: version=1 encoded_bytes=' <<<"$output")"
+          encoded_and_pages="${schema##*encoded_bytes=}"
+          encoded_bytes="${encoded_and_pages%% *}"
+          pages="${schema##*pages=}"
+          pages="${pages%% *}"
+          msrs="${schema##*msrs=}"
+          msrs="${msrs%% *}"
+          [[ "$encoded_bytes" =~ ^[0-9]+$ ]]
+          [[ "$pages" =~ ^[0-9]+$ ]]
+          [[ "$msrs" =~ ^[0-9]+$ ]]
+          (( encoded_bytes > 4096 ))
+          (( pages == 1 ))
+          (( msrs <= 256 ))
+          grep -F 'canonical=true' <<<"$schema"
+
+          grep -F 'versioned full controller page: 0x30000' <<<"$output"
+          grep -F 'versioned full controller corruption: page=false vcpu=false master-pic=false slave-pic=false ioapic=false lapic=false' <<<"$output"
+          grep -F 'versioned full controller restore: page=true vcpu=true master-pic=true slave-pic=true ioapic=true lapic=true' <<<"$output"
+          grep -F 'versioned full controller master PIC IMR: 0xfb' <<<"$output"
+          grep -F 'versioned full controller slave PIC IMR: 0xfe' <<<"$output"
+          grep -F 'versioned full controller IOAPIC pin16: 0x50' <<<"$output"
+          grep -F 'versioned full controller proof: [65, 83, 66, 74, 77, 68]' <<<"$output"
+
+          capture="$(grep -F 'versioned full controller capture: KVM_EXIT_DEBUG: rip=0x10031, rflags=' <<<"$output")"
+          capture_rflags_hex="${capture##*rflags=}"
+          [[ "$capture_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          capture_rflags=$((capture_rflags_hex))
+          (( (capture_rflags & 0x2) == 0x2 ))
+          (( (capture_rflags & 0x200) == 0 ))
+
+          spiv_line="$(grep -F 'versioned full controller LAPIC SPIV:' <<<"$output")"
+          spiv_hex="${spiv_line##*: }"
+          [[ "$spiv_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          spiv=$((spiv_hex))
+          (( (spiv & 0x100) == 0x100 ))
+
+          lint0_line="$(grep -F 'versioned full controller LAPIC LINT0:' <<<"$output")"
+          lint0_hex="${lint0_line##*: }"
+          [[ "$lint0_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          lint0=$((lint0_hex))
+          (( (lint0 & 0x700) == 0x700 ))
+          (( (lint0 & 0x10000) == 0 ))
+
+          for label in \
+            'versioned full controller slave armed rflags:' \
+            'versioned full controller IOAPIC armed rflags:' \
+            'versioned full controller completion rflags:'; do
+            line="$(grep -F "$label" <<<"$output")"
+            rflags_hex="${line##*: }"
+            [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+            rflags=$((rflags_hex))
+            (( (rflags & 0x2) == 0x2 ))
+            (( (rflags & 0x200) == 0x200 ))
+          done
