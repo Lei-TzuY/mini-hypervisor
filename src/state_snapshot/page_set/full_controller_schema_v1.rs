@@ -321,4 +321,258 @@ mod versioned_full_controller_schema_tests {
             Err(VersionedFullControllerCheckpointError::InvalidMagic)
         ));
     }
+
+    fn schema_test_segment(seed: u8) -> sys::KvmSegment {
+        sys::KvmSegment {
+            base: u64::from(seed) << 32,
+            limit: 0xffff,
+            selector: u16::from(seed) << 3,
+            type_: seed & 0x0f,
+            present: 1,
+            dpl: seed & 0x03,
+            db: 0,
+            s: 1,
+            l: 1,
+            g: 1,
+            avl: 0,
+            unusable: 0,
+            padding: 0,
+        }
+    }
+
+    fn schema_test_checkpoint() -> (BoundedFullControllerCheckpoint, HostMsrIndexList) {
+        let registers = VcpuRegisterSnapshot::from_kvm_regs(sys::KvmRegs {
+            rax: 1,
+            rbx: 2,
+            rcx: 3,
+            rdx: 4,
+            rsi: 5,
+            rdi: 6,
+            rsp: 7,
+            rbp: 8,
+            r8: 9,
+            r9: 10,
+            r10: 11,
+            r11: 12,
+            r12: 13,
+            r13: 14,
+            r14: 15,
+            r15: 16,
+            rip: 17,
+            rflags: 0x202,
+        });
+        let special_registers = VcpuSpecialRegisterSnapshot::from_kvm_sregs(sys::KvmSregs {
+            cs: schema_test_segment(1),
+            ds: schema_test_segment(2),
+            es: schema_test_segment(3),
+            fs: schema_test_segment(4),
+            gs: schema_test_segment(5),
+            ss: schema_test_segment(6),
+            tr: schema_test_segment(7),
+            ldt: schema_test_segment(8),
+            gdt: sys::KvmDtable {
+                base: 0x5000,
+                limit: 0x17,
+                padding: [0; 3],
+            },
+            idt: sys::KvmDtable {
+                base: 0x6000,
+                limit: 0x50f,
+                padding: [0; 3],
+            },
+            cr0: 1,
+            cr2: 2,
+            cr3: 3,
+            cr4: 4,
+            cr8: 5,
+            efer: 6,
+            apic_base: 7,
+            interrupt_bitmap: [8, 9, 10, 11],
+        });
+        let host = HostMsrIndexList::from_validated_raw(&[0x10, 0x1b]);
+        let indices = [MsrIndex::new(0x10), MsrIndex::new(0x1b)];
+        let policy = GuestMsrAccessPolicy::from_host(&host, &indices).unwrap();
+        let values =
+            GuestMsrValueSet::from_policy(&policy, &[(indices[0], 0x1111), (indices[1], 0x2222)])
+                .unwrap();
+        let msrs = GuestMsrSnapshot::from_capture(&policy, &values).unwrap();
+        let guest = BoundedVcpuPageSetCheckpoint {
+            pages: vec![BoundedCheckpointPage {
+                address: GuestPhysAddr::new(0x30000),
+                bytes: vec![0x3a; LONG_MODE_PAGE_SIZE as usize],
+            }],
+            vcpu: VcpuStateSnapshot {
+                registers,
+                special_registers,
+                msrs,
+            },
+        };
+
+        let master_pic = crate::kvm::sys::MasterPicStateSnapshot::from_semantic_bytes([
+            0, 1, 0xfb, 3, 4, 0x40, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        ]);
+        let slave_pic = crate::kvm::sys::SlavePicStateSnapshot::from_semantic_bytes([
+            0x80, 0x81, 0xfe, 0x83, 0x84, 0x48, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c,
+            0x8d, 0x8e, 0x8f,
+        ]);
+        let mut ioapic_bytes = [0_u8; crate::kvm::sys::KVM_IOAPIC_STATE_SIZE];
+        ioapic_bytes[0..8].copy_from_slice(&0xfec0_0000_u64.to_le_bytes());
+        ioapic_bytes[24 + 16 * 8..24 + 17 * 8].copy_from_slice(&0x50_u64.to_le_bytes());
+        let ioapic = crate::kvm::sys::IoapicStateSnapshot::from_semantic_bytes(ioapic_bytes);
+
+        let mut lapic = crate::kvm::sys::KvmLapicState {
+            regs: [0; crate::kvm::sys::KVM_APIC_REG_SIZE],
+        };
+        lapic.regs[0xf0..0xf4].copy_from_slice(&0x1ff_u32.to_le_bytes());
+        lapic.regs[0x350..0x354].copy_from_slice(&0x700_u32.to_le_bytes());
+
+        (
+            BoundedFullControllerCheckpoint {
+                base: BoundedControllerCheckpoint {
+                    guest,
+                    master_pic,
+                    lapic,
+                },
+                slave_pic,
+                ioapic,
+            },
+            host,
+        )
+    }
+
+    fn schema_test_encoded() -> (Vec<u8>, HostMsrIndexList) {
+        let (checkpoint, host) = schema_test_checkpoint();
+        let bytes = VersionedFullControllerCheckpointV1::from_checkpoint(&checkpoint)
+            .unwrap()
+            .encode()
+            .unwrap();
+        (bytes, host)
+    }
+
+    #[test]
+    fn canonical_round_trip_reconstructs_full_controller_semantics() {
+        let (checkpoint, host) = schema_test_checkpoint();
+        let schema = VersionedFullControllerCheckpointV1::from_checkpoint(&checkpoint).unwrap();
+        let encoded = schema.encode().unwrap();
+        let decoded = VersionedFullControllerCheckpointV1::decode(&encoded).unwrap();
+        let materialized = decoded.materialize(&host).unwrap();
+
+        assert_eq!(schema, decoded);
+        assert_eq!(checkpoint, materialized);
+        assert_eq!(decoded.encode().unwrap(), encoded);
+        assert_eq!(schema.page_count(), 1);
+        assert_eq!(schema.msr_count(), 2);
+    }
+
+    #[test]
+    fn header_lengths_flags_and_reserved_fields_fail_closed() {
+        let (bytes, _) = schema_test_encoded();
+
+        let mut bad_magic = bytes.clone();
+        bad_magic[0] ^= 0xff;
+        assert_eq!(
+            VersionedFullControllerCheckpointV1::decode(&bad_magic),
+            Err(VersionedFullControllerCheckpointError::InvalidMagic)
+        );
+
+        let mut bad_version = bytes.clone();
+        bad_version[8..10].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerCheckpointV1::decode(&bad_version),
+            Err(VersionedFullControllerCheckpointError::UnsupportedVersion(2))
+        );
+
+        let mut bad_arch = bytes.clone();
+        bad_arch[10..12].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerCheckpointV1::decode(&bad_arch),
+            Err(VersionedFullControllerCheckpointError::UnsupportedArchitecture(2))
+        );
+
+        let mut bad_header = bytes.clone();
+        bad_header[12..16].copy_from_slice(&41_u32.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerCheckpointV1::decode(&bad_header),
+            Err(VersionedFullControllerCheckpointError::InvalidHeaderLength(41))
+        );
+
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(matches!(
+            VersionedFullControllerCheckpointV1::decode(&trailing),
+            Err(VersionedFullControllerCheckpointError::InvalidTotalLength { .. })
+        ));
+
+        let mut zero_guest = bytes.clone();
+        zero_guest[24..32].copy_from_slice(&0_u64.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerCheckpointV1::decode(&zero_guest),
+            Err(VersionedFullControllerCheckpointError::InvalidGuestLength(0))
+        );
+
+        let mut flags = bytes.clone();
+        flags[32..36].copy_from_slice(&1_u32.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerCheckpointV1::decode(&flags),
+            Err(VersionedFullControllerCheckpointError::NonZeroFlags(1))
+        );
+
+        let mut reserved = bytes;
+        reserved[36..40].copy_from_slice(&1_u32.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerCheckpointV1::decode(&reserved),
+            Err(VersionedFullControllerCheckpointError::NonZeroReserved(1))
+        );
+    }
+
+    #[test]
+    fn nested_guest_and_ioapic_padding_corruption_fail_closed() {
+        let (bytes, _) = schema_test_encoded();
+
+        let mut nested_magic = bytes.clone();
+        nested_magic[FULL_CONTROLLER_SCHEMA_HEADER_LEN] ^= 0xff;
+        assert_eq!(
+            VersionedFullControllerCheckpointV1::decode(&nested_magic),
+            Err(VersionedFullControllerCheckpointError::Guest(
+                VersionedPageVcpuCheckpointError::InvalidMagic
+            ))
+        );
+
+        let guest_len =
+            u64::from_le_bytes(bytes[24..32].try_into().expect("fixed guest length field"))
+                as usize;
+        let ioapic_pad_offset = FULL_CONTROLLER_SCHEMA_HEADER_LEN
+            + guest_len
+            + 2 * crate::kvm::sys::KVM_PIC_STATE_SIZE
+            + 20;
+        let mut ioapic_pad = bytes;
+        ioapic_pad[ioapic_pad_offset..ioapic_pad_offset + 4]
+            .copy_from_slice(&1_u32.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerCheckpointV1::decode(&ioapic_pad),
+            Err(VersionedFullControllerCheckpointError::NonZeroIoapicPad(1))
+        );
+    }
+
+    #[test]
+    fn current_host_msr_support_is_revalidated_before_materialization() {
+        let (checkpoint, _) = schema_test_checkpoint();
+        let schema = VersionedFullControllerCheckpointV1::from_checkpoint(&checkpoint).unwrap();
+        let incompatible_host = HostMsrIndexList::from_validated_raw(&[0x10]);
+        assert!(matches!(
+            schema.materialize(&incompatible_host),
+            Err(VersionedFullControllerCheckpointError::Guest(
+                VersionedPageVcpuCheckpointError::HostMsrIncompatible(_)
+            ))
+        ));
+    }
+
+    #[test]
+    fn truncated_input_never_partially_decodes() {
+        let (bytes, _) = schema_test_encoded();
+        for length in [0, 7, FULL_CONTROLLER_SCHEMA_HEADER_LEN - 1] {
+            assert!(VersionedFullControllerCheckpointV1::decode(&bytes[..length]).is_err());
+        }
+    }
+
 }
