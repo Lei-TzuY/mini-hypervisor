@@ -371,7 +371,7 @@ fn decode_device_state(
 }
 
 #[cfg(test)]
-mod tests {
+mod versioned_full_controller_virtio_blk_schema_tests {
     use super::*;
 
     #[test]
@@ -426,7 +426,8 @@ mod tests {
         bytes[10..12]
             .copy_from_slice(&VERSIONED_FULL_CONTROLLER_VIRTIO_BLK_ARCH_X86_64.to_le_bytes());
         bytes[12..16].copy_from_slice(&(FULL_CONTROLLER_VIRTIO_BLK_HEADER_LEN as u32).to_le_bytes());
-        bytes[16..24].copy_from_slice(&(bytes.len() as u64).to_le_bytes());
+        let total_len = bytes.len() as u64;
+        bytes[16..24].copy_from_slice(&total_len.to_le_bytes());
         assert_eq!(
             VersionedFullControllerVirtioBlkCheckpointV1::decode(&bytes),
             Err(VersionedFullControllerVirtioBlkCheckpointError::InvalidMagic)
