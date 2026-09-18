@@ -101,7 +101,7 @@ pub struct VcpuRegisterSnapshot {
 }
 
 impl VcpuRegisterSnapshot {
-    fn from_kvm_regs(regs: sys::KvmRegs) -> Self {
+    pub(crate) fn from_kvm_regs(regs: sys::KvmRegs) -> Self {
         Self {
             rax: regs.rax,
             rbx: regs.rbx,
