@@ -80,11 +80,6 @@ impl HostRegistrationCheckpoint {
         Self { spec }
     }
 
-    #[must_use]
-    pub(crate) const fn spec(self) -> HostRegistrationSpec {
-        self.spec
-    }
-
     pub(crate) fn reconstruct(
         self,
         backend: &KvmBackend,
@@ -155,11 +150,6 @@ impl ReconstructedHostRegistrations {
             irqfd_registration,
             irq_signal,
         })
-    }
-
-    #[must_use]
-    pub(crate) const fn spec(&self) -> HostRegistrationSpec {
-        self.spec
     }
 
     pub(crate) fn wait_doorbell(&self, timeout_millis: i32) -> Result<u64, Error> {
