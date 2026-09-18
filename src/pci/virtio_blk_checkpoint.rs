@@ -69,9 +69,7 @@ pub(crate) struct VirtioBlkCheckpointState {
 }
 
 impl VirtioBlkCheckpointState {
-    pub(crate) fn capture(
-        device: &VirtioBlkDevice,
-    ) -> Result<Self, VirtioBlkCheckpointStateError> {
+    pub(crate) fn capture(device: &VirtioBlkDevice) -> Result<Self, VirtioBlkCheckpointStateError> {
         if !device.checkpoint_quiescent() {
             return Err(VirtioBlkCheckpointStateError::NotQuiescent);
         }
@@ -96,9 +94,7 @@ impl VirtioBlkCheckpointState {
         Ok(state)
     }
 
-    pub(crate) fn materialize(
-        &self,
-    ) -> Result<VirtioBlkDevice, VirtioBlkCheckpointStateError> {
+    pub(crate) fn materialize(&self) -> Result<VirtioBlkDevice, VirtioBlkCheckpointStateError> {
         self.validate()?;
         Ok(VirtioBlkDevice {
             bar0: self.bar0,
