@@ -2,6 +2,7 @@ mod guest;
 pub use guest::*;
 mod schema_v1;
 pub use schema_v1::*;
+include!("page_set/full_controller_schema_v1.rs");
 
 use super::{VcpuStateSnapshot, VcpuStateSnapshotComparison};
 use crate::error::{Error, HostEnvironmentError};
