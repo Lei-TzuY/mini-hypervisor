@@ -315,7 +315,9 @@ impl MmioBus {
             .write(VIRTIO_NOTIFY_OFFSET, &queue.to_le_bytes())
             .map_err(virtio_blk_mmio_error)?;
         match event {
-            Some(VirtioBlkEvent::QueueNotified { queue: observed }) if observed == queue => Ok(true),
+            Some(VirtioBlkEvent::QueueNotified { queue: observed }) if observed == queue => {
+                Ok(true)
+            }
             _ => Err(Error::HostEnvironment(HostEnvironmentError::Io {
                 operation: "apply virtio-blk host queue notification",
                 source: io::Error::new(
