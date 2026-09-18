@@ -2,7 +2,7 @@ use crate::error::{Error, HostEnvironmentError, MmioError};
 use crate::memory::GuestMemory;
 use crate::portio::pci::virtio::{
     VirtioRngDevice, VirtioRngError, VirtioRngEvent, VirtioRngProcessError,
-    VirtioRngQueueCompletion, VIRTIO_RNG_BAR_SIZE,
+    VirtioRngQueueCompletion, VIRTIO_NOTIFY_OFFSET, VIRTIO_RNG_BAR_SIZE,
 };
 use crate::portio::pci::virtio_blk::{
     VirtioBlkDevice, VirtioBlkError, VirtioBlkEvent, VirtioBlkProcessError,
@@ -295,6 +295,36 @@ impl MmioBus {
         {
             Some(device) => device.process_notified_queue(memory).map(Some),
             None => Ok(None),
+        }
+    }
+
+    pub fn apply_virtio_blk_host_notification(
+        &mut self,
+        address: u64,
+        queue: u16,
+    ) -> Result<bool, Error> {
+        let Some(device) = self
+            .virtio_blk_devices
+            .iter_mut()
+            .find(|device| device.bar0() == address)
+        else {
+            return Ok(false);
+        };
+
+        let event = device
+            .write(VIRTIO_NOTIFY_OFFSET, &queue.to_le_bytes())
+            .map_err(virtio_blk_mmio_error)?;
+        match event {
+            Some(VirtioBlkEvent::QueueNotified { queue: observed }) if observed == queue => {
+                Ok(true)
+            }
+            _ => Err(Error::HostEnvironment(HostEnvironmentError::Io {
+                operation: "apply virtio-blk host queue notification",
+                source: io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "virtio-blk notify register did not produce the expected queue event",
+                ),
+            })),
         }
     }
 
@@ -668,6 +698,16 @@ mod tests {
 
     fn exit(direction: MmioDirection, length: u32, write_data: &[u8]) -> MmioExit {
         exit_at(BYTE_DEVICE_ADDRESS, direction, length, write_data)
+    }
+
+    #[test]
+    fn host_notification_bridge_preserves_virtio_blk_ready_validation() {
+        let base = 0x1000_0000;
+        let mut bus = MmioBus::empty();
+        bus.register_virtio_blk_device_at(base).unwrap();
+
+        assert!(bus.apply_virtio_blk_host_notification(base, 0).is_err());
+        assert_eq!(bus.take_device_event_record(), None);
     }
 
     #[test]

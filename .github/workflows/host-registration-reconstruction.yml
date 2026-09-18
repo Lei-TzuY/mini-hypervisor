@@ -1,0 +1,64 @@
+name: Strict KVM host-registration reconstruction
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/sys.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_guest.rs'
+      - 'src/bin/host-registration-reconstruction.rs'
+      - 'tests/host_registration_reconstruction_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/host-registration-reconstruction.yml'
+  pull_request:
+    paths:
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/sys.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_guest.rs'
+      - 'src/bin/host-registration-reconstruction.rs'
+      - 'tests/host_registration_reconstruction_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/host-registration-reconstruction.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-host-registration-reconstruction:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build reconstruction proof
+        run: cargo build --quiet --bin host-registration-reconstruction
+      - name: Execute reconstruction proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/host-registration-reconstruction)"
+          printf '%s\n' "$output"
+          grep -F 'host-registration checkpoint page: 0x18000' <<<"$output"
+          grep -F 'host-registration descriptor: doorbell=0x10000100 len=2 datamatch=0x0 gsi=0' <<<"$output"
+          grep -F 'host-registration captured queue: avail=0 used=0' <<<"$output"
+          grep -F 'host-registration mutation exact: page=false vcpu=false master-pic=false slave-pic=false ioapic=false lapic=false device=false' <<<"$output"
+          grep -F 'host-registration mutation transport: doorbell-events=1 irqfd-signals=1' <<<"$output"
+          grep -F 'host-registration mutation proof: [78, 73, 65, 82, 68]' <<<"$output"
+          grep -F 'host-registration restore exact: page=true vcpu=true master-pic=true slave-pic=true ioapic=true lapic=true device=true' <<<"$output"
+          grep -F 'host-registration replay transport: doorbell-events=1 irqfd-signals=1' <<<"$output"
+          grep -F 'host-registration replay queue: avail=1 used=1' <<<"$output"
+          grep -F 'host-registration replay proof: [78, 73, 65, 82, 68]' <<<"$output"
+          grep -F 'host-registration backing/readback match: true' <<<"$output"
+          capture="$(grep -F 'host-registration capture: rip=' <<<"$output")"
+          capture_rflags_hex="${capture##*rflags=}"
+          [[ "$capture_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          capture_rflags=$((capture_rflags_hex))
+          (( (capture_rflags & 0x2) == 0x2 ))
+          (( (capture_rflags & 0x200) == 0x200 ))
+          replay="$(grep -F 'host-registration replay rflags:' <<<"$output")"
+          replay_rflags_hex="${replay##*: }"
+          [[ "$replay_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          replay_rflags=$((replay_rflags_hex))
+          (( (replay_rflags & 0x2) == 0x2 ))
+          (( (replay_rflags & 0x200) == 0x200 ))

@@ -1,6 +1,9 @@
 use crate::interrupt::{
     LONG_MODE_INTERRUPT_HANDLER, LONG_MODE_INTERRUPT_VECTOR, X86_RFLAGS_INTERRUPT_ENABLE,
 };
+use crate::kvm::sys::{
+    HostRegistrationCheckpoint, HostRegistrationSpec, ReconstructedHostRegistrations,
+};
 use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
 use crate::long_mode::LONG_MODE_IDENTITY_MAP_SIZE;
@@ -43,6 +46,11 @@ const DONE_BYTE: u8 = b'D';
 const IOAPIC_CORRUPT_PIN: usize = 16;
 const IOAPIC_REDIR_MASKED: u64 = 1 << 16;
 const X86_RFLAGS_RESERVED_BIT: u64 = 1 << 1;
+const RECONSTRUCTED_DOORBELL_GPA: u64 = VIRTIO_BLK_INTERRUPT_BAR0_GPA + 0x100;
+const RECONSTRUCTED_DOORBELL_LENGTH: u32 = 2;
+const RECONSTRUCTED_DOORBELL_DATAMATCH: u64 = 0;
+const RECONSTRUCTED_GSI: u32 = KvmBackend::IRQCHIP_GSI;
+const RECONSTRUCTED_EVENT_WAIT_MILLIS: i32 = 5_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FullControllerVirtioBlkCheckpointGuestResult {
@@ -152,10 +160,86 @@ impl FullControllerVirtioBlkCheckpointGuestResult {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FullControllerVirtioBlkHostRegistrationResult {
+    capture_rip: u64,
+    capture_rflags: u64,
+    captured_avail_idx: u16,
+    captured_used_idx: u16,
+    mutation: BoundedFullControllerVirtioBlkCheckpointComparison,
+    restored: BoundedFullControllerVirtioBlkCheckpointComparison,
+    doorbell_gpa: u64,
+    doorbell_length: u32,
+    doorbell_datamatch: u64,
+    gsi: u32,
+    mutation_doorbell_events: u64,
+    replay_doorbell_events: u64,
+    mutation_irqfd_signals: u32,
+    replay_irqfd_signals: u32,
+    mutation_proof: Vec<u8>,
+    replay_proof: Vec<u8>,
+    replay_avail_idx: u16,
+    replay_used_idx: u16,
+    backing: Vec<u8>,
+    readback: Vec<u8>,
+    replay_rflags: u64,
+}
+
+impl FullControllerVirtioBlkHostRegistrationResult {
+    #[must_use]
+    pub const fn capture_rip(&self) -> u64 { self.capture_rip }
+    #[must_use]
+    pub const fn capture_rflags(&self) -> u64 { self.capture_rflags }
+    #[must_use]
+    pub const fn captured_avail_idx(&self) -> u16 { self.captured_avail_idx }
+    #[must_use]
+    pub const fn captured_used_idx(&self) -> u16 { self.captured_used_idx }
+    #[must_use]
+    pub const fn mutation(&self) -> &BoundedFullControllerVirtioBlkCheckpointComparison { &self.mutation }
+    #[must_use]
+    pub const fn restored(&self) -> &BoundedFullControllerVirtioBlkCheckpointComparison { &self.restored }
+    #[must_use]
+    pub const fn doorbell_gpa(&self) -> u64 { self.doorbell_gpa }
+    #[must_use]
+    pub const fn doorbell_length(&self) -> u32 { self.doorbell_length }
+    #[must_use]
+    pub const fn doorbell_datamatch(&self) -> u64 { self.doorbell_datamatch }
+    #[must_use]
+    pub const fn gsi(&self) -> u32 { self.gsi }
+    #[must_use]
+    pub const fn mutation_doorbell_events(&self) -> u64 { self.mutation_doorbell_events }
+    #[must_use]
+    pub const fn replay_doorbell_events(&self) -> u64 { self.replay_doorbell_events }
+    #[must_use]
+    pub const fn mutation_irqfd_signals(&self) -> u32 { self.mutation_irqfd_signals }
+    #[must_use]
+    pub const fn replay_irqfd_signals(&self) -> u32 { self.replay_irqfd_signals }
+    #[must_use]
+    pub fn mutation_proof(&self) -> &[u8] { &self.mutation_proof }
+    #[must_use]
+    pub fn replay_proof(&self) -> &[u8] { &self.replay_proof }
+    #[must_use]
+    pub const fn replay_avail_idx(&self) -> u16 { self.replay_avail_idx }
+    #[must_use]
+    pub const fn replay_used_idx(&self) -> u16 { self.replay_used_idx }
+    #[must_use]
+    pub fn backing(&self) -> &[u8] { &self.backing }
+    #[must_use]
+    pub fn readback(&self) -> &[u8] { &self.readback }
+    #[must_use]
+    pub const fn replay_rflags(&self) -> u64 { self.replay_rflags }
+}
+
 struct CheckpointProgram {
     bytes: Vec<u8>,
     capture_rip: u64,
     request_quiescent_rip: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RequestTransport {
+    UserspaceMmio,
+    ReconstructedHost(HostRegistrationCheckpoint),
 }
 
 #[derive(Debug)]
@@ -163,11 +247,90 @@ struct RequestPhase {
     proof: Vec<u8>,
     assert_count: u32,
     deassert_count: u32,
+    doorbell_events: u64,
+    irqfd_signals: u32,
     rflags: u64,
+}
+
+struct CoreCheckpointRun {
+    capture_rip: u64,
+    capture_rflags: u64,
+    captured_avail_idx: u16,
+    captured_used_idx: u16,
+    mutation: BoundedFullControllerVirtioBlkCheckpointComparison,
+    restored: BoundedFullControllerVirtioBlkCheckpointComparison,
+    mutation_phase: RequestPhase,
+    replay_phase: RequestPhase,
+    replay_avail_idx: u16,
+    replay_used_idx: u16,
+    backing: Vec<u8>,
+    readback: Vec<u8>,
 }
 
 pub fn run_full_controller_virtio_blk_checkpoint_guest(
 ) -> Result<FullControllerVirtioBlkCheckpointGuestResult, Error> {
+    let core = run_full_controller_virtio_blk_checkpoint_core(RequestTransport::UserspaceMmio)?;
+    Ok(FullControllerVirtioBlkCheckpointGuestResult {
+        capture_rip: core.capture_rip,
+        capture_rflags: core.capture_rflags,
+        captured_avail_idx: core.captured_avail_idx,
+        captured_used_idx: core.captured_used_idx,
+        mutation: core.mutation,
+        restored: core.restored,
+        mutation_proof: core.mutation_phase.proof,
+        replay_proof: core.replay_phase.proof,
+        mutation_assert_count: core.mutation_phase.assert_count,
+        mutation_deassert_count: core.mutation_phase.deassert_count,
+        replay_assert_count: core.replay_phase.assert_count,
+        replay_deassert_count: core.replay_phase.deassert_count,
+        replay_avail_idx: core.replay_avail_idx,
+        replay_used_idx: core.replay_used_idx,
+        backing: core.backing,
+        readback: core.readback,
+        replay_rflags: core.replay_phase.rflags,
+    })
+}
+
+pub fn run_full_controller_virtio_blk_host_registration_reconstruction_guest(
+) -> Result<FullControllerVirtioBlkHostRegistrationResult, Error> {
+    let spec = HostRegistrationSpec::new(
+        RECONSTRUCTED_DOORBELL_GPA,
+        RECONSTRUCTED_DOORBELL_LENGTH,
+        RECONSTRUCTED_DOORBELL_DATAMATCH,
+        RECONSTRUCTED_GSI,
+    )?;
+    let registration_checkpoint = HostRegistrationCheckpoint::capture(spec);
+    let core = run_full_controller_virtio_blk_checkpoint_core(
+        RequestTransport::ReconstructedHost(registration_checkpoint),
+    )?;
+    Ok(FullControllerVirtioBlkHostRegistrationResult {
+        capture_rip: core.capture_rip,
+        capture_rflags: core.capture_rflags,
+        captured_avail_idx: core.captured_avail_idx,
+        captured_used_idx: core.captured_used_idx,
+        mutation: core.mutation,
+        restored: core.restored,
+        doorbell_gpa: spec.doorbell_address(),
+        doorbell_length: spec.doorbell_length(),
+        doorbell_datamatch: spec.doorbell_datamatch(),
+        gsi: spec.gsi(),
+        mutation_doorbell_events: core.mutation_phase.doorbell_events,
+        replay_doorbell_events: core.replay_phase.doorbell_events,
+        mutation_irqfd_signals: core.mutation_phase.irqfd_signals,
+        replay_irqfd_signals: core.replay_phase.irqfd_signals,
+        mutation_proof: core.mutation_phase.proof,
+        replay_proof: core.replay_phase.proof,
+        replay_avail_idx: core.replay_avail_idx,
+        replay_used_idx: core.replay_used_idx,
+        backing: core.backing,
+        readback: core.readback,
+        replay_rflags: core.replay_phase.rflags,
+    })
+}
+
+fn run_full_controller_virtio_blk_checkpoint_core(
+    transport: RequestTransport,
+) -> Result<CoreCheckpointRun, Error> {
     let program = build_program();
     let guest = FlatGuestImage::new(
         crate::mmio::long_mode::LONG_MODE_MMIO_GUEST_ENTRY,
@@ -235,12 +398,14 @@ pub fn run_full_controller_virtio_blk_checkpoint_guest(
     let captured_avail_idx = checkpoint.device().checkpoint_last_avail_idx();
     let captured_used_idx = checkpoint.device().checkpoint_last_used_idx();
 
-    let mutation_phase = run_request_phase(
+    let mutation_phase = run_request_with_transport(
+        &backend,
         &mut vcpu,
         &mut vm,
         &mut mmio,
         program.request_quiescent_rip,
         "mutation request",
+        transport,
     )?;
     require_request_memory(&vm, &mmio)?;
     corrupt_controller(checkpoint.controller(), &vcpu, &mut vm)?;
@@ -267,12 +432,14 @@ pub fn run_full_controller_virtio_blk_checkpoint_guest(
         ));
     }
 
-    let replay_phase = run_request_phase(
+    let replay_phase = run_request_with_transport(
+        &backend,
         &mut vcpu,
         &mut vm,
         &mut mmio,
         program.request_quiescent_rip,
         "replay request",
+        transport,
     )?;
     require_request_memory(&vm, &mmio)?;
     let replay_device = mmio
@@ -300,25 +467,53 @@ pub fn run_full_controller_virtio_blk_checkpoint_guest(
         ));
     }
 
-    Ok(FullControllerVirtioBlkCheckpointGuestResult {
+    Ok(CoreCheckpointRun {
         capture_rip,
         capture_rflags,
         captured_avail_idx,
         captured_used_idx,
         mutation,
         restored,
-        mutation_proof: mutation_phase.proof,
-        replay_proof: replay_phase.proof,
-        mutation_assert_count: mutation_phase.assert_count,
-        mutation_deassert_count: mutation_phase.deassert_count,
-        replay_assert_count: replay_phase.assert_count,
-        replay_deassert_count: replay_phase.deassert_count,
+        mutation_phase,
+        replay_phase,
         replay_avail_idx,
         replay_used_idx,
         backing,
         readback,
-        replay_rflags: replay_phase.rflags,
     })
+}
+
+fn run_request_with_transport(
+    backend: &KvmBackend,
+    vcpu: &mut crate::vcpu::Vcpu,
+    vm: &mut crate::kvm::Vm,
+    mmio: &mut MmioBus,
+    expected_rip: u64,
+    stage: &'static str,
+    transport: RequestTransport,
+) -> Result<RequestPhase, Error> {
+    match transport {
+        RequestTransport::UserspaceMmio => {
+            run_request_phase(vcpu, vm, mmio, expected_rip, stage, None)
+        }
+        RequestTransport::ReconstructedHost(checkpoint) => {
+            let registrations = checkpoint.reconstruct(backend, vm)?;
+            let execution = run_request_phase(
+                vcpu,
+                vm,
+                mmio,
+                expected_rip,
+                stage,
+                Some(&registrations),
+            );
+            let cleanup = registrations.deassign(vm);
+            match (execution, cleanup) {
+                (Ok(phase), Ok(())) => Ok(phase),
+                (_, Err(error)) => Err(error),
+                (Err(error), Ok(())) => Err(error),
+            }
+        }
+    }
 }
 
 fn run_setup_to_quiescent_capture(
@@ -370,6 +565,7 @@ fn run_request_phase(
     mmio: &mut MmioBus,
     expected_rip: u64,
     stage: &'static str,
+    registrations: Option<&ReconstructedHostRegistrations>,
 ) -> Result<RequestPhase, Error> {
     let mut port_io = PortIoBus::with_debug_port();
     let mut mmio_exits = Vec::new();
@@ -377,10 +573,17 @@ fn run_request_phase(
     let mut line_asserted = false;
     let mut assert_count = 0_u32;
     let mut deassert_count = 0_u32;
+    let mut doorbell_events = 0_u64;
+    let mut irqfd_signals = 0_u32;
+    let expected_exit_budget = if registrations.is_some() {
+        REQUEST_EXIT_BUDGET - 1
+    } else {
+        REQUEST_EXIT_BUDGET
+    };
     let mut exits = 0_u32;
 
     loop {
-        if exits >= REQUEST_EXIT_BUDGET {
+        if exits >= expected_exit_budget {
             return Err(checkpoint_error(format!(
                 "{stage} exceeded exact exit budget before completion barrier"
             )));
@@ -396,18 +599,43 @@ fn run_request_phase(
                             "{stage} observed duplicate notify barrier"
                         )));
                     }
-                    let event = mmio.take_device_event_record().ok_or_else(|| {
-                        checkpoint_error(format!("{stage} notify has no pending device event"))
-                    })?;
-                    let expected = MmioDeviceEventRecord::new(
-                        VIRTIO_BLK_INTERRUPT_BAR0_GPA,
-                        MmioDeviceEvent::VirtioQueueNotified { queue: 0 },
-                    );
-                    if event != expected {
-                        return Err(checkpoint_error(format!(
-                            "{stage} observed unexpected device event: {event:?}"
-                        )));
+
+                    if let Some(registrations) = registrations {
+                        if mmio.take_device_event_record().is_some() {
+                            return Err(checkpoint_error(format!(
+                                "{stage} reconstructed ioeventfd notify unexpectedly reached the userspace MMIO event queue"
+                            )));
+                        }
+                        let count = registrations.wait_doorbell(RECONSTRUCTED_EVENT_WAIT_MILLIS)?;
+                        if count != 1 {
+                            return Err(checkpoint_error(format!(
+                                "{stage} reconstructed ioeventfd counter was {count}; expected exactly 1"
+                            )));
+                        }
+                        doorbell_events = count;
+                        if !mmio.apply_virtio_blk_host_notification(
+                            VIRTIO_BLK_INTERRUPT_BAR0_GPA,
+                            0,
+                        )? {
+                            return Err(checkpoint_error(format!(
+                                "{stage} reconstructed ioeventfd doorbell lost its virtio-blk device"
+                            )));
+                        }
+                    } else {
+                        let event = mmio.take_device_event_record().ok_or_else(|| {
+                            checkpoint_error(format!("{stage} notify has no pending device event"))
+                        })?;
+                        let expected = MmioDeviceEventRecord::new(
+                            VIRTIO_BLK_INTERRUPT_BAR0_GPA,
+                            MmioDeviceEvent::VirtioQueueNotified { queue: 0 },
+                        );
+                        if event != expected {
+                            return Err(checkpoint_error(format!(
+                                "{stage} observed unexpected device event: {event:?}"
+                            )));
+                        }
                     }
+
                     let memory = vm.guest_memory_mut().ok_or_else(|| {
                         checkpoint_error(format!("{stage} VM lost registered guest memory"))
                     })?;
@@ -417,19 +645,32 @@ fn run_request_phase(
                             checkpoint_error(format!("{stage} queue processing failed: {error}"))
                         })?
                         .ok_or_else(|| checkpoint_error(format!("{stage} virtio BAR disappeared")))?;
-                    vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, true)?;
                     completion = Some(observed);
-                    line_asserted = true;
-                    assert_count += 1;
+
+                    if let Some(registrations) = registrations {
+                        registrations.signal_irq()?;
+                        irqfd_signals += 1;
+                    } else {
+                        vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, true)?;
+                        line_asserted = true;
+                        assert_count += 1;
+                    }
                 } else if is_debug_output(&continuation, ACK_BYTE) {
-                    if completion.is_none() || !line_asserted {
+                    if completion.is_none() {
                         return Err(checkpoint_error(format!(
-                            "{stage} ISR ACK arrived without asserted completion line"
+                            "{stage} ISR ACK arrived without completed virtio request"
                         )));
                     }
-                    vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, false)?;
-                    line_asserted = false;
-                    deassert_count += 1;
+                    if registrations.is_none() {
+                        if !line_asserted {
+                            return Err(checkpoint_error(format!(
+                                "{stage} ISR ACK arrived without asserted completion line"
+                            )));
+                        }
+                        vm.set_gsi_level(KvmBackend::IRQCHIP_GSI, false)?;
+                        line_asserted = false;
+                        deassert_count += 1;
+                    }
                 }
 
                 let done = is_debug_output(&continuation, DONE_BYTE);
@@ -448,14 +689,25 @@ fn run_request_phase(
         }
     }
 
-    if exits != REQUEST_EXIT_BUDGET {
+    if exits != expected_exit_budget {
         return Err(checkpoint_error(format!(
-            "expected exactly {REQUEST_EXIT_BUDGET} exits for {stage}, got {exits}"
+            "expected exactly {expected_exit_budget} exits for {stage}, got {exits}"
         )));
     }
-    if line_asserted || assert_count != 1 || deassert_count != 1 {
+    if registrations.is_none() {
+        if line_asserted || assert_count != 1 || deassert_count != 1 {
+            return Err(checkpoint_error(format!(
+                "{stage} line lifecycle mismatch: asserted={line_asserted} assert={assert_count} deassert={deassert_count}"
+            )));
+        }
+    } else if line_asserted
+        || assert_count != 0
+        || deassert_count != 0
+        || doorbell_events != 1
+        || irqfd_signals != 1
+    {
         return Err(checkpoint_error(format!(
-            "{stage} line lifecycle mismatch: asserted={line_asserted} assert={assert_count} deassert={deassert_count}"
+            "{stage} reconstructed registration lifecycle mismatch: asserted={line_asserted} direct-assert={assert_count} direct-deassert={deassert_count} doorbell={doorbell_events} irqfd={irqfd_signals}"
         )));
     }
     if mmio.take_device_event_record().is_some() {
@@ -463,7 +715,7 @@ fn run_request_phase(
             "{stage} left an unexpected device event"
         )));
     }
-    validate_request_mmio(&mmio_exits, stage)?;
+    validate_request_mmio(&mmio_exits, stage, registrations.is_some())?;
     let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
     if proof.as_slice() != FULL_CONTROLLER_VIRTIO_BLK_REQUEST_PROOF {
         return Err(checkpoint_error(format!(
@@ -486,6 +738,8 @@ fn run_request_phase(
         proof,
         assert_count,
         deassert_count,
+        doorbell_events,
+        irqfd_signals,
         rflags,
     })
 }
@@ -650,12 +904,25 @@ fn require_full_exact(
     Ok(())
 }
 
-fn validate_request_mmio(exits: &[MmioExit], stage: &'static str) -> Result<(), Error> {
-    let expected = [
+fn validate_request_mmio(
+    exits: &[MmioExit],
+    stage: &'static str,
+    reconstructed: bool,
+) -> Result<(), Error> {
+    let userspace_expected = [
         (0x100_u64, MmioDirection::Write, 2_u32),
         (VIRTIO_ISR_OFFSET, MmioDirection::Read, 1_u32),
         (VIRTIO_ISR_OFFSET, MmioDirection::Read, 1_u32),
     ];
+    let reconstructed_expected = [
+        (VIRTIO_ISR_OFFSET, MmioDirection::Read, 1_u32),
+        (VIRTIO_ISR_OFFSET, MmioDirection::Read, 1_u32),
+    ];
+    let expected: &[(u64, MmioDirection, u32)] = if reconstructed {
+        &reconstructed_expected
+    } else {
+        &userspace_expected
+    };
     if exits.len() != expected.len() {
         return Err(checkpoint_error(format!(
             "{stage}: expected {} request MMIO exits, got {}",
@@ -663,7 +930,7 @@ fn validate_request_mmio(exits: &[MmioExit], stage: &'static str) -> Result<(), 
             exits.len()
         )));
     }
-    for (exit, (offset, direction, length)) in exits.iter().zip(expected) {
+    for (exit, &(offset, direction, length)) in exits.iter().zip(expected.iter()) {
         if exit.address() != VIRTIO_BLK_INTERRUPT_BAR0_GPA + offset
             || exit.direction() != direction
             || exit.length() != length
@@ -673,7 +940,7 @@ fn validate_request_mmio(exits: &[MmioExit], stage: &'static str) -> Result<(), 
             )));
         }
     }
-    if exits[0].write_data() != 0_u16.to_le_bytes() {
+    if !reconstructed && exits[0].write_data() != 0_u16.to_le_bytes() {
         return Err(checkpoint_error(format!(
             "{stage}: notify payload was not queue 0"
         )));
@@ -767,8 +1034,14 @@ fn build_program() -> CheckpointProgram {
     let capture_rip = crate::mmio::long_mode::LONG_MODE_MMIO_GUEST_ENTRY.get() + code.len() as u64;
     code.push(0x90);
 
+    // Keep IF clear while the host consumes the queue doorbell and makes the completion IRQ
+    // pending. The adjacent STI/HLT handoff prevents an asynchronous irqfd edge from racing the
+    // mainline ISR check: whether the edge is already pending or arrives after re-entry, the guest
+    // cannot advance into completion checks until the interrupt handler has run.
+    code.push(0xfa);
     code.extend_from_slice(&[0x66, 0xc7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
     emit_debug(&mut code, NOTIFY_BYTE);
+    code.extend_from_slice(&[0xfb, 0xf4]);
     emit_guest_completion_checks(&mut code);
     emit_movabs(&mut code, 3, 0x0050_0000);
     code.extend_from_slice(&[0x8a, 0x83]);
@@ -924,6 +1197,13 @@ mod tests {
                 .windows(4)
                 .any(|window| window == [0xb0, marker, 0xe6, 0xe9]));
         }
+        let notify = program
+            .bytes
+            .windows(4)
+            .position(|window| window == [0xb0, NOTIFY_BYTE, 0xe6, 0xe9])
+            .expect("deterministic request contains the notify barrier");
+        assert_eq!(program.bytes[notify + 4..notify + 6], [0xfb, 0xf4]);
+        assert_eq!(program.bytes[notify - 10], 0xfa);
         let handler = build_handler();
         for marker in *b"IA" {
             assert!(handler
