@@ -1,6 +1,6 @@
 use super::{
     page_set_error, BoundedCheckpointPage, BoundedPageSetCheckpointComparison,
-    BoundedVcpuPageSetCheckpoint,
+    BoundedVcpuPageSetCheckpoint, VersionedPageVcpuCheckpointV1,
 };
 use crate::config::VmConfig;
 use crate::error::Error;
@@ -130,9 +130,85 @@ impl MultiPageCheckpointGuestResult {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MultiPageCheckpointTransport {
+    Direct,
+    VersionedV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VersionedTransportEvidence {
+    schema_version: u16,
+    encoded_len: usize,
+    msr_count: usize,
+}
+
+struct MultiPageCheckpointExecution {
+    result: MultiPageCheckpointGuestResult,
+    versioned: Option<VersionedTransportEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionedPageVcpuCheckpointGuestResult {
+    checkpoint: MultiPageCheckpointGuestResult,
+    schema_version: u16,
+    encoded_len: usize,
+    msr_count: usize,
+}
+
+impl VersionedPageVcpuCheckpointGuestResult {
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    #[must_use]
+    pub const fn encoded_len(&self) -> usize {
+        self.encoded_len
+    }
+
+    #[must_use]
+    pub const fn msr_count(&self) -> usize {
+        self.msr_count
+    }
+
+    #[must_use]
+    pub const fn checkpoint(&self) -> &MultiPageCheckpointGuestResult {
+        &self.checkpoint
+    }
+}
+
 pub fn run_multi_page_checkpoint_guest(
     config: VmConfig,
 ) -> Result<MultiPageCheckpointGuestResult, Error> {
+    Ok(
+        run_multi_page_checkpoint_guest_with_transport(config, MultiPageCheckpointTransport::Direct)?
+            .result,
+    )
+}
+
+pub fn run_versioned_page_vcpu_checkpoint_guest(
+    config: VmConfig,
+) -> Result<VersionedPageVcpuCheckpointGuestResult, Error> {
+    let execution = run_multi_page_checkpoint_guest_with_transport(
+        config,
+        MultiPageCheckpointTransport::VersionedV1,
+    )?;
+    let versioned = execution
+        .versioned
+        .expect("versioned checkpoint transport always returns transport evidence");
+    Ok(VersionedPageVcpuCheckpointGuestResult {
+        checkpoint: execution.result,
+        schema_version: versioned.schema_version,
+        encoded_len: versioned.encoded_len,
+        msr_count: versioned.msr_count,
+    })
+}
+
+fn run_multi_page_checkpoint_guest_with_transport(
+    config: VmConfig,
+    transport: MultiPageCheckpointTransport,
+) -> Result<MultiPageCheckpointExecution, Error> {
     let image = FlatGuestImage::new(
         MULTI_PAGE_CHECKPOINT_ENTRY,
         MULTI_PAGE_CHECKPOINT_ENTRY,
@@ -185,6 +261,8 @@ pub fn run_multi_page_checkpoint_guest(
             .expect("registered multi-page checkpoint memory remains VM-owned"),
         &MULTI_PAGE_CHECKPOINT_OWNERSHIP_SET,
     )?;
+    let (checkpoint, versioned) =
+        prepare_checkpoint_transport(checkpoint, &backend, transport)?;
     require_captured_roles(&checkpoint)?;
 
     let captured_pages = checkpoint
@@ -271,15 +349,58 @@ pub fn run_multi_page_checkpoint_guest(
         }
     }
 
-    Ok(MultiPageCheckpointGuestResult {
-        checkpoint_report,
-        captured_pages,
-        corruption,
-        restored,
-        io_exits: resumed.io_exits().to_vec(),
-        proof,
-        terminal_report,
+    Ok(MultiPageCheckpointExecution {
+        result: MultiPageCheckpointGuestResult {
+            checkpoint_report,
+            captured_pages,
+            corruption,
+            restored,
+            io_exits: resumed.io_exits().to_vec(),
+            proof,
+            terminal_report,
+        },
+        versioned,
     })
+}
+
+fn prepare_checkpoint_transport(
+    checkpoint: BoundedVcpuPageSetCheckpoint,
+    backend: &KvmBackend,
+    transport: MultiPageCheckpointTransport,
+) -> Result<(BoundedVcpuPageSetCheckpoint, Option<VersionedTransportEvidence>), Error> {
+    match transport {
+        MultiPageCheckpointTransport::Direct => Ok((checkpoint, None)),
+        MultiPageCheckpointTransport::VersionedV1 => {
+            let schema = VersionedPageVcpuCheckpointV1::from_checkpoint(&checkpoint)
+                .map_err(|error| versioned_checkpoint_error("versioned checkpoint capture", error))?;
+            let encoded = schema
+                .encode()
+                .map_err(|error| versioned_checkpoint_error("versioned checkpoint encode", error))?;
+            let encoded_len = encoded.len();
+
+            // The transport proof must not retain the original process-local checkpoint object.
+            drop(schema);
+            drop(checkpoint);
+
+            let decoded = VersionedPageVcpuCheckpointV1::decode(&encoded)
+                .map_err(|error| versioned_checkpoint_error("versioned checkpoint decode", error))?;
+            let evidence = VersionedTransportEvidence {
+                schema_version: decoded.version(),
+                encoded_len,
+                msr_count: decoded.msr_count(),
+            };
+            let checkpoint = decoded
+                .materialize(backend.host_msr_indices())
+                .map_err(|error| {
+                    versioned_checkpoint_error("versioned checkpoint materialize", error)
+                })?;
+            Ok((checkpoint, Some(evidence)))
+        }
+    }
+}
+
+fn versioned_checkpoint_error(operation: &'static str, error: impl ToString) -> Error {
+    page_set_error(operation, error.to_string())
 }
 
 fn require_captured_roles(checkpoint: &BoundedVcpuPageSetCheckpoint) -> Result<(), Error> {

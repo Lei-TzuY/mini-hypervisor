@@ -1,0 +1,71 @@
+name: Strict KVM versioned page VCPU checkpoint restore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/**'
+      - 'src/vcpu/register_snapshot.rs'
+      - 'src/vcpu/special_register_snapshot.rs'
+      - 'src/bin/versioned-page-vcpu-checkpoint.rs'
+      - 'tests/versioned_page_vcpu_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-page-vcpu-checkpoint.yml'
+  pull_request:
+    paths:
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/**'
+      - 'src/vcpu/register_snapshot.rs'
+      - 'src/vcpu/special_register_snapshot.rs'
+      - 'src/bin/versioned-page-vcpu-checkpoint.rs'
+      - 'tests/versioned_page_vcpu_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-page-vcpu-checkpoint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-versioned-page-vcpu-checkpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build versioned page VCPU checkpoint proof
+        run: cargo build --quiet --bin versioned-page-vcpu-checkpoint
+      - name: Execute versioned page VCPU checkpoint proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/versioned-page-vcpu-checkpoint)"
+          printf '%s\n' "$output"
+
+          schema="$(grep -F 'versioned checkpoint schema: version=1 encoded_bytes=' <<<"$output")"
+          encoded_and_msrs="${schema##*encoded_bytes=}"
+          encoded_bytes="${encoded_and_msrs%% *}"
+          msrs="${schema##*msrs=}"
+          [[ "$encoded_bytes" =~ ^[0-9]+$ ]]
+          [[ "$msrs" =~ ^[0-9]+$ ]]
+          (( encoded_bytes > 12288 ))
+          (( msrs <= 256 ))
+
+          grep -F 'versioned checkpoint pages: 0x30000,0x31000,0x1fe000' <<<"$output"
+          grep -F 'versioned checkpoint corruption: control=false data=false stack=false vcpu=false' <<<"$output"
+          grep -F 'versioned checkpoint restore: control=true data=true stack=true vcpu=true' <<<"$output"
+          grep -F 'versioned checkpoint proof: [65, 66, 67, 82]' <<<"$output"
+
+          capture="$(grep -F 'versioned checkpoint capture: vCPU 0 exit Hlt: rip=0x10013, rflags=' <<<"$output")"
+          capture_rflags_hex="${capture##*rflags=}"
+          [[ "$capture_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          capture_rflags=$((capture_rflags_hex))
+          (( (capture_rflags & 0x2) == 0x2 ))
+
+          terminal="$(grep -F 'versioned checkpoint terminal: vCPU 0 exit Hlt: rip=0x1002d, rflags=' <<<"$output")"
+          terminal_rflags_hex="${terminal##*rflags=}"
+          [[ "$terminal_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          terminal_rflags=$((terminal_rflags_hex))
+          (( (terminal_rflags & 0x2) == 0x2 ))
