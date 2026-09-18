@@ -4,44 +4,41 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `de239a1d36bb5adecf090acf5e3964bc37a78ccb` through PR #137 (`Checkpoint full controller and virtio-blk state atomically`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe usercopy; isolated ring3 address spaces; dirty-page tracking; bounded guest scheduling/wait ownership; one-page and multi-page VCPU checkpoints; scheduler/wait checkpoint composition; coordinated two-VCPU checkpointing; bounded full in-kernel controller checkpoints; one quiescent virtio-blk device checkpoint; and one atomic full-controller + virtio-blk checkpoint transaction.
+`main` is `92b0ccdd797e1d342e60b86c916e5301acf0f004` through PR #138 (`Encode page and vCPU checkpoints with a versioned schema`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe usercopy; isolated ring3 address spaces; dirty-page tracking; bounded guest scheduling/wait ownership; bounded page/VCPU/controller/device checkpoints; and a canonical v1 byte schema for bounded page+VCPU checkpoint state.
 
-PR #137 seals that combined transaction at merged commit `de239a1d36bb5adecf090acf5e3964bc37a78ccb`. It owns one full page/VCPU/controller aggregate plus one quiescent virtio-blk snapshot, restores controller state before device mutation, requires fresh exact aggregate comparison, re-enters real KVM, and proves deterministic request replay, interrupt completion and backing/readback continuity. Exact merged-main ordinary CI and every applicable permanent hosted-KVM workflow are green.
+PR #137 seals the atomic full-controller + one-virtio-blk same-process checkpoint transaction. PR #138 then seals the first explicit serialized ownership boundary: canonical little-endian v1 page+VCPU checkpoint bytes with fail-closed compatibility/semantic validation, host-MSR revalidation during materialization, and real-KVM decode/restore/resume proof. Exact merged-main ordinary CI and all 39 applicable permanent hosted-KVM workflows are green on `92b0ccdd797e1d342e60b86c916e5301acf0f004`.
 
-That fixed same-process controller+device checkpoint phase is sealed. Do not farm alternate sectors, queue indices, controller bits, BAR aliases or request payloads merely to extend the phase number.
+The v1 page+VCPU schema phase is sealed. Do not farm alternate corruption offsets, page orders or equivalent field encodings merely to extend the phase number.
 
-## Selected milestone — versioned page + VCPU checkpoint schema
+## Selected milestone — reconstruct fd-free host registrations after checkpoint restore
 
-The next boundary is an explicit byte representation rather than a process-local Rust object. This first serialization slice is deliberately restricted to the already-sealed bounded page+VCPU checkpoint aggregate so format invariants, compatibility validation and fail-closed decoding can be proven before controller/device or host-registration state is added.
+The next ownership boundary is host-side KVM registration state that must be recreated rather than serialized. The sealed full-controller + virtio-blk checkpoint intentionally excludes raw file descriptors and external registration lifetimes. This milestone models the recreatable semantics of the virtio-blk queue doorbell and completion interrupt as an fd-free descriptor, then proves two fresh live registration generations around checkpoint restore.
 
 Acceptance contract:
 
-- preserve exact base `de239a1d36bb5adecf090acf5e3964bc37a78ccb`, ordinary CI, Rust 1.74 shipped-target MSRV and every applicable permanent hosted-KVM workflow;
-- define a canonical little-endian v1 header with fixed magic, version, x86_64 architecture id, header length, total length, page size, bounded counts, zero flags and zero reserved fields;
-- encode pages, all 18 general registers, semantic special-register fields and bounded MSR values field-by-field; never serialize native Rust/KVM struct memory;
-- require canonical page/MSR ordering, aligned non-overflowing GPAs, exact lengths, zero reserved bytes, valid segment booleans/DPL/type and bounded counts;
-- reject unknown version/architecture, corruption, truncation, trailing bytes, duplicate/noncanonical pages or MSRs and invalid semantic fields before any VM mutation;
-- materialization must revalidate serialized MSR indices against the current host-supported MSR list before producing an existing `BoundedVcpuPageSetCheckpoint`;
-- raw-to-typed snapshot constructors remain crate-internal;
-- executable proof must capture the existing bounded page+VCPU checkpoint, encode bytes, discard the original checkpoint object, decode/materialize, corrupt live pages/VCPU, restore through the decoded checkpoint, verify exact state and resume the deterministic guest on real KVM;
-- exact deterministic schema proof owns pages `0x30000`, `0x31000` and `0x1fe000`; corruption must report control/data/stack/VCPU all non-exact, restore must report all four exact, proof is `ABCR`, capture RIP is `0x10013`, terminal RIP is `0x1002d`, and architectural RFLAGS bit 1 remains set;
-- KVM-aware integration and a dedicated permanent hosted-KVM workflow must independently prove the same encode/decode/materialize/restore/resume contract; the workflow path filter includes `ROADMAP.md` so the documentation-synchronized final candidate reruns the strict proof;
-- decoder/compatibility, MSR-host validation, ordering, bounds, corruption detection, exact restore or resumed execution failures remain hard failures and must not be swallowed, retried into success or hidden by changed expectations.
+- preserve exact base `92b0ccdd797e1d342e60b86c916e5301acf0f004`, ordinary CI, Rust 1.74 shipped-target MSRV and every applicable permanent hosted-KVM workflow;
+- the checkpoint descriptor owns only doorbell GPA, doorbell width, datamatch and GSI; no raw fd or process-local descriptor integer is captured;
+- reject unsupported ioeventfd widths, datamatch values that do not fit the selected width and overflowing doorbell ranges before registration;
+- reconstruction requires `KVM_CAP_IOEVENTFD` and `KVM_CAP_IRQFD`, creates fresh eventfds, assigns irqfd before ioeventfd, and rolls the irqfd assignment back if ioeventfd assignment fails;
+- deassignment attempts both live registrations before returning a cleanup error; cleanup failures remain fatal;
+- the mutation request must use reconstructed ioeventfd for the BAR+0x100 queue-0 notify and reconstructed irqfd for GSI0 completion; the queue-notify write must not surface as a userspace `KVM_EXIT_MMIO` device event;
+- explicitly deassign the first live registration generation before machine/controller/device comparison and restore;
+- after exact restore, create a second fresh live registration generation from the same fd-free semantic descriptor; freshness is proven by lifecycle and behavior, never by comparing raw fd numbers;
+- mutation and replay each require exactly one ioeventfd doorbell event, one irqfd completion signal, exact guest proof `NIARD`, queue/data continuity and explicit cleanup;
+- fresh verification before restore must report owned page, VCPU, master PIC, slave PIC, IOAPIC, LAPIC and virtio-blk device all non-exact; post-restore comparison must report all exact before the replay generation is created;
+- replay must advance queue indices from restored `0/0` to `1/1`, preserve deterministic backing/readback equality and end with architectural RFLAGS bit 1 and IF set;
+- KVM-aware integration and a dedicated permanent hosted-KVM reconstruction workflow must independently validate descriptor semantics, registration lifecycle, no-userspace-MMIO notify, interrupt completion, exact restore and replay continuity;
+- `ROADMAP.md` is included in the dedicated workflow path filter so the documentation-synchronized candidate reruns the real-KVM reconstruction proof;
+- capability, registration, rollback, deassignment, transport ownership, comparison, interrupt, queue, backing/readback or replay failures remain hard failures and must not be swallowed, retried into success or hidden by changed expectations.
 
-Implementation is in progress on `milestone/versioned-page-vcpu-checkpoint-schema` through PR #138. Candidate `cff5fe5760c211d1dacf743fc67d754bbca0935c` has already passed ordinary CI, Rust 1.74 MSRV, all applicable permanent workflows and the dedicated real-KVM schema proof with encoded size 12808 bytes and exact `ABCR` restore/resume evidence. This ROADMAP synchronization changes the exact candidate and therefore requires the full applicable workflow set to rerun before integration.
+Implementation is in progress on `milestone/host-registration-reconstruction` through PR #139. The branch has been rebuilt on the integrated versioned-schema main rather than merging a stale tree. Its first prior CI attempt never reached semantic verification because `src/kvm/sys.rs` contained a literal escaped newline between include directives; that construction error is corrected in the rebased candidate. Full ordinary CI and every applicable permanent hosted-KVM workflow must now rerun before any integration decision.
 
 ## Scope boundary
 
-This milestone deliberately does **not** add:
-
-- controller/device serialization, host-fd serialization, irqfd/ioeventfd/eventfd registration serialization or PCI-topology encoding;
-- cross-host migration compatibility claims, save-file durability, pre-copy/post-copy, downtime or live-migration semantics;
-- compression, encryption, signatures, performance or portability claims;
-- unbounded allocations, arbitrary guest page counts or arbitrary MSR sets;
-- multi-device/SMP atomic serialized transactions in this slice.
+This milestone deliberately does **not** serialize raw file descriptors, encode host registrations into the v1 page+VCPU schema, claim cross-host migration compatibility, checkpoint an in-flight request, recreate PCI topology, add multi-device/SMP checkpoint transactions, provide external-storage durability semantics, or make performance/downtime claims.
 
 ## Promotion rule
 
-After the versioned page+VCPU schema is integrated and exact merged-`main` ordinary CI plus every applicable permanent hosted-KVM workflow are green, seal v1 rather than farming additional corruption bytes or page-order variants.
+After host-registration reconstruction is integrated and exact merged-`main` ordinary CI plus every applicable permanent hosted-KVM workflow are green, seal the single-device registration lifecycle rather than farming alternate fd values, BAR aliases or GSIs.
 
-The next architecture audit should broaden one ownership boundary coherently. Strong candidates are extending the schema to the already-sealed controller/device aggregate with explicit version compatibility, or reconstructing fd-free host registrations after restore. Those are separate surfaces and must be rebased/revalidated against the newly integrated schema before further integration. Cross-host/live migration, performance/downtime claims and external-storage crash consistency remain later frontiers.
+The next architecture audit should either extend the explicit versioned schema to the already-sealed controller/device aggregate with compatibility validation, or broaden to a genuinely larger atomic ownership boundary only when quiescence and restore ordering can be proven coherently. Cross-host/live migration, multi-device migration, performance/downtime and external-storage crash consistency remain separate later frontiers.
