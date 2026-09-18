@@ -80,11 +80,6 @@ impl HostRegistrationCheckpoint {
         Self { spec }
     }
 
-    #[must_use]
-    pub(crate) const fn spec(self) -> HostRegistrationSpec {
-        self.spec
-    }
-
     pub(crate) fn reconstruct(
         self,
         backend: &KvmBackend,
@@ -219,7 +214,7 @@ mod host_registration_tests {
         assert_eq!(spec.gsi(), 0);
         assert_eq!(std::mem::size_of::<HostRegistrationSpec>(), 24);
         let checkpoint = HostRegistrationCheckpoint::capture(spec);
-        assert_eq!(checkpoint.spec(), spec);
+        assert_eq!(checkpoint.spec, spec);
         assert_eq!(std::mem::size_of::<HostRegistrationCheckpoint>(), 24);
     }
 
