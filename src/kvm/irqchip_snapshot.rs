@@ -4,8 +4,9 @@ const KVM_IRQCHIP_PIC_MASTER: u32 = 0;
 const KVM_IRQCHIP_PIC_SLAVE: u32 = 1;
 const KVM_IRQCHIP_IOAPIC: u32 = 2;
 const KVM_IRQCHIP_PAYLOAD_SIZE: usize = 512;
+pub(crate) const KVM_PIC_STATE_SIZE: usize = 16;
 pub(crate) const KVM_IOAPIC_NUM_PINS: usize = 24;
-const KVM_IOAPIC_STATE_SIZE: usize = 216;
+pub(crate) const KVM_IOAPIC_STATE_SIZE: usize = 216;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -74,6 +75,22 @@ impl MasterPicStateSnapshot {
         state.imr = imr;
         Self { state }
     }
+
+    pub(crate) fn semantic_bytes(&self) -> [u8; KVM_PIC_STATE_SIZE] {
+        let mut payload = [0_u8; KVM_IRQCHIP_PAYLOAD_SIZE];
+        encode_pic_state(self.state, &mut payload);
+        payload[..KVM_PIC_STATE_SIZE]
+            .try_into()
+            .expect("fixed PIC semantic state length remains exact")
+    }
+
+    pub(crate) fn from_semantic_bytes(bytes: [u8; KVM_PIC_STATE_SIZE]) -> Self {
+        let mut payload = [0_u8; KVM_IRQCHIP_PAYLOAD_SIZE];
+        payload[..KVM_PIC_STATE_SIZE].copy_from_slice(&bytes);
+        Self {
+            state: decode_pic_state(&payload),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +109,22 @@ impl SlavePicStateSnapshot {
         let mut state = self.state;
         state.imr = imr;
         Self { state }
+    }
+
+    pub(crate) fn semantic_bytes(&self) -> [u8; KVM_PIC_STATE_SIZE] {
+        let mut payload = [0_u8; KVM_IRQCHIP_PAYLOAD_SIZE];
+        encode_pic_state(self.state, &mut payload);
+        payload[..KVM_PIC_STATE_SIZE]
+            .try_into()
+            .expect("fixed PIC semantic state length remains exact")
+    }
+
+    pub(crate) fn from_semantic_bytes(bytes: [u8; KVM_PIC_STATE_SIZE]) -> Self {
+        let mut payload = [0_u8; KVM_IRQCHIP_PAYLOAD_SIZE];
+        payload[..KVM_PIC_STATE_SIZE].copy_from_slice(&bytes);
+        Self {
+            state: decode_pic_state(&payload),
+        }
     }
 }
 
@@ -126,6 +159,22 @@ impl IoapicStateSnapshot {
         let mut state = self.state;
         *state.redirtbl.get_mut(pin)? = entry;
         Some(Self { state })
+    }
+
+    pub(crate) fn semantic_bytes(&self) -> [u8; KVM_IOAPIC_STATE_SIZE] {
+        let mut payload = [0_u8; KVM_IRQCHIP_PAYLOAD_SIZE];
+        encode_ioapic_state(self.state, &mut payload);
+        payload[..KVM_IOAPIC_STATE_SIZE]
+            .try_into()
+            .expect("fixed IOAPIC semantic state length remains exact")
+    }
+
+    pub(crate) fn from_semantic_bytes(bytes: [u8; KVM_IOAPIC_STATE_SIZE]) -> Self {
+        let mut payload = [0_u8; KVM_IRQCHIP_PAYLOAD_SIZE];
+        payload[..KVM_IOAPIC_STATE_SIZE].copy_from_slice(&bytes);
+        Self {
+            state: decode_ioapic_state(&payload),
+        }
     }
 }
 
@@ -333,7 +382,7 @@ fn encode_ioapic_state(state: KvmIoapicState, bytes: &mut [u8; KVM_IRQCHIP_PAYLO
 }
 
 const _: () = {
-    assert!(std::mem::size_of::<KvmPicState>() == 16);
+    assert!(std::mem::size_of::<KvmPicState>() == KVM_PIC_STATE_SIZE);
     assert!(std::mem::size_of::<KvmIoapicState>() == KVM_IOAPIC_STATE_SIZE);
     assert!(std::mem::size_of::<KvmIrqchip>() == 520);
 };
