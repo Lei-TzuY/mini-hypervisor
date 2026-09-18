@@ -10,40 +10,33 @@ The asynchronous timer phase is integrated at commit `e2c0f1c7686e39a31949e038d1
 
 That direct worker-ioctl timer phase is sealed. Do not farm fixed delay variants, more one-shot timer instances, or additional direct `KVM_IRQ_LINE` workers merely to extend the phase number.
 
-## Selected milestone — KVM irqfd accelerated timer delivery
+## Selected milestone — KVM irqfd-backed asynchronous timer delivery
 
-The next architecture boundary is kernel-assisted event delivery. The integrated async timer still requires its worker thread to own a duplicated KVM VM fd and issue `KVM_IRQ_LINE`. This milestone keeps the exact same deterministic guest, PIC/ExtINT path, `cli` arm barrier, race-safe `sti; hlt` handoff, handler, watchdog, and `RATWD` verifier, but changes only the delivery transport: userspace registers an eventfd against GSI0 with `KVM_IRQFD`, and the timer worker signals only that eventfd.
+The host-driven one-shot timer phase is integrated on `main` at commit `e2c0f1c7686e39a31949e038d1d6ba7d4bf70746` through PR #86. Exact merged-main CI #389 completed successfully with format, Clippy, tests, build, rustdoc, Rust 1.74 MSRV, the ten earlier strict real-KVM gates, and the eleventh strict asynchronous timer gate. Its executable proof is exact `RATWD`: arm barrier `A` observes IF clear, the adjacent `sti; hlt` handoff is woken by a worker-thread GSI0 edge, vector `0x40` handler emits `T`, resumed main emits `W`, and terminal barrier `D` observes IF enabled.
 
-This is deliberately one bounded edge-triggered irqfd proof. It is not a claim of irqfd resample/level semantics, ioeventfd acceleration, arbitrary routing, or a general event framework.
+That direct worker-thread VM-ioctl timer phase is sealed. Do not farm additional fixed delays or clone the same `KVM_IRQ_LINE` transport.
+
+The next boundary is kernel-accelerated asynchronous event delivery through `KVM_IRQFD`. The guest, PIC/LAPIC ExtINT state, race-safe `cli` arm barrier, adjacent `sti; hlt`, handler, watchdog and exact `RATWD` verifier remain unchanged. Only the host transport changes: userspace registers an eventfd with GSI0 through `KVM_IRQFD`; the timer worker owns only a duplicated eventfd and signals one u64 event, never a VM fd or guest RAM.
 
 Acceptance contract:
 
-- preserve all eleven integrated strict real-KVM gates and every existing long-mode, ELF64, MMIO, interrupt, snapshot, CPU-policy, diagnostic, and Rust 1.74 MSRV contract;
-- require `KVM_CAP_IRQFD` as a hard runtime capability for the irqfd executable and hosted strict gate; absence must fail that gate rather than silently skip or fall back to direct `KVM_IRQ_LINE`;
-- implement the exact Linux `struct kvm_irqfd` shape used by this repository: eventfd descriptor, GSI, flags, resamplefd, and padding totaling 32 bytes; assignment uses flags zero and deassignment uses `KVM_IRQFD_FLAG_DEASSIGN`;
-- create eventfd with `EFD_CLOEXEC | EFD_NONBLOCK`, wrap every successful descriptor immediately in `OwnedFd`, and signal with one exact native-endian `u64` value of 1 while treating short writes and non-EINTR failures as hard errors;
-- complete every fallible local eventfd preparation step before changing kernel irqfd state: create the registration eventfd and duplicate the worker signal handle first, then issue `KVM_IRQFD assign`; once assignment succeeds, no later signal-handle duplication may create an early-return cleanup gap;
-- preflight the fail-closed watchdog duplicated VM-fd handle before any irqfd registration is established, so watchdog setup failures cannot strand a registered irqfd;
-- establish a known inactive GSI0 level before assignment, register the eventfd to GSI0 before entering the potentially blocking guest `sti; hlt`, then let the timer worker own only the duplicated eventfd signal handle; the irqfd timer worker must not own a VM fd, call `KVM_IRQ_LINE`, or alias guest RAM;
-- retain the direct-GSI watchdog only as an anti-hang mechanism. Any watchdog intervention remains a hard failure and cannot manufacture acceptable irqfd evidence;
-- on every non-hanging path after a successful assignment, cancel/join workers and explicitly issue `KVM_IRQFD_FLAG_DEASSIGN` before accepting timer/proof results; deassignment failure is a hard failure;
-- reuse the exact deterministic guest proof `RATWD`: readiness `R`, arm barrier `A` with IF clear, vector `0x40` handler `T` plus master-PIC EOI and `iretq`, resumed mainline `W`, and terminal userspace barrier `D`;
-- preserve semantic LAPIC state: SPIV software-enable remains set and LINT0 remains unmasked ExtINT; arm RFLAGS requires architectural bit 1 with IF clear and completion requires bit 1 with IF set;
-- KVM-aware integration must independently execute the irqfd transport and validate GSI/vector, LAPIC state, arm/completion RFLAGS, all five byte-wide debug-port exits, and exact `RATWD` proof;
-- stable CI must retain all eleven integrated strict real-KVM gates unchanged and add an independent twelfth irqfd timer gate requiring the `KVM_CAP_IRQFD` executable, GSI0/vector0x40, semantic LAPIC state, IF-clear arm point, IF-enabled completion, and proof bytes `[82, 65, 84, 87, 68]`;
-- final candidate evidence must come from an exact PR run whose recorded job steps actually include and pass the twelfth irqfd gate; an earlier green run that omits that step is not sufficient merge evidence;
-- capability failure, eventfd creation/duplication/signal failure, irqfd assign/deassign failure, worker panic, watchdog intervention, watchdog failure, unexpected VM exit, wrong proof order, wrong PIC/LAPIC state, or wrong RFLAGS remain hard failures and must not be swallowed, retried into success, or hidden by changed expectations.
+- preserve all eleven integrated strict real-KVM gates and all existing MSRV, CPU-policy, MMIO, interrupt, diagnostics and safety contracts;
+- require `KVM_CAP_IRQFD` as a hard capability for this executable path;
+- implement and layout-test the exact Linux `struct kvm_irqfd` ABI, including assignment and `KVM_IRQFD_FLAG_DEASSIGN`;
+- create the eventfd with close-on-exec/nonblocking ownership, duplicate only the eventfd for the timer worker, and signal it with one exact u64 write;
+- bind eventfd→GSI0 before entering the potentially blocking `sti; hlt` handoff;
+- the irqfd timer worker must not call `KVM_IRQ_LINE`, own a KVM VM fd, or alias guest RAM;
+- explicitly deassign the irqfd registration on every non-hanging completion path before accepting proof;
+- retain the direct-GSI watchdog only as fail-closed anti-hang protection; any watchdog intervention is a hard failure and cannot manufacture accepted proof;
+- reuse exact guest proof `RATWD`, requiring A-barrier bit1 with IF clear and completion bit1 with IF set;
+- preserve software-enabled LAPIC SPIV and unmasked ExtINT LINT0;
+- KVM-aware integration must validate capability, GSI/vector, LAPIC state, RFLAGS and all five exact debug-port exits;
+- stable CI must retain the eleven integrated strict gates and add an independent twelfth hosted-KVM irqfd gate requiring capability text, GSI0, vector `0x40`, semantic LAPIC state, exact arm/completion flags and proof `[82, 65, 84, 87, 68]`;
+- capability, eventfd, irqfd assignment/deassignment, worker, watchdog, guest proof or controller-state failures remain hard failures and must not be skipped or retried into success.
 
 ## Scope boundary
 
-This milestone deliberately does **not** add:
-
-- irqfd resample/level-triggered semantics, `KVM_CAP_IRQFD_RESAMPLE`, shared GSIs, interrupt coalescing policy, or irqfd lifecycle generalization beyond this one executable edge route;
-- `KVM_IOEVENTFD`, MMIO/PIO doorbell acceleration, arbitrary `KVM_SET_GSI_ROUTING`, IOAPIC programming, MSI/MSI-X, x2APIC, or slave-PIC expansion;
-- periodic or programmable timers, PIT/HPET emulation, local-APIC timer programming, TSC-deadline, timer wheels, or a general scheduler;
-- realtime/wall-clock latency guarantees, controlled performance benchmarks, or host scheduling claims;
-- PCI/PCIe configuration space, BARs, virtio transport, DMA, IOMMU, or device hotplug;
-- guest-memory sharing with a worker, multi-vCPU delivery, SMP, migration, resumable execution, or whole-VM snapshots.
+This milestone deliberately does **not** add irqfd resample/level semantics, `KVM_CAP_IRQFD_RESAMPLE`, ioeventfd, arbitrary GSI routing, IOAPIC/MSI/MSI-X, periodic timers, PIT/HPET/APIC timer emulation, TSC-deadline, a generic scheduler, PCI/virtio, SMP, DMA/IOMMU, migration, snapshots, latency benchmarks, or guest-memory cross-thread sharing.
 
 ## Promotion rule
 
