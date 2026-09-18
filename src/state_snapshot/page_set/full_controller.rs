@@ -282,7 +282,96 @@ impl FullControllerCheckpointGuestResult {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionedFullControllerCheckpointGuestResult {
+    checkpoint: FullControllerCheckpointGuestResult,
+    schema_version: u16,
+    encoded_len: usize,
+    page_count: usize,
+    msr_count: usize,
+    canonical_roundtrip: bool,
+}
+
+impl VersionedFullControllerCheckpointGuestResult {
+    #[must_use]
+    pub const fn checkpoint(&self) -> &FullControllerCheckpointGuestResult {
+        &self.checkpoint
+    }
+
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    #[must_use]
+    pub const fn encoded_len(&self) -> usize {
+        self.encoded_len
+    }
+
+    #[must_use]
+    pub const fn page_count(&self) -> usize {
+        self.page_count
+    }
+
+    #[must_use]
+    pub const fn msr_count(&self) -> usize {
+        self.msr_count
+    }
+
+    #[must_use]
+    pub const fn canonical_roundtrip(&self) -> bool {
+        self.canonical_roundtrip
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FullControllerCheckpointTransport {
+    Direct,
+    VersionedV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VersionedFullControllerTransportEvidence {
+    schema_version: u16,
+    encoded_len: usize,
+    page_count: usize,
+    msr_count: usize,
+    canonical_roundtrip: bool,
+}
+
+struct FullControllerCheckpointExecution {
+    result: FullControllerCheckpointGuestResult,
+    versioned: Option<VersionedFullControllerTransportEvidence>,
+}
+
 pub fn run_full_controller_checkpoint_guest() -> Result<FullControllerCheckpointGuestResult, Error> {
+    Ok(run_full_controller_checkpoint_guest_with_transport(
+        FullControllerCheckpointTransport::Direct,
+    )?
+    .result)
+}
+
+pub fn run_versioned_full_controller_checkpoint_guest(
+) -> Result<VersionedFullControllerCheckpointGuestResult, Error> {
+    let execution = run_full_controller_checkpoint_guest_with_transport(
+        FullControllerCheckpointTransport::VersionedV1,
+    )?;
+    let versioned = execution
+        .versioned
+        .expect("versioned full-controller transport always returns transport evidence");
+    Ok(VersionedFullControllerCheckpointGuestResult {
+        checkpoint: execution.result,
+        schema_version: versioned.schema_version,
+        encoded_len: versioned.encoded_len,
+        page_count: versioned.page_count,
+        msr_count: versioned.msr_count,
+        canonical_roundtrip: versioned.canonical_roundtrip,
+    })
+}
+
+fn run_full_controller_checkpoint_guest_with_transport(
+    transport: FullControllerCheckpointTransport,
+) -> Result<FullControllerCheckpointExecution, Error> {
     let guest = crate::loader::FlatGuestImage::new(
         CONTROLLER_CHECKPOINT_ENTRY,
         CONTROLLER_CHECKPOINT_ENTRY,
@@ -301,7 +390,8 @@ pub fn run_full_controller_checkpoint_guest() -> Result<FullControllerCheckpoint
 
     let backend = crate::kvm::KvmBackend::open()?;
     let mut vm = backend.create_vm_with_irqchip()?;
-    let mut memory = GuestMemory::new(GuestPhysAddr::new(0), crate::long_mode::LONG_MODE_IDENTITY_MAP_SIZE)?;
+    let mut memory =
+        GuestMemory::new(GuestPhysAddr::new(0), crate::long_mode::LONG_MODE_IDENTITY_MAP_SIZE)?;
     let layout = crate::interrupt::LongModeInterruptLayout::with_gates(
         memory.region(),
         guest.entry(),
@@ -338,12 +428,15 @@ pub fn run_full_controller_checkpoint_guest() -> Result<FullControllerCheckpoint
         .expect("empty full-controller checkpoint MSR policy is valid by construction");
 
     let capture = controller_run_to_quiescent_debug(&mut vcpu)?;
-    let checkpoint = BoundedFullControllerCheckpoint::capture(
+    let captured_checkpoint = BoundedFullControllerCheckpoint::capture(
         &vcpu,
         &vm,
         &msr_policy,
         &[CONTROLLER_CHECKPOINT_PAGE],
     )?;
+    full_controller_require_capture_contract(&captured_checkpoint)?;
+    let (checkpoint, versioned) =
+        prepare_full_controller_checkpoint_transport(captured_checkpoint, &backend, transport)?;
     full_controller_require_capture_contract(&checkpoint)?;
 
     vm.guest_memory_mut()
@@ -411,7 +504,10 @@ pub fn run_full_controller_checkpoint_guest() -> Result<FullControllerCheckpoint
         "full controller restored-page barrier",
     )?;
     let slave_armed = vcpu.registers()?;
-    controller_require_interrupt_enabled("full controller slave-PIC armed state", slave_armed.rflags)?;
+    controller_require_interrupt_enabled(
+        "full controller slave-PIC armed state",
+        slave_armed.rflags,
+    )?;
 
     vm.pulse_gsi_edge(FULL_CONTROLLER_SLAVE_GSI)?;
     let slave_handler_io = controller_run_expected_debug_output(
@@ -427,7 +523,10 @@ pub fn run_full_controller_checkpoint_guest() -> Result<FullControllerCheckpoint
         "full controller post-slave barrier",
     )?;
     let ioapic_armed = vcpu.registers()?;
-    controller_require_interrupt_enabled("full controller IOAPIC armed state", ioapic_armed.rflags)?;
+    controller_require_interrupt_enabled(
+        "full controller IOAPIC armed state",
+        ioapic_armed.rflags,
+    )?;
 
     vm.pulse_gsi_edge(FULL_CONTROLLER_IOAPIC_GSI)?;
     let ioapic_handler_io = controller_run_expected_debug_output(
@@ -449,7 +548,10 @@ pub fn run_full_controller_checkpoint_guest() -> Result<FullControllerCheckpoint
         "full controller completion barrier",
     )?;
     let completion = vcpu.registers()?;
-    controller_require_interrupt_enabled("full controller completion state", completion.rflags)?;
+    controller_require_interrupt_enabled(
+        "full controller completion state",
+        completion.rflags,
+    )?;
 
     let io_exits = vec![
         marker_io,
@@ -475,25 +577,114 @@ pub fn run_full_controller_checkpoint_guest() -> Result<FullControllerCheckpoint
         ));
     }
 
-    Ok(FullControllerCheckpointGuestResult {
-        capture,
-        corruption,
-        restored,
-        captured_master_pic_imr: checkpoint.master_pic().imr(),
-        captured_slave_pic_imr: checkpoint.slave_pic().imr(),
-        captured_ioapic_base: checkpoint.ioapic().base_address(),
-        captured_ioapic_pin16: checkpoint
-            .ioapic()
-            .redirection_entry(FULL_CONTROLLER_IOAPIC_PIN16)
-            .expect("fixed IOAPIC pin remains in range"),
-        captured_lapic_spiv: controller_read_lapic_register(checkpoint.lapic(), APIC_SPIV_OFFSET),
-        captured_lapic_lint0: controller_read_lapic_register(checkpoint.lapic(), APIC_LVT0_OFFSET),
-        slave_armed_rflags: slave_armed.rflags,
-        ioapic_armed_rflags: ioapic_armed.rflags,
-        completion_rflags: completion.rflags,
-        io_exits,
-        proof,
+    Ok(FullControllerCheckpointExecution {
+        result: FullControllerCheckpointGuestResult {
+            capture,
+            corruption,
+            restored,
+            captured_master_pic_imr: checkpoint.master_pic().imr(),
+            captured_slave_pic_imr: checkpoint.slave_pic().imr(),
+            captured_ioapic_base: checkpoint.ioapic().base_address(),
+            captured_ioapic_pin16: checkpoint
+                .ioapic()
+                .redirection_entry(FULL_CONTROLLER_IOAPIC_PIN16)
+                .expect("fixed IOAPIC pin remains in range"),
+            captured_lapic_spiv: controller_read_lapic_register(
+                checkpoint.lapic(),
+                APIC_SPIV_OFFSET,
+            ),
+            captured_lapic_lint0: controller_read_lapic_register(
+                checkpoint.lapic(),
+                APIC_LVT0_OFFSET,
+            ),
+            slave_armed_rflags: slave_armed.rflags,
+            ioapic_armed_rflags: ioapic_armed.rflags,
+            completion_rflags: completion.rflags,
+            io_exits,
+            proof,
+        },
+        versioned,
     })
+}
+
+fn prepare_full_controller_checkpoint_transport(
+    checkpoint: BoundedFullControllerCheckpoint,
+    backend: &crate::kvm::KvmBackend,
+    transport: FullControllerCheckpointTransport,
+) -> Result<
+    (
+        BoundedFullControllerCheckpoint,
+        Option<VersionedFullControllerTransportEvidence>,
+    ),
+    Error,
+> {
+    match transport {
+        FullControllerCheckpointTransport::Direct => Ok((checkpoint, None)),
+        FullControllerCheckpointTransport::VersionedV1 => {
+            let schema =
+                VersionedFullControllerCheckpointV1::from_checkpoint(&checkpoint).map_err(
+                    |error| {
+                        versioned_full_controller_checkpoint_error(
+                            "versioned full-controller checkpoint capture",
+                            error,
+                        )
+                    },
+                )?;
+            let encoded = schema.encode().map_err(|error| {
+                versioned_full_controller_checkpoint_error(
+                    "versioned full-controller checkpoint encode",
+                    error,
+                )
+            })?;
+            let encoded_len = encoded.len();
+
+            // The transport proof must not retain the original process-local controller snapshot.
+            drop(schema);
+            drop(checkpoint);
+
+            let decoded = VersionedFullControllerCheckpointV1::decode(&encoded).map_err(|error| {
+                versioned_full_controller_checkpoint_error(
+                    "versioned full-controller checkpoint decode",
+                    error,
+                )
+            })?;
+            let canonical = decoded.encode().map_err(|error| {
+                versioned_full_controller_checkpoint_error(
+                    "versioned full-controller checkpoint canonical re-encode",
+                    error,
+                )
+            })?;
+            if canonical != encoded {
+                return Err(page_set_error(
+                    "versioned full-controller checkpoint canonical re-encode",
+                    "decoded controller checkpoint did not reproduce the canonical byte stream",
+                ));
+            }
+            let evidence = VersionedFullControllerTransportEvidence {
+                schema_version: decoded.version(),
+                encoded_len,
+                page_count: decoded.page_count(),
+                msr_count: decoded.msr_count(),
+                canonical_roundtrip: true,
+            };
+            let checkpoint = decoded
+                .materialize(backend.host_msr_indices())
+                .map_err(|error| {
+                    versioned_full_controller_checkpoint_error(
+                        "versioned full-controller checkpoint materialize",
+                        error,
+                    )
+                })?;
+            Ok((checkpoint, Some(evidence)))
+        }
+    }
+}
+
+fn versioned_full_controller_checkpoint_error(
+    operation: &'static str,
+    error: impl ToString,
+) -> Error {
+    page_set_error(operation, error.to_string())
 }
 
 fn full_controller_configure_ioapic(vm: &crate::kvm::Vm) -> Result<(), Error> {
