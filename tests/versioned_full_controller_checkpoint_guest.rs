@@ -27,7 +27,10 @@ fn versioned_full_controller_checkpoint_decodes_materializes_restores_and_resume
             assert!(result.canonical_roundtrip());
 
             let checkpoint = result.checkpoint();
-            assert_eq!(checkpoint.capture().rip(), CONTROLLER_CHECKPOINT_CAPTURE_RIP);
+            assert_eq!(
+                checkpoint.capture().rip(),
+                CONTROLLER_CHECKPOINT_CAPTURE_RIP
+            );
             assert_eq!(checkpoint.capture().rflags() & 0x2, 0x2);
             assert_eq!(
                 checkpoint.capture().rflags() & X86_RFLAGS_INTERRUPT_ENABLE,
@@ -35,7 +38,9 @@ fn versioned_full_controller_checkpoint_decodes_materializes_restores_and_resume
             );
 
             assert_eq!(
-                checkpoint.corruption().page_exact(CONTROLLER_CHECKPOINT_PAGE),
+                checkpoint
+                    .corruption()
+                    .page_exact(CONTROLLER_CHECKPOINT_PAGE),
                 Some(false)
             );
             assert!(!checkpoint.corruption().vcpu_exact());
