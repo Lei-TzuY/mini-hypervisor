@@ -613,6 +613,14 @@ fn run_request_phase(
                             )));
                         }
                         doorbell_events = count;
+                        if !mmio.apply_virtio_blk_host_notification(
+                            VIRTIO_BLK_INTERRUPT_BAR0_GPA,
+                            0,
+                        )? {
+                            return Err(checkpoint_error(format!(
+                                "{stage} reconstructed ioeventfd doorbell lost its virtio-blk device"
+                            )));
+                        }
                     } else {
                         let event = mmio.take_device_event_record().ok_or_else(|| {
                             checkpoint_error(format!("{stage} notify has no pending device event"))
