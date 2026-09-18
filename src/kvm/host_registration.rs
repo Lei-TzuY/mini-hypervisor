@@ -80,6 +80,11 @@ impl HostRegistrationCheckpoint {
         Self { spec }
     }
 
+    #[must_use]
+    pub(crate) const fn spec(self) -> HostRegistrationSpec {
+        self.spec
+    }
+
     pub(crate) fn reconstruct(
         self,
         backend: &KvmBackend,
