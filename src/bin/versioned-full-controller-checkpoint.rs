@@ -15,7 +15,10 @@ fn main() -> ExitCode {
                 result.msr_count(),
                 result.canonical_roundtrip()
             );
-            println!("versioned full controller capture: {}", checkpoint.capture());
+            println!(
+                "versioned full controller capture: {}",
+                checkpoint.capture()
+            );
             println!(
                 "versioned full controller page: {:#x}",
                 CONTROLLER_CHECKPOINT_PAGE.get()
