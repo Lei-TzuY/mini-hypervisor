@@ -295,6 +295,10 @@ impl VersionedFullControllerCheckpointV1 {
 #[cfg(test)]
 mod versioned_full_controller_schema_tests {
     use super::*;
+    use crate::kvm::msr::value_set::{GuestMsrSnapshot, GuestMsrValueSet};
+    use crate::kvm::msr::{HostMsrIndexList, MsrIndex};
+    use crate::kvm::sys;
+    use crate::vcpu::{VcpuRegisterSnapshot, VcpuSpecialRegisterSnapshot};
 
     #[test]
     fn constants_define_fixed_controller_payload_without_uapi_padding() {
