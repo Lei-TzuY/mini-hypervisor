@@ -1034,8 +1034,14 @@ fn build_program() -> CheckpointProgram {
     let capture_rip = crate::mmio::long_mode::LONG_MODE_MMIO_GUEST_ENTRY.get() + code.len() as u64;
     code.push(0x90);
 
+    // Keep IF clear while the host consumes the queue doorbell and makes the completion IRQ
+    // pending. The adjacent STI/HLT handoff prevents an asynchronous irqfd edge from racing the
+    // mainline ISR check: whether the edge is already pending or arrives after re-entry, the guest
+    // cannot advance into completion checks until the interrupt handler has run.
+    code.push(0xfa);
     code.extend_from_slice(&[0x66, 0xc7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
     emit_debug(&mut code, NOTIFY_BYTE);
+    code.extend_from_slice(&[0xfb, 0xf4]);
     emit_guest_completion_checks(&mut code);
     emit_movabs(&mut code, 3, 0x0050_0000);
     code.extend_from_slice(&[0x8a, 0x83]);
@@ -1191,6 +1197,13 @@ mod tests {
                 .windows(4)
                 .any(|window| window == [0xb0, marker, 0xe6, 0xe9]));
         }
+        let notify = program
+            .bytes
+            .windows(4)
+            .position(|window| window == [0xb0, NOTIFY_BYTE, 0xe6, 0xe9])
+            .expect("deterministic request contains the notify barrier");
+        assert_eq!(program.bytes[notify + 4..notify + 6], [0xfb, 0xf4]);
+        assert_eq!(program.bytes[notify - 10], 0xfa);
         let handler = build_handler();
         for marker in *b"IA" {
             assert!(handler
