@@ -14,7 +14,10 @@ use mini_hypervisor::vcpu::{PortIoDirection, VcpuExit};
 fn encoded_checkpoint_materializes_restores_and_resumes_abcr() {
     match run_versioned_page_vcpu_checkpoint_guest(VmConfig::default()) {
         Ok(result) => {
-            assert_eq!(result.schema_version(), VERSIONED_PAGE_VCPU_CHECKPOINT_VERSION);
+            assert_eq!(
+                result.schema_version(),
+                VERSIONED_PAGE_VCPU_CHECKPOINT_VERSION
+            );
             assert!(result.encoded_len() > 3 * 4096);
             assert!(result.msr_count() <= VERSIONED_PAGE_VCPU_CHECKPOINT_MSR_LIMIT);
 
@@ -23,9 +26,16 @@ fn encoded_checkpoint_materializes_restores_and_resumes_abcr() {
             assert_eq!(capture.exit(), VcpuExit::Hlt);
             assert_eq!(capture.rip(), MULTI_PAGE_CHECKPOINT_CAPTURE_RIP);
             assert_eq!(capture.rflags() & 0x2, 0x2);
-            assert_eq!(checkpoint.captured_pages(), &MULTI_PAGE_CHECKPOINT_OWNERSHIP_SET);
+            assert_eq!(
+                checkpoint.captured_pages(),
+                &MULTI_PAGE_CHECKPOINT_OWNERSHIP_SET
+            );
 
-            for address in [MULTI_PAGE_CHECKPOINT_CONTROL_PAGE, MULTI_PAGE_CHECKPOINT_DATA_PAGE, MULTI_PAGE_CHECKPOINT_STACK_PAGE] {
+            for address in [
+                MULTI_PAGE_CHECKPOINT_CONTROL_PAGE,
+                MULTI_PAGE_CHECKPOINT_DATA_PAGE,
+                MULTI_PAGE_CHECKPOINT_STACK_PAGE,
+            ] {
                 assert_eq!(checkpoint.corruption().page_exact(address), Some(false));
                 assert_eq!(checkpoint.restored().page_exact(address), Some(true));
             }
@@ -33,8 +43,15 @@ fn encoded_checkpoint_materializes_restores_and_resumes_abcr() {
             assert!(checkpoint.restored().is_exact_match());
 
             assert_eq!(checkpoint.proof(), MULTI_PAGE_CHECKPOINT_PROOF);
-            assert_eq!(checkpoint.io_exits().len(), MULTI_PAGE_CHECKPOINT_PROOF.len());
-            for (io, expected) in checkpoint.io_exits().iter().zip(MULTI_PAGE_CHECKPOINT_PROOF.iter().copied()) {
+            assert_eq!(
+                checkpoint.io_exits().len(),
+                MULTI_PAGE_CHECKPOINT_PROOF.len()
+            );
+            for (io, expected) in checkpoint
+                .io_exits()
+                .iter()
+                .zip(MULTI_PAGE_CHECKPOINT_PROOF.iter().copied())
+            {
                 assert_eq!(io.direction(), PortIoDirection::Out);
                 assert_eq!(io.port(), DEBUG_PORT);
                 assert_eq!(io.size(), 1);
@@ -49,7 +66,9 @@ fn encoded_checkpoint_materializes_restores_and_resumes_abcr() {
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
-            eprintln!("skipping versioned checkpoint integration assertion: /dev/kvm is unavailable to this runner");
+            eprintln!(
+                "skipping versioned checkpoint integration assertion: /dev/kvm is unavailable to this runner"
+            );
         }
         Err(error) => panic!("versioned checkpoint execution failed unexpectedly: {error}"),
     }

@@ -181,10 +181,11 @@ impl VersionedPageVcpuCheckpointGuestResult {
 pub fn run_multi_page_checkpoint_guest(
     config: VmConfig,
 ) -> Result<MultiPageCheckpointGuestResult, Error> {
-    Ok(
-        run_multi_page_checkpoint_guest_with_transport(config, MultiPageCheckpointTransport::Direct)?
-            .result,
-    )
+    Ok(run_multi_page_checkpoint_guest_with_transport(
+        config,
+        MultiPageCheckpointTransport::Direct,
+    )?
+    .result)
 }
 
 pub fn run_versioned_page_vcpu_checkpoint_guest(
@@ -261,8 +262,7 @@ fn run_multi_page_checkpoint_guest_with_transport(
             .expect("registered multi-page checkpoint memory remains VM-owned"),
         &MULTI_PAGE_CHECKPOINT_OWNERSHIP_SET,
     )?;
-    let (checkpoint, versioned) =
-        prepare_checkpoint_transport(checkpoint, &backend, transport)?;
+    let (checkpoint, versioned) = prepare_checkpoint_transport(checkpoint, &backend, transport)?;
     require_captured_roles(&checkpoint)?;
 
     let captured_pages = checkpoint
@@ -367,23 +367,32 @@ fn prepare_checkpoint_transport(
     checkpoint: BoundedVcpuPageSetCheckpoint,
     backend: &KvmBackend,
     transport: MultiPageCheckpointTransport,
-) -> Result<(BoundedVcpuPageSetCheckpoint, Option<VersionedTransportEvidence>), Error> {
+) -> Result<
+    (
+        BoundedVcpuPageSetCheckpoint,
+        Option<VersionedTransportEvidence>,
+    ),
+    Error,
+> {
     match transport {
         MultiPageCheckpointTransport::Direct => Ok((checkpoint, None)),
         MultiPageCheckpointTransport::VersionedV1 => {
-            let schema = VersionedPageVcpuCheckpointV1::from_checkpoint(&checkpoint)
-                .map_err(|error| versioned_checkpoint_error("versioned checkpoint capture", error))?;
-            let encoded = schema
-                .encode()
-                .map_err(|error| versioned_checkpoint_error("versioned checkpoint encode", error))?;
+            let schema =
+                VersionedPageVcpuCheckpointV1::from_checkpoint(&checkpoint).map_err(|error| {
+                    versioned_checkpoint_error("versioned checkpoint capture", error)
+                })?;
+            let encoded = schema.encode().map_err(|error| {
+                versioned_checkpoint_error("versioned checkpoint encode", error)
+            })?;
             let encoded_len = encoded.len();
 
             // The transport proof must not retain the original process-local checkpoint object.
             drop(schema);
             drop(checkpoint);
 
-            let decoded = VersionedPageVcpuCheckpointV1::decode(&encoded)
-                .map_err(|error| versioned_checkpoint_error("versioned checkpoint decode", error))?;
+            let decoded = VersionedPageVcpuCheckpointV1::decode(&encoded).map_err(|error| {
+                versioned_checkpoint_error("versioned checkpoint decode", error)
+            })?;
             let evidence = VersionedTransportEvidence {
                 schema_version: decoded.version(),
                 encoded_len,
