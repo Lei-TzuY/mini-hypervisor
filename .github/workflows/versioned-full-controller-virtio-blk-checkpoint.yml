@@ -1,0 +1,109 @@
+name: Strict KVM versioned full-controller virtio-blk checkpoint restore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/kvm/lapic_uapi.rs'
+      - 'src/vcpu/lapic_checkpoint.rs'
+      - 'src/vcpu/mp_state.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/full_controller.rs'
+      - 'src/state_snapshot/page_set/virtio_blk.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_guest.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_schema_v1.rs'
+      - 'src/bin/versioned-full-controller-virtio-blk-checkpoint.rs'
+      - 'tests/versioned_full_controller_virtio_blk_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-full-controller-virtio-blk-checkpoint.yml'
+  pull_request:
+    paths:
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/kvm/lapic_uapi.rs'
+      - 'src/vcpu/lapic_checkpoint.rs'
+      - 'src/vcpu/mp_state.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/full_controller.rs'
+      - 'src/state_snapshot/page_set/virtio_blk.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_guest.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_schema_v1.rs'
+      - 'src/bin/versioned-full-controller-virtio-blk-checkpoint.rs'
+      - 'tests/versioned_full_controller_virtio_blk_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-full-controller-virtio-blk-checkpoint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-versioned-full-controller-virtio-blk-checkpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build versioned full-controller virtio-blk checkpoint proof
+        run: cargo build --quiet --bin versioned-full-controller-virtio-blk-checkpoint
+      - name: Execute versioned full-controller virtio-blk checkpoint proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/versioned-full-controller-virtio-blk-checkpoint)"
+          printf '%s\n' "$output"
+
+          schema="$(grep -F 'versioned full-controller virtio-blk schema: version=1 encoded_bytes=' <<<"$output")"
+          encoded_and_pages="${schema##*encoded_bytes=}"
+          encoded_bytes="${encoded_and_pages%% *}"
+          pages="${schema##*pages=}"
+          pages="${pages%% *}"
+          msrs="${schema##*msrs=}"
+          msrs="${msrs%% *}"
+          bar="${schema##*bar=}"
+          bar="${bar%% *}"
+          backing_bytes="${schema##*backing_bytes=}"
+          backing_bytes="${backing_bytes%% *}"
+          [[ "$encoded_bytes" =~ ^[0-9]+$ ]]
+          [[ "$pages" =~ ^[0-9]+$ ]]
+          [[ "$msrs" =~ ^[0-9]+$ ]]
+          [[ "$bar" =~ ^0x[0-9a-fA-F]+$ ]]
+          [[ "$backing_bytes" =~ ^[0-9]+$ ]]
+          (( encoded_bytes > backing_bytes ))
+          (( pages == 1 ))
+          (( msrs <= 256 ))
+          (( bar == 0x10000000 ))
+          (( backing_bytes > 0 ))
+          grep -F 'canonical=true' <<<"$schema"
+
+          grep -F 'versioned full-controller virtio-blk checkpoint page: 0x18000' <<<"$output"
+          grep -F 'versioned full-controller virtio-blk captured queue: avail=0 used=0' <<<"$output"
+          grep -F 'versioned full-controller virtio-blk mutation exact: page=false vcpu=false master-pic=false slave-pic=false ioapic=false lapic=false device=false' <<<"$output"
+          grep -F 'versioned full-controller virtio-blk mutation proof: [78, 73, 65, 82, 68]' <<<"$output"
+          grep -F 'versioned full-controller virtio-blk mutation IRQ lifecycle: assert=1 deassert=1' <<<"$output"
+          grep -F 'versioned full-controller virtio-blk restore exact: page=true vcpu=true master-pic=true slave-pic=true ioapic=true lapic=true device=true' <<<"$output"
+          grep -F 'versioned full-controller virtio-blk replay queue: avail=1 used=1' <<<"$output"
+          grep -F 'versioned full-controller virtio-blk replay proof: [78, 73, 65, 82, 68]' <<<"$output"
+          grep -F 'versioned full-controller virtio-blk replay IRQ lifecycle: assert=1 deassert=1' <<<"$output"
+          grep -F 'versioned full-controller virtio-blk backing/readback match: true' <<<"$output"
+
+          capture="$(grep -F 'versioned full-controller virtio-blk capture: rip=' <<<"$output")"
+          capture_rflags_hex="${capture##*rflags=}"
+          [[ "$capture_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          capture_rflags=$((capture_rflags_hex))
+          (( (capture_rflags & 0x2) == 0x2 ))
+          (( (capture_rflags & 0x200) == 0x200 ))
+
+          replay="$(grep -F 'versioned full-controller virtio-blk replay rflags:' <<<"$output")"
+          replay_rflags_hex="${replay##*: }"
+          [[ "$replay_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          replay_rflags=$((replay_rflags_hex))
+          (( (replay_rflags & 0x2) == 0x2 ))
+          (( (replay_rflags & 0x200) == 0x200 ))
