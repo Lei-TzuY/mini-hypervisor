@@ -242,6 +242,23 @@ enum RequestTransport {
     ReconstructedHost(HostRegistrationCheckpoint),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckpointTransport {
+    Direct,
+    VersionedV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VersionedFullControllerVirtioBlkTransportEvidence {
+    schema_version: u16,
+    encoded_len: usize,
+    page_count: usize,
+    msr_count: usize,
+    bar0: u64,
+    backing_len: usize,
+    canonical_roundtrip: bool,
+}
+
 #[derive(Debug)]
 struct RequestPhase {
     proof: Vec<u8>,
@@ -265,11 +282,15 @@ struct CoreCheckpointRun {
     replay_used_idx: u16,
     backing: Vec<u8>,
     readback: Vec<u8>,
+    versioned: Option<VersionedFullControllerVirtioBlkTransportEvidence>,
 }
 
 pub fn run_full_controller_virtio_blk_checkpoint_guest(
 ) -> Result<FullControllerVirtioBlkCheckpointGuestResult, Error> {
-    let core = run_full_controller_virtio_blk_checkpoint_core(RequestTransport::UserspaceMmio)?;
+    let core = run_full_controller_virtio_blk_checkpoint_core(
+        RequestTransport::UserspaceMmio,
+        CheckpointTransport::Direct,
+    )?;
     Ok(FullControllerVirtioBlkCheckpointGuestResult {
         capture_rip: core.capture_rip,
         capture_rflags: core.capture_rflags,
@@ -291,6 +312,100 @@ pub fn run_full_controller_virtio_blk_checkpoint_guest(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionedFullControllerVirtioBlkCheckpointGuestResult {
+    checkpoint: FullControllerVirtioBlkCheckpointGuestResult,
+    schema_version: u16,
+    encoded_len: usize,
+    page_count: usize,
+    msr_count: usize,
+    bar0: u64,
+    backing_len: usize,
+    canonical_roundtrip: bool,
+}
+
+impl VersionedFullControllerVirtioBlkCheckpointGuestResult {
+    #[must_use]
+    pub const fn checkpoint(&self) -> &FullControllerVirtioBlkCheckpointGuestResult {
+        &self.checkpoint
+    }
+
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    #[must_use]
+    pub const fn encoded_len(&self) -> usize {
+        self.encoded_len
+    }
+
+    #[must_use]
+    pub const fn page_count(&self) -> usize {
+        self.page_count
+    }
+
+    #[must_use]
+    pub const fn msr_count(&self) -> usize {
+        self.msr_count
+    }
+
+    #[must_use]
+    pub const fn bar0(&self) -> u64 {
+        self.bar0
+    }
+
+    #[must_use]
+    pub const fn backing_len(&self) -> usize {
+        self.backing_len
+    }
+
+    #[must_use]
+    pub const fn canonical_roundtrip(&self) -> bool {
+        self.canonical_roundtrip
+    }
+}
+
+pub fn run_versioned_full_controller_virtio_blk_checkpoint_guest(
+) -> Result<VersionedFullControllerVirtioBlkCheckpointGuestResult, Error> {
+    let core = run_full_controller_virtio_blk_checkpoint_core(
+        RequestTransport::UserspaceMmio,
+        CheckpointTransport::VersionedV1,
+    )?;
+    let versioned = core
+        .versioned
+        .expect("versioned full-controller virtio-blk transport always returns evidence");
+    let checkpoint = FullControllerVirtioBlkCheckpointGuestResult {
+        capture_rip: core.capture_rip,
+        capture_rflags: core.capture_rflags,
+        captured_avail_idx: core.captured_avail_idx,
+        captured_used_idx: core.captured_used_idx,
+        mutation: core.mutation,
+        restored: core.restored,
+        mutation_proof: core.mutation_phase.proof,
+        replay_proof: core.replay_phase.proof,
+        mutation_assert_count: core.mutation_phase.assert_count,
+        mutation_deassert_count: core.mutation_phase.deassert_count,
+        replay_assert_count: core.replay_phase.assert_count,
+        replay_deassert_count: core.replay_phase.deassert_count,
+        replay_avail_idx: core.replay_avail_idx,
+        replay_used_idx: core.replay_used_idx,
+        backing: core.backing,
+        readback: core.readback,
+        replay_rflags: core.replay_phase.rflags,
+    };
+    Ok(VersionedFullControllerVirtioBlkCheckpointGuestResult {
+        checkpoint,
+        schema_version: versioned.schema_version,
+        encoded_len: versioned.encoded_len,
+        page_count: versioned.page_count,
+        msr_count: versioned.msr_count,
+        bar0: versioned.bar0,
+        backing_len: versioned.backing_len,
+        canonical_roundtrip: versioned.canonical_roundtrip,
+    })
+}
+
 pub fn run_full_controller_virtio_blk_host_registration_reconstruction_guest(
 ) -> Result<FullControllerVirtioBlkHostRegistrationResult, Error> {
     let spec = HostRegistrationSpec::new(
@@ -302,6 +417,7 @@ pub fn run_full_controller_virtio_blk_host_registration_reconstruction_guest(
     let registration_checkpoint = HostRegistrationCheckpoint::capture(spec);
     let core = run_full_controller_virtio_blk_checkpoint_core(
         RequestTransport::ReconstructedHost(registration_checkpoint),
+        CheckpointTransport::Direct,
     )?;
     Ok(FullControllerVirtioBlkHostRegistrationResult {
         capture_rip: core.capture_rip,
@@ -330,6 +446,7 @@ pub fn run_full_controller_virtio_blk_host_registration_reconstruction_guest(
 
 fn run_full_controller_virtio_blk_checkpoint_core(
     transport: RequestTransport,
+    checkpoint_transport: CheckpointTransport,
 ) -> Result<CoreCheckpointRun, Error> {
     let program = build_program();
     let guest = FlatGuestImage::new(
@@ -379,7 +496,7 @@ fn run_full_controller_virtio_blk_checkpoint_core(
         ));
     }
 
-    let checkpoint = BoundedFullControllerVirtioBlkCheckpoint::capture(
+    let captured_checkpoint = BoundedFullControllerVirtioBlkCheckpoint::capture(
         &vcpu,
         &vm,
         &msr_policy,
@@ -387,16 +504,30 @@ fn run_full_controller_virtio_blk_checkpoint_core(
         VIRTIO_BLK_INTERRUPT_BAR0_GPA,
         &[FULL_CONTROLLER_VIRTIO_BLK_CHECKPOINT_PAGE],
     )?;
-    if checkpoint.device().checkpoint_last_avail_idx() != 0
-        || checkpoint.device().checkpoint_last_used_idx() != 0
-        || !checkpoint.device().checkpoint_quiescent()
+    if captured_checkpoint.device().checkpoint_last_avail_idx() != 0
+        || captured_checkpoint.device().checkpoint_last_used_idx() != 0
+        || !captured_checkpoint.device().checkpoint_quiescent()
     {
         return Err(checkpoint_error(
             "captured virtio-blk device is not the expected quiescent 0/0 queue state",
         ));
     }
-    let captured_avail_idx = checkpoint.device().checkpoint_last_avail_idx();
-    let captured_used_idx = checkpoint.device().checkpoint_last_used_idx();
+    let captured_avail_idx = captured_checkpoint.device().checkpoint_last_avail_idx();
+    let captured_used_idx = captured_checkpoint.device().checkpoint_last_used_idx();
+    let (checkpoint, versioned) = prepare_full_controller_virtio_blk_checkpoint_transport(
+        captured_checkpoint,
+        &backend,
+        checkpoint_transport,
+    )?;
+    if checkpoint.device().checkpoint_last_avail_idx() != 0
+        || checkpoint.device().checkpoint_last_used_idx() != 0
+        || !checkpoint.device().checkpoint_quiescent()
+        || checkpoint.bar0() != VIRTIO_BLK_INTERRUPT_BAR0_GPA
+    {
+        return Err(checkpoint_error(
+            "materialized virtio-blk checkpoint did not preserve the captured quiescent device contract",
+        ));
+    }
 
     let mutation_phase = run_request_with_transport(
         &backend,
@@ -480,6 +611,93 @@ fn run_full_controller_virtio_blk_checkpoint_core(
         replay_used_idx,
         backing,
         readback,
+        versioned,
+    })
+}
+
+fn prepare_full_controller_virtio_blk_checkpoint_transport(
+    checkpoint: BoundedFullControllerVirtioBlkCheckpoint,
+    backend: &KvmBackend,
+    transport: CheckpointTransport,
+) -> Result<
+    (
+        BoundedFullControllerVirtioBlkCheckpoint,
+        Option<VersionedFullControllerVirtioBlkTransportEvidence>,
+    ),
+    Error,
+> {
+    match transport {
+        CheckpointTransport::Direct => Ok((checkpoint, None)),
+        CheckpointTransport::VersionedV1 => {
+            let schema = VersionedFullControllerVirtioBlkCheckpointV1::from_checkpoint(&checkpoint)
+                .map_err(|error| {
+                    versioned_full_controller_virtio_blk_error(
+                        "versioned full-controller virtio-blk capture",
+                        error,
+                    )
+                })?;
+            let encoded = schema.encode().map_err(|error| {
+                versioned_full_controller_virtio_blk_error(
+                    "versioned full-controller virtio-blk encode",
+                    error,
+                )
+            })?;
+            let encoded_len = encoded.len();
+
+            // The executable transport proof must cross the byte boundary rather than retain the
+            // original process-local controller/device snapshot.
+            drop(schema);
+            drop(checkpoint);
+
+            let decoded = VersionedFullControllerVirtioBlkCheckpointV1::decode(&encoded).map_err(
+                |error| {
+                    versioned_full_controller_virtio_blk_error(
+                        "versioned full-controller virtio-blk decode",
+                        error,
+                    )
+                },
+            )?;
+            let canonical = decoded.encode().map_err(|error| {
+                versioned_full_controller_virtio_blk_error(
+                    "versioned full-controller virtio-blk canonical re-encode",
+                    error,
+                )
+            })?;
+            if canonical != encoded {
+                return Err(checkpoint_error(
+                    "decoded full-controller virtio-blk checkpoint did not reproduce the canonical byte stream",
+                ));
+            }
+            let evidence = VersionedFullControllerVirtioBlkTransportEvidence {
+                schema_version: decoded.version(),
+                encoded_len,
+                page_count: decoded.page_count(),
+                msr_count: decoded.msr_count(),
+                bar0: decoded.bar0(),
+                backing_len: decoded.backing_len(),
+                canonical_roundtrip: true,
+            };
+            let checkpoint = decoded
+                .materialize(backend.host_msr_indices())
+                .map_err(|error| {
+                    versioned_full_controller_virtio_blk_error(
+                        "versioned full-controller virtio-blk materialize",
+                        error,
+                    )
+                })?;
+            Ok((checkpoint, Some(evidence)))
+        }
+    }
+}
+
+fn versioned_full_controller_virtio_blk_error(
+    operation: &'static str,
+    error: impl ToString,
+) -> Error {
+    Error::HostEnvironment(HostEnvironmentError::VcpuOperation {
+        id: VcpuId::BOOT.get(),
+        operation,
+        source: io::Error::new(io::ErrorKind::InvalidData, error.to_string()),
     })
 }
 
