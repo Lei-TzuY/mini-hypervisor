@@ -418,19 +418,98 @@ mod versioned_full_controller_virtio_blk_schema_tests {
         ));
     }
 
-    #[test]
-    fn outer_header_rejects_wrong_magic_before_nested_decode() {
-        let mut bytes = vec![0_u8; FULL_CONTROLLER_VIRTIO_BLK_HEADER_LEN];
-        bytes[0..8].copy_from_slice(b"BADFCVB!");
+    fn minimally_sized_outer_envelope() -> Vec<u8> {
+        let controller_len = 1_usize;
+        let total_len = FULL_CONTROLLER_VIRTIO_BLK_HEADER_LEN
+            + controller_len
+            + VIRTIO_BLK_STATE_LEN;
+        let mut bytes = vec![0_u8; total_len];
+        bytes[0..8].copy_from_slice(&VERSIONED_FULL_CONTROLLER_VIRTIO_BLK_MAGIC);
         bytes[8..10].copy_from_slice(&VERSIONED_FULL_CONTROLLER_VIRTIO_BLK_VERSION.to_le_bytes());
         bytes[10..12]
             .copy_from_slice(&VERSIONED_FULL_CONTROLLER_VIRTIO_BLK_ARCH_X86_64.to_le_bytes());
         bytes[12..16].copy_from_slice(&(FULL_CONTROLLER_VIRTIO_BLK_HEADER_LEN as u32).to_le_bytes());
-        let total_len = bytes.len() as u64;
-        bytes[16..24].copy_from_slice(&total_len.to_le_bytes());
+        bytes[16..24].copy_from_slice(&(total_len as u64).to_le_bytes());
+        bytes[24..32].copy_from_slice(&(controller_len as u64).to_le_bytes());
+        bytes[32..40].copy_from_slice(&(VIRTIO_BLK_STATE_LEN as u64).to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn outer_header_fails_closed_before_nested_decode() {
+        let base = minimally_sized_outer_envelope();
+
+        let mut bad_magic = base.clone();
+        bad_magic[0..8].copy_from_slice(b"BADFCVB!");
         assert_eq!(
-            VersionedFullControllerVirtioBlkCheckpointV1::decode(&bytes),
+            VersionedFullControllerVirtioBlkCheckpointV1::decode(&bad_magic),
             Err(VersionedFullControllerVirtioBlkCheckpointError::InvalidMagic)
         );
+
+        let mut bad_version = base.clone();
+        bad_version[8..10].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerVirtioBlkCheckpointV1::decode(&bad_version),
+            Err(VersionedFullControllerVirtioBlkCheckpointError::UnsupportedVersion(2))
+        );
+
+        let mut bad_arch = base.clone();
+        bad_arch[10..12].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerVirtioBlkCheckpointV1::decode(&bad_arch),
+            Err(VersionedFullControllerVirtioBlkCheckpointError::UnsupportedArchitecture(2))
+        );
+
+        let mut bad_header = base.clone();
+        bad_header[12..16].copy_from_slice(&0_u32.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerVirtioBlkCheckpointV1::decode(&bad_header),
+            Err(VersionedFullControllerVirtioBlkCheckpointError::InvalidHeaderLength(0))
+        );
+
+        let mut bad_total = base.clone();
+        bad_total[16..24].copy_from_slice(&0_u64.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerVirtioBlkCheckpointV1::decode(&bad_total),
+            Err(VersionedFullControllerVirtioBlkCheckpointError::InvalidTotalLength {
+                declared: 0,
+                actual: base.len(),
+            })
+        );
+
+        let mut bad_controller = base.clone();
+        bad_controller[24..32].copy_from_slice(&0_u64.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerVirtioBlkCheckpointV1::decode(&bad_controller),
+            Err(VersionedFullControllerVirtioBlkCheckpointError::InvalidControllerLength(0))
+        );
+
+        let mut bad_device = base.clone();
+        bad_device[32..40].copy_from_slice(&1_u64.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerVirtioBlkCheckpointV1::decode(&bad_device),
+            Err(VersionedFullControllerVirtioBlkCheckpointError::InvalidDeviceLength(1))
+        );
+
+        let mut bad_flags = base.clone();
+        bad_flags[40..44].copy_from_slice(&1_u32.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerVirtioBlkCheckpointV1::decode(&bad_flags),
+            Err(VersionedFullControllerVirtioBlkCheckpointError::NonZeroFlags(1))
+        );
+
+        let mut bad_reserved = base.clone();
+        bad_reserved[44..48].copy_from_slice(&1_u32.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerVirtioBlkCheckpointV1::decode(&bad_reserved),
+            Err(VersionedFullControllerVirtioBlkCheckpointError::NonZeroReserved(1))
+        );
+
+        let mut truncated = base;
+        truncated.pop();
+        assert!(matches!(
+            VersionedFullControllerVirtioBlkCheckpointV1::decode(&truncated),
+            Err(VersionedFullControllerVirtioBlkCheckpointError::InvalidTotalLength { .. })
+        ));
     }
 }
