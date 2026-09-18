@@ -1,9 +1,9 @@
-#[path = "virtio_blk_indirect.rs"]
-mod indirect;
 #[path = "virtio_blk_checkpoint.rs"]
 mod checkpoint;
-pub use checkpoint::VirtioBlkCheckpointStateError;
+#[path = "virtio_blk_indirect.rs"]
+mod indirect;
 pub(crate) use checkpoint::VirtioBlkCheckpointState;
+pub use checkpoint::VirtioBlkCheckpointStateError;
 mod virtio_blk_backing;
 #[path = "virtio_blk_write_readback.rs"]
 mod write_readback;
