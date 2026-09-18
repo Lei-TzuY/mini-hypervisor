@@ -3,8 +3,7 @@ use mini_hypervisor::interrupt::X86_RFLAGS_INTERRUPT_ENABLE;
 use mini_hypervisor::portio::pci::virtio_blk::{
     deterministic_sector, VIRTIO_BLK_BACKING_SIZE, VIRTIO_BLK_SECTOR_SIZE,
 };
-use mini_hypervisor::portio::virtio_blk_completion_interrupt_fixture::
-    VIRTIO_BLK_INTERRUPT_BAR0_GPA;
+use mini_hypervisor::portio::virtio_blk_completion_interrupt_fixture::VIRTIO_BLK_INTERRUPT_BAR0_GPA;
 use mini_hypervisor::state_snapshot::{
     run_versioned_full_controller_virtio_blk_checkpoint_guest,
     FULL_CONTROLLER_VIRTIO_BLK_CHECKPOINT_PAGE, FULL_CONTROLLER_VIRTIO_BLK_REQUEST_PROOF,
