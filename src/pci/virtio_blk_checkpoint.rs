@@ -223,7 +223,7 @@ mod tests {
         ));
 
         let mut state = VirtioBlkCheckpointState::capture(&device).unwrap();
-        state.status |= 0x80;
+        state.status |= 0x20;
         assert!(matches!(
             state.materialize(),
             Err(VirtioBlkCheckpointStateError::InvalidStatus { .. })
