@@ -1,7 +1,10 @@
 use crate::interrupt::{
     LONG_MODE_INTERRUPT_HANDLER, LONG_MODE_INTERRUPT_VECTOR, X86_RFLAGS_INTERRUPT_ENABLE,
 };
-use crate::kvm::sys::{\n    HostRegistrationCheckpoint, HostRegistrationSpec, ReconstructedHostRegistrations,\n};\nuse crate::kvm::KvmBackend;
+use crate::kvm::sys::{
+    HostRegistrationCheckpoint, HostRegistrationSpec, ReconstructedHostRegistrations,
+};
+use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
 use crate::long_mode::LONG_MODE_IDENTITY_MAP_SIZE;
 use crate::memory::GuestMemory;
