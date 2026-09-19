@@ -125,6 +125,37 @@ impl VersionedCheckpointTransactionV1 {
         self.registration.version()
     }
 
+    pub(crate) fn checkpoint_encoded_len(
+        &self,
+    ) -> Result<usize, VersionedCheckpointTransactionError> {
+        Ok(self.checkpoint.encode()?.len())
+    }
+
+    #[must_use]
+    pub(crate) fn registration_encoded_len(&self) -> usize {
+        self.registration.encode().len()
+    }
+
+    #[must_use]
+    pub(crate) fn checkpoint_page_count(&self) -> usize {
+        self.checkpoint.page_count()
+    }
+
+    #[must_use]
+    pub(crate) fn checkpoint_msr_count(&self) -> usize {
+        self.checkpoint.msr_count()
+    }
+
+    #[must_use]
+    pub(crate) const fn checkpoint_bar0(&self) -> u64 {
+        self.checkpoint.bar0()
+    }
+
+    #[must_use]
+    pub(crate) const fn checkpoint_backing_len(&self) -> usize {
+        self.checkpoint.backing_len()
+    }
+
     #[must_use]
     pub(crate) fn registration_spec(&self) -> HostRegistrationSpec {
         self.registration.spec()
