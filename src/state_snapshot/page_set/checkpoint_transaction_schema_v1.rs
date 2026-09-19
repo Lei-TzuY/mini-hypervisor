@@ -10,7 +10,7 @@ pub const VERSIONED_CHECKPOINT_TRANSACTION_ARCH_X86_64: u16 = 1;
 const CHECKPOINT_TRANSACTION_HEADER_LEN: usize = 48;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VersionedCheckpointTransactionError {
+pub(crate) enum VersionedCheckpointTransactionError {
     InvalidMagic,
     UnsupportedVersion(u16),
     UnsupportedArchitecture(u16),
