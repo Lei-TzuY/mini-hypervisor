@@ -29,10 +29,10 @@ Acceptance contract:
 - preserve the sealed guest/page/VCPU/controller-first then virtio-blk restore ordering before reconstructed host acceleration is used;
 - run both the deliberate mutation request and restored replay request through reconstructed ioeventfd/irqfd registrations, not through a userspace-MMIO fallback;
 - mutation and replay must each prove exactly one doorbell event and exactly one irqfd signal while preserving the existing request proof `NIARD`, queue progression, interrupt lifecycle and deterministic backing/readback continuity;
-- the replay reconstruction must use a fresh registration generation distinct from the mutation generation while retaining identical decoded semantic fields;
+- mutation and replay must each enter a fresh reconstruction lifecycle from the decoded semantic spec, with the mutation registrations deassigned and dropped before replay reconstruction begins;
 - schema evidence must expose version, encoded length, canonical-roundtrip status and the decoded doorbell/GSI tuple;
 - deterministic unit coverage must include envelope corruption, flags/reserved corruption, truncation and semantic host-registration invalidity;
-- KVM-aware integration must independently validate the schema metadata, fresh-generation reconstruction, both accelerated request phases, exact full-controller+virtio-blk restore and backing continuity;
+- KVM-aware integration must independently validate the schema metadata, two separate accelerated request phases reconstructed from the decoded spec, exact full-controller+virtio-blk restore and backing continuity;
 - add a dedicated permanent hosted-KVM workflow whose path filter includes `ROADMAP.md`, the schema/runtime files, executable binary, integration test and the workflow itself;
 - build the proof binary outside the execution timeout so cold compilation cannot masquerade as a KVM execution failure;
 - schema, compatibility, restore ordering, registration reconstruction, generation freshness, ioeventfd/irqfd delivery, controller/device state, replay or backing failures remain hard failures and must not be swallowed, retried into success or hidden by changed expectations.
