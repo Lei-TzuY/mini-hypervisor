@@ -31,13 +31,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build bounded syscall partial-progress proof
+        run: cargo build --quiet --bin syscall-partial-copy
       - name: Strict KVM bounded syscall partial-progress copy proof
         shell: bash
         run: |
           set -euo pipefail
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin syscall-partial-copy)"
+          output="$(timeout 30s target/debug/syscall-partial-copy)"
           printf '%s\n' "$output"
 
           grep -F 'partial-copy proof: [77, 70, 70, 77, 73, 73, 67, 80, 85, 68]' <<<"$output"
