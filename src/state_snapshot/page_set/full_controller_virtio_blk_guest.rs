@@ -3,6 +3,7 @@ use crate::interrupt::{
 };
 use crate::kvm::sys::{
     HostRegistrationCheckpoint, HostRegistrationSpec, ReconstructedHostRegistrations,
+    VersionedHostRegistrationSpecV1,
 };
 use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
@@ -403,6 +404,116 @@ pub fn run_versioned_full_controller_virtio_blk_checkpoint_guest(
         bar0: versioned.bar0,
         backing_len: versioned.backing_len,
         canonical_roundtrip: versioned.canonical_roundtrip,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionedFullControllerVirtioBlkHostRegistrationResult {
+    checkpoint: FullControllerVirtioBlkHostRegistrationResult,
+    checkpoint_schema_version: u16,
+    checkpoint_encoded_len: usize,
+    registration_schema_version: u16,
+    registration_encoded_len: usize,
+    registration_canonical_roundtrip: bool,
+}
+
+impl VersionedFullControllerVirtioBlkHostRegistrationResult {
+    #[must_use]
+    pub const fn checkpoint(&self) -> &FullControllerVirtioBlkHostRegistrationResult {
+        &self.checkpoint
+    }
+
+    #[must_use]
+    pub const fn checkpoint_schema_version(&self) -> u16 {
+        self.checkpoint_schema_version
+    }
+
+    #[must_use]
+    pub const fn checkpoint_encoded_len(&self) -> usize {
+        self.checkpoint_encoded_len
+    }
+
+    #[must_use]
+    pub const fn registration_schema_version(&self) -> u16 {
+        self.registration_schema_version
+    }
+
+    #[must_use]
+    pub const fn registration_encoded_len(&self) -> usize {
+        self.registration_encoded_len
+    }
+
+    #[must_use]
+    pub const fn registration_canonical_roundtrip(&self) -> bool {
+        self.registration_canonical_roundtrip
+    }
+}
+
+pub fn run_versioned_full_controller_virtio_blk_host_registration_reconstruction_guest(
+) -> Result<VersionedFullControllerVirtioBlkHostRegistrationResult, Error> {
+    let registration_bytes = {
+        let spec = HostRegistrationSpec::new(
+            RECONSTRUCTED_DOORBELL_GPA,
+            RECONSTRUCTED_DOORBELL_LENGTH,
+            RECONSTRUCTED_DOORBELL_DATAMATCH,
+            RECONSTRUCTED_GSI,
+        )?;
+        VersionedHostRegistrationSpecV1::from_spec(spec).encode()
+    };
+
+    let registration_schema =
+        VersionedHostRegistrationSpecV1::decode(&registration_bytes).map_err(|error| {
+            versioned_full_controller_virtio_blk_error(
+                "versioned host-registration decode",
+                error,
+            )
+        })?;
+    if registration_schema.encode() != registration_bytes {
+        return Err(checkpoint_error(
+            "decoded host-registration spec did not reproduce the canonical byte stream",
+        ));
+    }
+    let decoded_spec = registration_schema.spec();
+    let registration_checkpoint = HostRegistrationCheckpoint::capture(decoded_spec);
+
+    let core = run_full_controller_virtio_blk_checkpoint_core(
+        RequestTransport::ReconstructedHost(registration_checkpoint),
+        CheckpointTransport::VersionedV1,
+    )?;
+    let checkpoint_schema = core
+        .versioned
+        .expect("versioned checkpoint transport always returns schema evidence");
+    let checkpoint = FullControllerVirtioBlkHostRegistrationResult {
+        capture_rip: core.capture_rip,
+        capture_rflags: core.capture_rflags,
+        captured_avail_idx: core.captured_avail_idx,
+        captured_used_idx: core.captured_used_idx,
+        mutation: core.mutation,
+        restored: core.restored,
+        doorbell_gpa: decoded_spec.doorbell_address(),
+        doorbell_length: decoded_spec.doorbell_length(),
+        doorbell_datamatch: decoded_spec.doorbell_datamatch(),
+        gsi: decoded_spec.gsi(),
+        mutation_doorbell_events: core.mutation_phase.doorbell_events,
+        replay_doorbell_events: core.replay_phase.doorbell_events,
+        mutation_irqfd_signals: core.mutation_phase.irqfd_signals,
+        replay_irqfd_signals: core.replay_phase.irqfd_signals,
+        mutation_proof: core.mutation_phase.proof,
+        replay_proof: core.replay_phase.proof,
+        replay_avail_idx: core.replay_avail_idx,
+        replay_used_idx: core.replay_used_idx,
+        backing: core.backing,
+        readback: core.readback,
+        replay_rflags: core.replay_phase.rflags,
+    };
+
+    Ok(VersionedFullControllerVirtioBlkHostRegistrationResult {
+        checkpoint,
+        checkpoint_schema_version: checkpoint_schema.schema_version,
+        checkpoint_encoded_len: checkpoint_schema.encoded_len,
+        registration_schema_version: registration_schema.version(),
+        registration_encoded_len: registration_bytes.len(),
+        registration_canonical_roundtrip: true,
     })
 }
 
