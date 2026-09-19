@@ -65,8 +65,8 @@ jobs:
           nested="$(grep -F 'checkpoint transaction nested: checkpoint_version=1 registration_version=1 pages=1 msrs=' <<<"$output")"
           msrs="$(sed -E 's/.*msrs=([0-9]+).*/\1/' <<<"$nested")"
           [[ "$msrs" =~ ^[0-9]+$ ]]
-          (( msrs > 0 ))
-          grep -F 'bar=0x10000000 backing_bytes=512' <<<"$nested"
+          (( msrs == 0 ))
+          grep -F 'bar=0x10000000 backing_bytes=2048' <<<"$nested"
 
           grep -F 'checkpoint transaction page: 0x18000' <<<"$output"
           grep -F 'checkpoint transaction descriptor: doorbell=0x10000100 len=2 datamatch=0x0 gsi=0' <<<"$output"
