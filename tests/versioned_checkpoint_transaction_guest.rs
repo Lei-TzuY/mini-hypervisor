@@ -47,7 +47,10 @@ fn outer_transaction_reconstructs_checkpoint_and_host_acceleration_for_mutation_
                 X86_RFLAGS_INTERRUPT_ENABLE
             );
             assert_eq!(
-                (checkpoint.captured_avail_idx(), checkpoint.captured_used_idx()),
+                (
+                    checkpoint.captured_avail_idx(),
+                    checkpoint.captured_used_idx()
+                ),
                 (0, 0)
             );
 
