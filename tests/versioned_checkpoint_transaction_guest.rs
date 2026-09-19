@@ -1,6 +1,8 @@
 use mini_hypervisor::error::{Error, HostEnvironmentError};
 use mini_hypervisor::interrupt::X86_RFLAGS_INTERRUPT_ENABLE;
-use mini_hypervisor::portio::pci::virtio_blk::{deterministic_sector, VIRTIO_BLK_SECTOR_SIZE};
+use mini_hypervisor::portio::pci::virtio_blk::{
+    deterministic_sector, VIRTIO_BLK_BACKING_SIZE, VIRTIO_BLK_SECTOR_SIZE,
+};
 use mini_hypervisor::state_snapshot::{
     run_versioned_checkpoint_transaction_guest, FULL_CONTROLLER_VIRTIO_BLK_CHECKPOINT_PAGE,
     FULL_CONTROLLER_VIRTIO_BLK_REQUEST_PROOF, VERSIONED_CHECKPOINT_TRANSACTION_VERSION,
@@ -27,9 +29,9 @@ fn outer_transaction_reconstructs_checkpoint_and_host_acceleration_for_mutation_
             assert_eq!(result.registration_encoded_len(), 48);
             assert!(result.checkpoint_encoded_len() > VIRTIO_BLK_SECTOR_SIZE);
             assert_eq!(result.page_count(), 1);
-            assert!(result.msr_count() > 0);
+            assert_eq!(result.msr_count(), 0);
             assert_eq!(result.bar0(), 0x1000_0000);
-            assert_eq!(result.backing_len(), VIRTIO_BLK_SECTOR_SIZE);
+            assert_eq!(result.backing_len(), VIRTIO_BLK_BACKING_SIZE);
             assert!(result.canonical_roundtrip());
 
             let checkpoint = result.checkpoint();
