@@ -3,7 +3,7 @@ use crate::interrupt::{
 };
 use crate::kvm::sys::{
     HostRegistrationCheckpoint, HostRegistrationSpec, ReconstructedHostRegistrations,
-    VersionedHostRegistrationSpecV1, VERSIONED_HOST_REGISTRATION_SPEC_VERSION,
+    VersionedHostRegistrationSpecV1,
 };
 use crate::kvm::KvmBackend;
 use crate::loader::FlatGuestImage;
@@ -511,7 +511,7 @@ pub fn run_versioned_full_controller_virtio_blk_host_registration_reconstruction
         checkpoint,
         checkpoint_schema_version: checkpoint_schema.schema_version,
         checkpoint_encoded_len: checkpoint_schema.encoded_len,
-        registration_schema_version: VERSIONED_HOST_REGISTRATION_SPEC_VERSION,
+        registration_schema_version: registration_schema.version(),
         registration_encoded_len: registration_bytes.len(),
         registration_canonical_roundtrip: true,
     })
