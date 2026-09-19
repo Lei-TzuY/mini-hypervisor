@@ -53,6 +53,8 @@ impl fmt::Display for VersionedHostRegistrationSpecError {
     }
 }
 
+impl std::error::Error for VersionedHostRegistrationSpecError {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct VersionedHostRegistrationSpecV1 {
     spec: HostRegistrationSpec,

@@ -1,0 +1,96 @@
+name: Strict KVM versioned checkpoint transaction
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_schema_v1.rs'
+      - 'src/kvm/sys.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/checkpoint_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_guest.rs'
+      - 'src/bin/versioned-checkpoint-transaction.rs'
+      - 'tests/versioned_checkpoint_transaction_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-checkpoint-transaction.yml'
+  pull_request:
+    paths:
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_schema_v1.rs'
+      - 'src/kvm/sys.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/checkpoint_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_guest.rs'
+      - 'src/bin/versioned-checkpoint-transaction.rs'
+      - 'tests/versioned_checkpoint_transaction_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-checkpoint-transaction.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-versioned-checkpoint-transaction:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build versioned checkpoint transaction proof
+        run: cargo build --quiet --bin versioned-checkpoint-transaction
+      - name: Execute versioned checkpoint transaction proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/versioned-checkpoint-transaction)"
+          printf '%s\n' "$output"
+
+          transaction="$(grep -F 'checkpoint transaction schema: version=1 encoded_bytes=' <<<"$output")"
+          encoded="$(sed -E 's/.*encoded_bytes=([0-9]+).*/\1/' <<<"$transaction")"
+          checkpoint="$(sed -E 's/.*checkpoint_bytes=([0-9]+).*/\1/' <<<"$transaction")"
+          registration="$(sed -E 's/.*registration_bytes=([0-9]+).*/\1/' <<<"$transaction")"
+          [[ "$encoded" =~ ^[0-9]+$ ]]
+          [[ "$checkpoint" =~ ^[0-9]+$ ]]
+          [[ "$registration" =~ ^[0-9]+$ ]]
+          (( checkpoint > 2048 ))
+          (( registration == 48 ))
+          (( encoded == 48 + checkpoint + registration ))
+          grep -F 'canonical=true' <<<"$transaction"
+
+          nested="$(grep -F 'checkpoint transaction nested: checkpoint_version=1 registration_version=1 pages=1 msrs=' <<<"$output")"
+          msrs="$(sed -E 's/.*msrs=([0-9]+).*/\1/' <<<"$nested")"
+          [[ "$msrs" =~ ^[0-9]+$ ]]
+          (( msrs == 0 ))
+          grep -F 'bar=0x10000000 backing_bytes=2048' <<<"$nested"
+
+          grep -F 'checkpoint transaction page: 0x18000' <<<"$output"
+          grep -F 'checkpoint transaction descriptor: doorbell=0x10000100 len=2 datamatch=0x0 gsi=0' <<<"$output"
+          grep -F 'queue=0/0' <<<"$(grep -F 'checkpoint transaction capture:' <<<"$output")"
+          grep -F 'checkpoint transaction mutation exact: page=false vcpu=false master-pic=false slave-pic=false ioapic=false lapic=false device=false' <<<"$output"
+          grep -F 'checkpoint transaction mutation transport: doorbell-events=1 irqfd-signals=1' <<<"$output"
+          grep -F 'checkpoint transaction mutation proof: [78, 73, 65, 82, 68]' <<<"$output"
+          grep -F 'checkpoint transaction restore exact: page=true vcpu=true master-pic=true slave-pic=true ioapic=true lapic=true device=true' <<<"$output"
+          grep -F 'checkpoint transaction replay transport: doorbell-events=1 irqfd-signals=1' <<<"$output"
+          grep -F 'checkpoint transaction replay queue: avail=1 used=1' <<<"$output"
+          grep -F 'checkpoint transaction replay proof: [78, 73, 65, 82, 68]' <<<"$output"
+          grep -F 'checkpoint transaction backing/readback match: true' <<<"$output"
+
+          capture="$(grep -F 'checkpoint transaction capture:' <<<"$output")"
+          capture_rflags_hex="${capture##*rflags=}"
+          capture_rflags_hex="${capture_rflags_hex%% *}"
+          [[ "$capture_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          capture_rflags=$((capture_rflags_hex))
+          (( (capture_rflags & 0x2) == 0x2 ))
+          (( (capture_rflags & 0x200) == 0x200 ))
+
+          replay="$(grep -F 'checkpoint transaction replay rflags:' <<<"$output")"
+          replay_rflags_hex="${replay##*: }"
+          [[ "$replay_rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          replay_rflags=$((replay_rflags_hex))
+          (( (replay_rflags & 0x2) == 0x2 ))
+          (( (replay_rflags & 0x200) == 0x200 ))
