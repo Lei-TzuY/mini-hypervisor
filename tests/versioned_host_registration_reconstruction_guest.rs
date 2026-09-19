@@ -36,7 +36,10 @@ fn versioned_checkpoint_reconstructs_fd_free_host_registrations_for_mutation_and
                 X86_RFLAGS_INTERRUPT_ENABLE
             );
             assert_eq!(
-                (checkpoint.captured_avail_idx(), checkpoint.captured_used_idx()),
+                (
+                    checkpoint.captured_avail_idx(),
+                    checkpoint.captured_used_idx()
+                ),
                 (0, 0)
             );
 
@@ -95,8 +98,8 @@ fn versioned_checkpoint_reconstructs_fd_free_host_registrations_for_mutation_and
                 "skipping versioned host-registration reconstruction assertion: /dev/kvm unavailable"
             );
         }
-        Err(error) => panic!(
-            "versioned host-registration reconstruction failed unexpectedly: {error}"
-        ),
+        Err(error) => {
+            panic!("versioned host-registration reconstruction failed unexpectedly: {error}")
+        }
     }
 }
