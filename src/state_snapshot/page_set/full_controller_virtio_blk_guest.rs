@@ -247,6 +247,7 @@ enum RequestTransport {
 enum CheckpointTransport {
     Direct,
     VersionedV1,
+    VersionedTransactionV1(HostRegistrationSpec),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,6 +259,29 @@ struct VersionedFullControllerVirtioBlkTransportEvidence {
     bar0: u64,
     backing_len: usize,
     canonical_roundtrip: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VersionedCheckpointTransactionEvidence {
+    transaction_version: u16,
+    encoded_len: usize,
+    checkpoint_schema_version: u16,
+    checkpoint_encoded_len: usize,
+    registration_schema_version: u16,
+    registration_encoded_len: usize,
+    page_count: usize,
+    msr_count: usize,
+    bar0: u64,
+    backing_len: usize,
+    canonical_roundtrip: bool,
+    registration_spec: HostRegistrationSpec,
+}
+
+struct PreparedFullControllerVirtioBlkTransport {
+    checkpoint: BoundedFullControllerVirtioBlkCheckpoint,
+    versioned: Option<VersionedFullControllerVirtioBlkTransportEvidence>,
+    transaction: Option<VersionedCheckpointTransactionEvidence>,
+    request_override: Option<RequestTransport>,
 }
 
 #[derive(Debug)]
@@ -284,6 +308,7 @@ struct CoreCheckpointRun {
     backing: Vec<u8>,
     readback: Vec<u8>,
     versioned: Option<VersionedFullControllerVirtioBlkTransportEvidence>,
+    transaction: Option<VersionedCheckpointTransactionEvidence>,
 }
 
 pub fn run_full_controller_virtio_blk_checkpoint_guest(
@@ -447,6 +472,140 @@ impl VersionedFullControllerVirtioBlkHostRegistrationResult {
     pub const fn registration_canonical_roundtrip(&self) -> bool {
         self.registration_canonical_roundtrip
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionedCheckpointTransactionGuestResult {
+    checkpoint: FullControllerVirtioBlkHostRegistrationResult,
+    transaction_version: u16,
+    encoded_len: usize,
+    checkpoint_schema_version: u16,
+    checkpoint_encoded_len: usize,
+    registration_schema_version: u16,
+    registration_encoded_len: usize,
+    page_count: usize,
+    msr_count: usize,
+    bar0: u64,
+    backing_len: usize,
+    canonical_roundtrip: bool,
+}
+
+impl VersionedCheckpointTransactionGuestResult {
+    #[must_use]
+    pub const fn checkpoint(&self) -> &FullControllerVirtioBlkHostRegistrationResult {
+        &self.checkpoint
+    }
+
+    #[must_use]
+    pub const fn transaction_version(&self) -> u16 {
+        self.transaction_version
+    }
+
+    #[must_use]
+    pub const fn encoded_len(&self) -> usize {
+        self.encoded_len
+    }
+
+    #[must_use]
+    pub const fn checkpoint_schema_version(&self) -> u16 {
+        self.checkpoint_schema_version
+    }
+
+    #[must_use]
+    pub const fn checkpoint_encoded_len(&self) -> usize {
+        self.checkpoint_encoded_len
+    }
+
+    #[must_use]
+    pub const fn registration_schema_version(&self) -> u16 {
+        self.registration_schema_version
+    }
+
+    #[must_use]
+    pub const fn registration_encoded_len(&self) -> usize {
+        self.registration_encoded_len
+    }
+
+    #[must_use]
+    pub const fn page_count(&self) -> usize {
+        self.page_count
+    }
+
+    #[must_use]
+    pub const fn msr_count(&self) -> usize {
+        self.msr_count
+    }
+
+    #[must_use]
+    pub const fn bar0(&self) -> u64 {
+        self.bar0
+    }
+
+    #[must_use]
+    pub const fn backing_len(&self) -> usize {
+        self.backing_len
+    }
+
+    #[must_use]
+    pub const fn canonical_roundtrip(&self) -> bool {
+        self.canonical_roundtrip
+    }
+}
+
+pub fn run_versioned_checkpoint_transaction_guest(
+) -> Result<VersionedCheckpointTransactionGuestResult, Error> {
+    let spec = HostRegistrationSpec::new(
+        RECONSTRUCTED_DOORBELL_GPA,
+        RECONSTRUCTED_DOORBELL_LENGTH,
+        RECONSTRUCTED_DOORBELL_DATAMATCH,
+        RECONSTRUCTED_GSI,
+    )?;
+    let core = run_full_controller_virtio_blk_checkpoint_core(
+        RequestTransport::UserspaceMmio,
+        CheckpointTransport::VersionedTransactionV1(spec),
+    )?;
+    let transaction = core
+        .transaction
+        .expect("versioned checkpoint transaction transport always returns evidence");
+    let decoded_spec = transaction.registration_spec;
+    let checkpoint = FullControllerVirtioBlkHostRegistrationResult {
+        capture_rip: core.capture_rip,
+        capture_rflags: core.capture_rflags,
+        captured_avail_idx: core.captured_avail_idx,
+        captured_used_idx: core.captured_used_idx,
+        mutation: core.mutation,
+        restored: core.restored,
+        doorbell_gpa: decoded_spec.doorbell_address(),
+        doorbell_length: decoded_spec.doorbell_length(),
+        doorbell_datamatch: decoded_spec.doorbell_datamatch(),
+        gsi: decoded_spec.gsi(),
+        mutation_doorbell_events: core.mutation_phase.doorbell_events,
+        replay_doorbell_events: core.replay_phase.doorbell_events,
+        mutation_irqfd_signals: core.mutation_phase.irqfd_signals,
+        replay_irqfd_signals: core.replay_phase.irqfd_signals,
+        mutation_proof: core.mutation_phase.proof,
+        replay_proof: core.replay_phase.proof,
+        replay_avail_idx: core.replay_avail_idx,
+        replay_used_idx: core.replay_used_idx,
+        backing: core.backing,
+        readback: core.readback,
+        replay_rflags: core.replay_phase.rflags,
+    };
+
+    Ok(VersionedCheckpointTransactionGuestResult {
+        checkpoint,
+        transaction_version: transaction.transaction_version,
+        encoded_len: transaction.encoded_len,
+        checkpoint_schema_version: transaction.checkpoint_schema_version,
+        checkpoint_encoded_len: transaction.checkpoint_encoded_len,
+        registration_schema_version: transaction.registration_schema_version,
+        registration_encoded_len: transaction.registration_encoded_len,
+        page_count: transaction.page_count,
+        msr_count: transaction.msr_count,
+        bar0: transaction.bar0,
+        backing_len: transaction.backing_len,
+        canonical_roundtrip: transaction.canonical_roundtrip,
+    })
 }
 
 pub fn run_versioned_full_controller_virtio_blk_host_registration_reconstruction_guest(
@@ -625,11 +784,15 @@ fn run_full_controller_virtio_blk_checkpoint_core(
     }
     let captured_avail_idx = captured_checkpoint.device().checkpoint_last_avail_idx();
     let captured_used_idx = captured_checkpoint.device().checkpoint_last_used_idx();
-    let (checkpoint, versioned) = prepare_full_controller_virtio_blk_checkpoint_transport(
+    let prepared = prepare_full_controller_virtio_blk_checkpoint_transport(
         captured_checkpoint,
         &backend,
         checkpoint_transport,
     )?;
+    let checkpoint = prepared.checkpoint;
+    let versioned = prepared.versioned;
+    let transaction = prepared.transaction;
+    let transport = prepared.request_override.unwrap_or(transport);
     if checkpoint.device().checkpoint_last_avail_idx() != 0
         || checkpoint.device().checkpoint_last_used_idx() != 0
         || !checkpoint.device().checkpoint_quiescent()
@@ -723,6 +886,7 @@ fn run_full_controller_virtio_blk_checkpoint_core(
         backing,
         readback,
         versioned,
+        transaction,
     })
 }
 
@@ -730,15 +894,14 @@ fn prepare_full_controller_virtio_blk_checkpoint_transport(
     checkpoint: BoundedFullControllerVirtioBlkCheckpoint,
     backend: &KvmBackend,
     transport: CheckpointTransport,
-) -> Result<
-    (
-        BoundedFullControllerVirtioBlkCheckpoint,
-        Option<VersionedFullControllerVirtioBlkTransportEvidence>,
-    ),
-    Error,
-> {
+) -> Result<PreparedFullControllerVirtioBlkTransport, Error> {
     match transport {
-        CheckpointTransport::Direct => Ok((checkpoint, None)),
+        CheckpointTransport::Direct => Ok(PreparedFullControllerVirtioBlkTransport {
+            checkpoint,
+            versioned: None,
+            transaction: None,
+            request_override: None,
+        }),
         CheckpointTransport::VersionedV1 => {
             let schema = VersionedFullControllerVirtioBlkCheckpointV1::from_checkpoint(&checkpoint)
                 .map_err(|error| {
@@ -796,7 +959,91 @@ fn prepare_full_controller_virtio_blk_checkpoint_transport(
                         error,
                     )
                 })?;
-            Ok((checkpoint, Some(evidence)))
+            Ok(PreparedFullControllerVirtioBlkTransport {
+                checkpoint,
+                versioned: Some(evidence),
+                transaction: None,
+                request_override: None,
+            })
+        }
+        CheckpointTransport::VersionedTransactionV1(spec) => {
+            let schema = VersionedCheckpointTransactionV1::from_checkpoint_and_spec(
+                &checkpoint,
+                spec,
+            )
+            .map_err(|error| {
+                versioned_full_controller_virtio_blk_error(
+                    "versioned checkpoint transaction capture",
+                    error,
+                )
+            })?;
+            let encoded = schema.encode().map_err(|error| {
+                versioned_full_controller_virtio_blk_error(
+                    "versioned checkpoint transaction encode",
+                    error,
+                )
+            })?;
+            let encoded_len = encoded.len();
+
+            // The transaction proof owns one byte stream. Discard both original semantic inputs
+            // before decoding so mutation/replay can only use state reconstructed from the envelope.
+            drop(schema);
+            drop(checkpoint);
+
+            let decoded = VersionedCheckpointTransactionV1::decode(&encoded).map_err(|error| {
+                versioned_full_controller_virtio_blk_error(
+                    "versioned checkpoint transaction decode",
+                    error,
+                )
+            })?;
+            let canonical = decoded.encode().map_err(|error| {
+                versioned_full_controller_virtio_blk_error(
+                    "versioned checkpoint transaction canonical re-encode",
+                    error,
+                )
+            })?;
+            if canonical != encoded {
+                return Err(checkpoint_error(
+                    "decoded checkpoint transaction did not reproduce the canonical byte stream",
+                ));
+            }
+            let checkpoint_encoded_len = decoded.checkpoint_encoded_len().map_err(|error| {
+                versioned_full_controller_virtio_blk_error(
+                    "versioned checkpoint transaction nested checkpoint encode",
+                    error,
+                )
+            })?;
+            let registration_encoded_len = decoded.registration_encoded_len();
+            let evidence = VersionedCheckpointTransactionEvidence {
+                transaction_version: decoded.version(),
+                encoded_len,
+                checkpoint_schema_version: decoded.checkpoint_version(),
+                checkpoint_encoded_len,
+                registration_schema_version: decoded.registration_version(),
+                registration_encoded_len,
+                page_count: decoded.checkpoint_page_count(),
+                msr_count: decoded.checkpoint_msr_count(),
+                bar0: decoded.checkpoint_bar0(),
+                backing_len: decoded.checkpoint_backing_len(),
+                canonical_roundtrip: true,
+                registration_spec: decoded.registration_spec(),
+            };
+            let (checkpoint, decoded_spec) = decoded
+                .materialize(backend.host_msr_indices())
+                .map_err(|error| {
+                    versioned_full_controller_virtio_blk_error(
+                        "versioned checkpoint transaction materialize",
+                        error,
+                    )
+                })?;
+            Ok(PreparedFullControllerVirtioBlkTransport {
+                checkpoint,
+                versioned: None,
+                transaction: Some(evidence),
+                request_override: Some(RequestTransport::ReconstructedHost(
+                    HostRegistrationCheckpoint::capture(decoded_spec),
+                )),
+            })
         }
     }
 }
