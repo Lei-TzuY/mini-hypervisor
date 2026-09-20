@@ -220,13 +220,10 @@ fn eventfd_pending(eventfd: &EventFd) -> io::Result<bool> {
         }
         let terminal = libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
         if pollfd.revents & terminal != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "eventfd checkpoint-quiescence poll returned terminal revents {:#x}",
-                    pollfd.revents
-                ),
-            ));
+            return Err(io::Error::other(format!(
+                "eventfd checkpoint-quiescence poll returned terminal revents {:#x}",
+                pollfd.revents
+            )));
         }
         return Ok(pollfd.revents & libc::POLLIN != 0);
     }
