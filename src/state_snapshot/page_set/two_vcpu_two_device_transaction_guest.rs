@@ -935,11 +935,11 @@ fn two_vcpu_two_device_require_full_mismatch(
     Ok(())
 }
 
-fn two_vcpu_two_device_cleanup_error(
+fn two_vcpu_two_device_cleanup_error<T>(
     registrations: ReconstructedHostRegistrationPair,
     vm: &crate::kvm::Vm,
     primary: Error,
-) -> Result<TwoVcpuTwoDeviceTransactionGuestResult, Error> {
+) -> Result<T, Error> {
     match registrations.deassign(vm) {
         Ok(()) => Err(primary),
         Err(cleanup_error) => Err(page_set_error(
