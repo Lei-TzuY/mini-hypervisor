@@ -219,7 +219,24 @@ impl TwoVcpuTwoDeviceCheckpointTransaction {
                 )),
             };
         }
-        Ok((restored, registrations))
+
+        let post_reconstruction = self.checkpoint.verify(first, second, vm, mmio)?;
+        if !post_reconstruction.is_exact_match() {
+            let cleanup = registrations.deassign(vm);
+            return match cleanup {
+                Ok(()) => Err(page_set_error(
+                    "two-vCPU two-device post-registration verification",
+                    "reconstructing the host-registration pair changed restored checkpoint state",
+                )),
+                Err(cleanup_error) => Err(page_set_error(
+                    "two-vCPU two-device post-registration cleanup",
+                    format!(
+                        "registration reconstruction changed restored state; cleanup also failed: {cleanup_error}"
+                    ),
+                )),
+            };
+        }
+        Ok((post_reconstruction, registrations))
     }
 }
 
@@ -234,7 +251,7 @@ fn require_registration_pair_matches_devices(
         return Err(page_set_error(
             "two-vCPU two-device transaction registration binding",
             format!(
-                "registration doorbells {observed:#x?} do not match device notify addresses {expected:#x?}"
+                "registration doorbells {observed:?} do not match device notify addresses {expected:?}"
             ),
         ));
     }
