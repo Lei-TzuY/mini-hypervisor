@@ -1,8 +1,8 @@
 use mini_hypervisor::error::{Error, HostEnvironmentError};
 use mini_hypervisor::state_snapshot::{
-    run_restored_multi_producer_data_plane_replay_guest,
-    RESTORED_MULTI_PRODUCER_FIRST_PROOF, RESTORED_MULTI_PRODUCER_SECOND_PROOF,
-    TRANSACTION_COUPLED_FIRST_PAGE, TRANSACTION_COUPLED_SECOND_PAGE,
+    run_restored_multi_producer_data_plane_replay_guest, RESTORED_MULTI_PRODUCER_FIRST_PROOF,
+    RESTORED_MULTI_PRODUCER_SECOND_PROOF, TRANSACTION_COUPLED_FIRST_PAGE,
+    TRANSACTION_COUPLED_SECOND_PAGE,
 };
 
 #[test]
@@ -13,10 +13,7 @@ fn restored_versioned_transaction_keeps_each_vcpu_bound_to_its_own_mutable_devic
             assert_eq!(result.page_count(), 5);
             assert!(result.canonical_roundtrip());
             assert_eq!(result.bars(), [0x1000_0000, 0x1000_1000]);
-            assert_eq!(
-                result.ioapic_entries(),
-                [0x50, 0x0100_0000_0000_0051]
-            );
+            assert_eq!(result.ioapic_entries(), [0x50, 0x0100_0000_0000_0051]);
             assert_eq!(result.capture_pending(), [false, false]);
             assert_eq!(result.reconstructed_pending(), [false, false]);
             assert!(!result.mutation().is_exact_match());
