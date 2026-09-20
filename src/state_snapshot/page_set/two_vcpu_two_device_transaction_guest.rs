@@ -14,7 +14,7 @@ use crate::state_snapshot::{
     TWO_VCPU_CHECKPOINT_SECOND_MARKER, TWO_VCPU_CHECKPOINT_SECOND_PROOF,
     TWO_VCPU_CHECKPOINT_SECOND_STACK, TWO_VCPU_CHECKPOINT_SHARED_MARKER,
 };
-use crate::vcpu::{PortIoDirection, Vcpu, VcpuExit, VcpuId};
+use crate::vcpu::{PortIoDirection, Vcpu, VcpuExit};
 
 const FIRST_STATUS: u8 = 0x01;
 const SECOND_STATUS: u8 = 0x03;
