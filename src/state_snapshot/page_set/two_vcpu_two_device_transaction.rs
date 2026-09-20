@@ -2,7 +2,7 @@ use crate::kvm::sys::{
     HostRegistrationPairCheckpoint, HostRegistrationSpecPair, ReconstructedHostRegistrationPair,
 };
 use crate::mmio::MmioBus;
-use crate::portio::pci::virtio_blk::{VirtioBlkDevice, VIRTIO_BLK_BAR_SIZE};
+use crate::portio::pci::virtio_blk::VirtioBlkDevice;
 use crate::state_snapshot::{
     BoundedTwoVcpuFullControllerCheckpoint, BoundedTwoVcpuFullControllerCheckpointComparison,
 };
@@ -310,6 +310,7 @@ mod two_vcpu_two_device_transaction_tests {
         default_two_host_registration_pair, HostRegistrationSpec, TWO_HOST_REGISTRATION_FIRST_BAR,
         TWO_HOST_REGISTRATION_SECOND_BAR,
     };
+    use crate::portio::pci::virtio_blk::VIRTIO_BLK_BAR_SIZE;
 
     #[test]
     fn default_registration_pair_is_bound_to_the_two_device_bars() {
