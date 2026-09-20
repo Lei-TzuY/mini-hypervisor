@@ -371,6 +371,43 @@ mod tests {
     }
 
     #[test]
+    fn backing_open_failure_does_not_publish_queue_completion() {
+        let path = temporary_backing_path();
+        let payload = deterministic_file_payload();
+        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), PROOF_MEMORY_SIZE).unwrap();
+        let mut device = VirtioBlkDevice::create_file_backed(PROOF_BAR, &path).unwrap();
+        prepare_ready_device(&mut device);
+        prepare_request(
+            &mut memory,
+            &mut device,
+            VIRTIO_BLK_T_OUT,
+            VIRTQ_DESC_F_NEXT,
+            1,
+            &payload,
+        )
+        .unwrap();
+
+        fs::remove_file(&path).unwrap();
+        let error = device.process_notified_queue_atomic(&mut memory).unwrap_err();
+        assert!(matches!(error, VirtioBlkProcessError::Backing(_)));
+        assert_eq!(device.last_avail_idx, 0);
+        assert_eq!(device.last_used_idx, 0);
+        assert_eq!(device.isr_status, 0);
+        assert_ne!(device.sector0(), &payload);
+
+        let mut status = [0_u8; 1];
+        memory
+            .read(GuestPhysAddr::new(PROOF_STATUS), &mut status)
+            .unwrap();
+        assert_eq!(status, [0xff]);
+        let mut used_idx = [0_u8; 2];
+        memory
+            .read(GuestPhysAddr::new(PROOF_USED + 2), &mut used_idx)
+            .unwrap();
+        assert_eq!(u16::from_le_bytes(used_idx), 0);
+    }
+
+    #[test]
     fn file_backed_reopen_proof_round_trips_synced_payload() {
         let proof = run_file_backed_reopen_proof().unwrap();
         assert_eq!(proof.persisted_sector(), proof.readback());
