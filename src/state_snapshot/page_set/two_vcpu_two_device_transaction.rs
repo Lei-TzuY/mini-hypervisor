@@ -1,6 +1,5 @@
 use super::{
-    canonical_two_virtio_blk_bars, capture_required_device, page_set_error,
-    verify_required_device,
+    canonical_two_virtio_blk_bars, capture_required_device, page_set_error, verify_required_device,
 };
 use crate::error::Error;
 use crate::kvm::msr::GuestMsrAccessPolicy;
@@ -34,8 +33,13 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
         let bars = canonical_two_virtio_blk_bars(bars)?;
         let first_device = capture_required_device(mmio, bars[0], "first two-vCPU transaction")?;
         let second_device = capture_required_device(mmio, bars[1], "second two-vCPU transaction")?;
-        let controller =
-            BoundedTwoVcpuFullControllerCheckpoint::capture(first, second, vm, msr_policy, page_addresses)?;
+        let controller = BoundedTwoVcpuFullControllerCheckpoint::capture(
+            first,
+            second,
+            vm,
+            msr_policy,
+            page_addresses,
+        )?;
         Ok(Self {
             controller,
             devices: [(bars[0], first_device), (bars[1], second_device)],
@@ -86,11 +90,13 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
             verify_required_device(mmio, self.devices[0].0, &self.devices[0].1)?,
             verify_required_device(mmio, self.devices[1].0, &self.devices[1].1)?,
         ];
-        Ok(BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison {
-            controller,
-            bars: self.device_bars(),
-            device_exact,
-        })
+        Ok(
+            BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison {
+                controller,
+                bars: self.device_bars(),
+                device_exact,
+            },
+        )
     }
 
     pub fn restore_and_verify(
@@ -186,9 +192,7 @@ impl TwoVcpuTwoDeviceCheckpointTransaction {
     }
 
     #[must_use]
-    pub(crate) const fn checkpoint(
-        &self,
-    ) -> &BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
+    pub(crate) const fn checkpoint(&self) -> &BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
         &self.checkpoint
     }
 
@@ -206,7 +210,9 @@ impl TwoVcpuTwoDeviceCheckpointTransaction {
         ),
         Error,
     > {
-        let restored = self.checkpoint.restore_and_verify(first, second, vm, mmio)?;
+        let restored = self
+            .checkpoint
+            .restore_and_verify(first, second, vm, mmio)?;
         if !restored.is_exact_match() {
             return Err(page_set_error(
                 "two-vCPU two-device transaction restore",
@@ -289,9 +295,10 @@ fn require_registration_pair_matches_devices(
             ),
         ));
     }
-    if specs.iter().any(|spec| {
-        spec.doorbell_length() != 2 || spec.doorbell_datamatch() != 0
-    }) {
+    if specs
+        .iter()
+        .any(|spec| spec.doorbell_length() != 2 || spec.doorbell_datamatch() != 0)
+    {
         return Err(page_set_error(
             "two-vCPU two-device transaction registration binding",
             "each fixed virtio-blk registration must use a 2-byte datamatch-zero queue notify",
@@ -323,7 +330,10 @@ mod two_vcpu_two_device_transaction_tests {
     fn default_registration_pair_is_bound_to_the_two_device_bars() {
         require_registration_pair_matches_devices(
             default_two_host_registration_pair().unwrap(),
-            [TWO_HOST_REGISTRATION_FIRST_BAR, TWO_HOST_REGISTRATION_SECOND_BAR],
+            [
+                TWO_HOST_REGISTRATION_FIRST_BAR,
+                TWO_HOST_REGISTRATION_SECOND_BAR,
+            ],
         )
         .unwrap();
 
