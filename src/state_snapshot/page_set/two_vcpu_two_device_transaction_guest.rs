@@ -146,8 +146,177 @@ impl TwoVcpuTwoDeviceTransactionGuestResult {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionedTwoVcpuTwoDeviceTransactionGuestResult {
+    transaction: TwoVcpuTwoDeviceTransactionGuestResult,
+    schema_version: u16,
+    checkpoint_version: u16,
+    controller_version: u16,
+    registration_pair_version: u16,
+    registration_versions: [u16; 2],
+    encoded_len: usize,
+    checkpoint_encoded_len: usize,
+    registration_pair_encoded_len: usize,
+    vcpu_ids: [crate::vcpu::VcpuId; 2],
+    mp_states: [u32; 2],
+    page_count: usize,
+    msr_counts: [usize; 2],
+    bars: [u64; 2],
+    backing_len_each: usize,
+    canonical_roundtrip: bool,
+}
+
+impl VersionedTwoVcpuTwoDeviceTransactionGuestResult {
+    #[must_use]
+    pub const fn transaction(&self) -> &TwoVcpuTwoDeviceTransactionGuestResult {
+        &self.transaction
+    }
+
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    #[must_use]
+    pub const fn checkpoint_version(&self) -> u16 {
+        self.checkpoint_version
+    }
+
+    #[must_use]
+    pub const fn controller_version(&self) -> u16 {
+        self.controller_version
+    }
+
+    #[must_use]
+    pub const fn registration_pair_version(&self) -> u16 {
+        self.registration_pair_version
+    }
+
+    #[must_use]
+    pub const fn registration_versions(&self) -> [u16; 2] {
+        self.registration_versions
+    }
+
+    #[must_use]
+    pub const fn encoded_len(&self) -> usize {
+        self.encoded_len
+    }
+
+    #[must_use]
+    pub const fn checkpoint_encoded_len(&self) -> usize {
+        self.checkpoint_encoded_len
+    }
+
+    #[must_use]
+    pub const fn registration_pair_encoded_len(&self) -> usize {
+        self.registration_pair_encoded_len
+    }
+
+    #[must_use]
+    pub const fn vcpu_ids(&self) -> [crate::vcpu::VcpuId; 2] {
+        self.vcpu_ids
+    }
+
+    #[must_use]
+    pub const fn mp_states(&self) -> [u32; 2] {
+        self.mp_states
+    }
+
+    #[must_use]
+    pub const fn page_count(&self) -> usize {
+        self.page_count
+    }
+
+    #[must_use]
+    pub const fn msr_counts(&self) -> [usize; 2] {
+        self.msr_counts
+    }
+
+    #[must_use]
+    pub const fn bars(&self) -> [u64; 2] {
+        self.bars
+    }
+
+    #[must_use]
+    pub const fn backing_len_each(&self) -> usize {
+        self.backing_len_each
+    }
+
+    #[must_use]
+    pub const fn canonical_roundtrip(&self) -> bool {
+        self.canonical_roundtrip
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TwoVcpuTwoDeviceTransactionTransport {
+    Direct,
+    VersionedV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VersionedTwoVcpuTwoDeviceTransportEvidence {
+    schema_version: u16,
+    checkpoint_version: u16,
+    controller_version: u16,
+    registration_pair_version: u16,
+    registration_versions: [u16; 2],
+    encoded_len: usize,
+    checkpoint_encoded_len: usize,
+    registration_pair_encoded_len: usize,
+    vcpu_ids: [crate::vcpu::VcpuId; 2],
+    mp_states: [u32; 2],
+    page_count: usize,
+    msr_counts: [usize; 2],
+    bars: [u64; 2],
+    backing_len_each: usize,
+    canonical_roundtrip: bool,
+}
+
+struct TwoVcpuTwoDeviceTransactionExecution {
+    result: TwoVcpuTwoDeviceTransactionGuestResult,
+    versioned: Option<VersionedTwoVcpuTwoDeviceTransportEvidence>,
+}
+
 pub fn run_two_vcpu_two_device_transaction_guest(
 ) -> Result<TwoVcpuTwoDeviceTransactionGuestResult, Error> {
+    Ok(run_two_vcpu_two_device_transaction_guest_with_transport(
+        TwoVcpuTwoDeviceTransactionTransport::Direct,
+    )?
+    .result)
+}
+
+pub fn run_versioned_two_vcpu_two_device_transaction_guest(
+) -> Result<VersionedTwoVcpuTwoDeviceTransactionGuestResult, Error> {
+    let execution = run_two_vcpu_two_device_transaction_guest_with_transport(
+        TwoVcpuTwoDeviceTransactionTransport::VersionedV1,
+    )?;
+    let versioned = execution
+        .versioned
+        .expect("versioned two-vCPU two-device transport always returns evidence");
+    Ok(VersionedTwoVcpuTwoDeviceTransactionGuestResult {
+        transaction: execution.result,
+        schema_version: versioned.schema_version,
+        checkpoint_version: versioned.checkpoint_version,
+        controller_version: versioned.controller_version,
+        registration_pair_version: versioned.registration_pair_version,
+        registration_versions: versioned.registration_versions,
+        encoded_len: versioned.encoded_len,
+        checkpoint_encoded_len: versioned.checkpoint_encoded_len,
+        registration_pair_encoded_len: versioned.registration_pair_encoded_len,
+        vcpu_ids: versioned.vcpu_ids,
+        mp_states: versioned.mp_states,
+        page_count: versioned.page_count,
+        msr_counts: versioned.msr_counts,
+        bars: versioned.bars,
+        backing_len_each: versioned.backing_len_each,
+        canonical_roundtrip: versioned.canonical_roundtrip,
+    })
+}
+
+fn run_two_vcpu_two_device_transaction_guest_with_transport(
+    transport: TwoVcpuTwoDeviceTransactionTransport,
+) -> Result<TwoVcpuTwoDeviceTransactionExecution, Error> {
     let first_image = FlatGuestImage::new(
         TWO_VCPU_CHECKPOINT_FIRST_ENTRY,
         TWO_VCPU_CHECKPOINT_FIRST_ENTRY,
@@ -274,6 +443,9 @@ pub fn run_two_vcpu_two_device_transaction_guest(
             ))
         }
     };
+
+    let (transaction, versioned) =
+        prepare_two_vcpu_two_device_transaction_transport(transaction, pair, &backend, transport)?;
 
     let bars = transaction.checkpoint().device_bars();
     let captured_statuses = [
@@ -422,21 +594,144 @@ pub fn run_two_vcpu_two_device_transaction_guest(
             }
         };
 
-    Ok(TwoVcpuTwoDeviceTransactionGuestResult {
-        mutation,
-        restored,
-        bars,
-        captured_statuses,
-        restored_statuses,
-        capture_pending,
-        reconstructed_pending,
-        first_capture_rip,
-        second_capture_rip,
-        first_completion_rip,
-        second_completion_rip,
-        first_proof,
-        second_proof,
+    Ok(TwoVcpuTwoDeviceTransactionExecution {
+        result: TwoVcpuTwoDeviceTransactionGuestResult {
+            mutation,
+            restored,
+            bars,
+            captured_statuses,
+            restored_statuses,
+            capture_pending,
+            reconstructed_pending,
+            first_capture_rip,
+            second_capture_rip,
+            first_completion_rip,
+            second_completion_rip,
+            first_proof,
+            second_proof,
+        },
+        versioned,
     })
+}
+
+fn prepare_two_vcpu_two_device_transaction_transport(
+    transaction: TwoVcpuTwoDeviceCheckpointTransaction,
+    pair: crate::kvm::sys::HostRegistrationSpecPair,
+    backend: &crate::kvm::KvmBackend,
+    transport: TwoVcpuTwoDeviceTransactionTransport,
+) -> Result<
+    (
+        TwoVcpuTwoDeviceCheckpointTransaction,
+        Option<VersionedTwoVcpuTwoDeviceTransportEvidence>,
+    ),
+    Error,
+> {
+    match transport {
+        TwoVcpuTwoDeviceTransactionTransport::Direct => Ok((transaction, None)),
+        TwoVcpuTwoDeviceTransactionTransport::VersionedV1 => {
+            let schema = VersionedTwoVcpuTwoDeviceTransactionV1::from_checkpoint_and_pair(
+                transaction.checkpoint(),
+                pair,
+            )
+            .map_err(|error| {
+                page_set_error(
+                    "encode versioned two-vCPU two-device transaction",
+                    error.to_string(),
+                )
+            })?;
+            let checkpoint_encoded_len = schema.checkpoint_encoded_len().map_err(|error| {
+                page_set_error(
+                    "measure versioned two-vCPU two-device checkpoint",
+                    error.to_string(),
+                )
+            })?;
+            let evidence = VersionedTwoVcpuTwoDeviceTransportEvidence {
+                schema_version: schema.version(),
+                checkpoint_version: schema.checkpoint_version(),
+                controller_version: schema.controller_version(),
+                registration_pair_version: schema.registration_pair_version(),
+                registration_versions: schema.registration_versions(),
+                encoded_len: 0,
+                checkpoint_encoded_len,
+                registration_pair_encoded_len: schema.registration_pair_encoded_len(),
+                vcpu_ids: schema.vcpu_ids(),
+                mp_states: schema.mp_states(),
+                page_count: schema.page_count(),
+                msr_counts: schema.msr_counts(),
+                bars: schema.bars(),
+                backing_len_each: schema.backing_len_each(),
+                canonical_roundtrip: false,
+            };
+            let encoded = schema.encode().map_err(|error| {
+                page_set_error(
+                    "encode versioned two-vCPU two-device transaction",
+                    error.to_string(),
+                )
+            })?;
+            let encoded_len = encoded.len();
+
+            // Nothing below this boundary is allowed to reuse encoder-side semantic ownership.
+            drop(transaction);
+
+            let decoded = VersionedTwoVcpuTwoDeviceTransactionV1::decode(&encoded).map_err(
+                |error| {
+                    page_set_error(
+                        "decode versioned two-vCPU two-device transaction",
+                        error.to_string(),
+                    )
+                },
+            )?;
+            let canonical = decoded.encode().map_err(|error| {
+                page_set_error(
+                    "re-encode versioned two-vCPU two-device transaction",
+                    error.to_string(),
+                )
+            })?;
+            if canonical != encoded {
+                return Err(page_set_error(
+                    "canonical two-vCPU two-device transaction roundtrip",
+                    "decoded transaction did not reproduce the canonical byte stream",
+                ));
+            }
+            if decoded.version() != evidence.schema_version
+                || decoded.checkpoint_version() != evidence.checkpoint_version
+                || decoded.controller_version() != evidence.controller_version
+                || decoded.registration_pair_version() != evidence.registration_pair_version
+                || decoded.registration_versions() != evidence.registration_versions
+                || decoded.vcpu_ids() != evidence.vcpu_ids
+                || decoded.mp_states() != evidence.mp_states
+                || decoded.page_count() != evidence.page_count
+                || decoded.msr_counts() != evidence.msr_counts
+                || decoded.bars() != evidence.bars
+                || decoded.backing_len_each() != evidence.backing_len_each
+            {
+                return Err(page_set_error(
+                    "versioned two-vCPU two-device transaction metadata",
+                    "decoded transaction metadata changed across the wire boundary",
+                ));
+            }
+            let (checkpoint, materialized_pair) = decoded
+                .materialize(backend.host_msr_indices())
+                .map_err(|error| {
+                    page_set_error(
+                        "materialize versioned two-vCPU two-device transaction",
+                        error.to_string(),
+                    )
+                })?;
+            let transaction = TwoVcpuTwoDeviceCheckpointTransaction {
+                checkpoint,
+                registrations: HostRegistrationPairCheckpoint::capture(materialized_pair),
+            };
+            Ok((
+                transaction,
+                Some(VersionedTwoVcpuTwoDeviceTransportEvidence {
+                    encoded_len,
+                    canonical_roundtrip: true,
+                    ..evidence
+                }),
+            ))
+        }
+    }
 }
 
 fn two_vcpu_two_device_prepared_device(bar: u64, status: u8) -> Result<VirtioBlkDevice, Error> {
