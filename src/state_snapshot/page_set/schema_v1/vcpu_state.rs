@@ -4,7 +4,7 @@ const VERSIONED_VCPU_STATE_ARCH_X86_64: u16 = 1;
 const VCPU_STATE_HEADER_LEN: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum VersionedVcpuStateSnapshotError {
+pub enum VersionedVcpuStateSnapshotError {
     InvalidMagic,
     UnsupportedVersion(u16),
     UnsupportedArchitecture(u16),
@@ -96,11 +96,6 @@ impl VersionedVcpuStateSnapshotV1 {
             special_registers: *snapshot.special_registers(),
             msrs,
         })
-    }
-
-    #[must_use]
-    pub(crate) const fn version(&self) -> u16 {
-        VERSIONED_VCPU_STATE_VERSION
     }
 
     #[must_use]
@@ -291,7 +286,7 @@ mod vcpu_state_schema_tests {
 
         let decoded = VersionedVcpuStateSnapshotV1::decode(&encoded).unwrap();
         assert_eq!(decoded.encode().unwrap(), encoded);
-        assert_eq!(decoded.version(), 1);
+        assert_eq!(VERSIONED_VCPU_STATE_VERSION, 1);
         assert_eq!(decoded.msr_count(), 0);
 
         let mut bad_magic = encoded.clone();
