@@ -53,10 +53,7 @@ fn main() -> ExitCode {
                 "pending notification doorbells: {:?}",
                 result.doorbell_events()
             );
-            println!(
-                "pending notification irqfd: {:?}",
-                result.irqfd_signals()
-            );
+            println!("pending notification irqfd: {:?}", result.irqfd_signals());
             println!("pending notification proof: {:?}", result.proof());
             println!(
                 "pending notification capture rips: {:?}",
