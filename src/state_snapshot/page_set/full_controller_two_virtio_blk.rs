@@ -1,3 +1,6 @@
+use super::{
+    BoundedTwoVcpuFullControllerCheckpoint, BoundedTwoVcpuFullControllerCheckpointComparison,
+};
 use crate::kvm::sys::ReconstructedHostRegistrationPair;
 use crate::mmio::MmioBus;
 use crate::portio::pci::virtio_blk::{VirtioBlkDevice, VIRTIO_BLK_BAR_SIZE};
@@ -113,6 +116,155 @@ pub struct BoundedFullControllerTwoVirtioBlkCheckpointComparison {
 impl BoundedFullControllerTwoVirtioBlkCheckpointComparison {
     #[must_use]
     pub const fn controller(&self) -> &BoundedFullControllerCheckpointComparison {
+        &self.controller
+    }
+
+    #[must_use]
+    pub fn device_exact(&self, bar: u64) -> Option<bool> {
+        self.bars
+            .iter()
+            .position(|address| *address == bar)
+            .map(|index| self.device_exact[index])
+    }
+
+    #[must_use]
+    pub const fn all_devices_exact(&self) -> bool {
+        self.device_exact[0] && self.device_exact[1]
+    }
+
+    #[must_use]
+    pub fn is_exact_match(&self) -> bool {
+        self.controller.is_exact_match() && self.all_devices_exact()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
+    controller: BoundedTwoVcpuFullControllerCheckpoint,
+    devices: [(u64, VirtioBlkDevice); 2],
+}
+
+impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
+    pub fn capture(
+        first: &Vcpu,
+        second: &Vcpu,
+        vm: &crate::kvm::Vm,
+        msr_policy: &GuestMsrAccessPolicy,
+        mmio: &MmioBus,
+        bars: [u64; 2],
+        page_addresses: &[GuestPhysAddr],
+    ) -> Result<Self, Error> {
+        let bars = canonical_two_virtio_blk_bars(bars)?;
+        let first_device = capture_required_device(mmio, bars[0], "first")?;
+        let second_device = capture_required_device(mmio, bars[1], "second")?;
+        let controller = BoundedTwoVcpuFullControllerCheckpoint::capture(
+            first,
+            second,
+            vm,
+            msr_policy,
+            page_addresses,
+        )?;
+        Ok(Self {
+            controller,
+            devices: [(bars[0], first_device), (bars[1], second_device)],
+        })
+    }
+
+    pub(crate) fn capture_with_acceleration_quiescence(
+        first: &Vcpu,
+        second: &Vcpu,
+        vm: &crate::kvm::Vm,
+        msr_policy: &GuestMsrAccessPolicy,
+        mmio: &MmioBus,
+        bars: [u64; 2],
+        page_addresses: &[GuestPhysAddr],
+        registrations: &ReconstructedHostRegistrationPair,
+    ) -> Result<Self, Error> {
+        // Both producer vCPUs are already stopped by the caller. Keep host-acceleration
+        // inspection non-consuming so a failed gate cannot silently discard device work.
+        registrations.require_checkpoint_quiescent()?;
+        Self::capture(
+            first,
+            second,
+            vm,
+            msr_policy,
+            mmio,
+            bars,
+            page_addresses,
+        )
+    }
+
+    #[must_use]
+    pub const fn controller(&self) -> &BoundedTwoVcpuFullControllerCheckpoint {
+        &self.controller
+    }
+
+    #[must_use]
+    pub const fn device_bars(&self) -> [u64; 2] {
+        [self.devices[0].0, self.devices[1].0]
+    }
+
+    #[must_use]
+    pub fn device(&self, bar: u64) -> Option<&VirtioBlkDevice> {
+        self.devices
+            .iter()
+            .find(|(address, _)| *address == bar)
+            .map(|(_, device)| device)
+    }
+
+    pub fn verify(
+        &self,
+        first: &Vcpu,
+        second: &Vcpu,
+        vm: &crate::kvm::Vm,
+        mmio: &MmioBus,
+    ) -> Result<BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison, Error> {
+        let controller = self.controller.verify(first, second, vm)?;
+        let device_exact = [
+            verify_required_device(mmio, self.devices[0].0, &self.devices[0].1)?,
+            verify_required_device(mmio, self.devices[1].0, &self.devices[1].1)?,
+        ];
+        Ok(BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison {
+            controller,
+            bars: self.device_bars(),
+            device_exact,
+        })
+    }
+
+    pub fn restore_and_verify(
+        &self,
+        first: &mut Vcpu,
+        second: &mut Vcpu,
+        vm: &mut crate::kvm::Vm,
+        mmio: &mut MmioBus,
+    ) -> Result<BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison, Error> {
+        // Preflight both devices before mutating producer/controller state, then require the
+        // complete two-vCPU controller layer to restore exactly before either device changes.
+        capture_required_device(mmio, self.devices[0].0, "first live preflight")?;
+        capture_required_device(mmio, self.devices[1].0, "second live preflight")?;
+
+        let controller = self.controller.restore_and_verify(first, second, vm)?;
+        require_controller_exact_before_two_devices(controller.is_exact_match())?;
+
+        mmio.restore_two_virtio_blk_checkpoints_atomic([
+            (self.devices[0].0, &self.devices[0].1),
+            (self.devices[1].0, &self.devices[1].1),
+        ])?;
+
+        self.verify(first, second, vm, mmio)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison {
+    controller: BoundedTwoVcpuFullControllerCheckpointComparison,
+    bars: [u64; 2],
+    device_exact: [bool; 2],
+}
+
+impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison {
+    #[must_use]
+    pub const fn controller(&self) -> &BoundedTwoVcpuFullControllerCheckpointComparison {
         &self.controller
     }
 
