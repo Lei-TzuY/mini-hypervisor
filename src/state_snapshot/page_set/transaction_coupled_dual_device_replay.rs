@@ -1072,14 +1072,12 @@ fn coupled_error(detail: impl Into<String>) -> Error {
     })
 }
 
-
 mod write_readback {
     use super::*;
     use crate::portio::pci::virtio_blk::{VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT};
     use crate::portio::virtio_blk_fixture::deterministic_write_readback_sector;
 
-    pub const TRANSACTION_COUPLED_WRITE_READBACK_PROOF: &[u8; 17] =
-        b"W0aMR0aXY1bNZ1bQD";
+    pub const TRANSACTION_COUPLED_WRITE_READBACK_PROOF: &[u8; 17] = b"W0aMR0aXY1bNZ1bQD";
 
     const FIRST_WRITE_NOTIFY: u8 = b'W';
     const FIRST_READ_NOTIFY: u8 = b'R';
@@ -1347,8 +1345,8 @@ mod write_readback {
         require_exact_restore(&restored)?;
         require_restored_zero_zero(&mmio)?;
 
-        let registrations =
-            HostRegistrationPairCheckpoint::capture(registration_pair).reconstruct(&backend, &vm)?;
+        let registrations = HostRegistrationPairCheckpoint::capture(registration_pair)
+            .reconstruct(&backend, &vm)?;
         let replay = run_write_readback_replay(
             &mut vcpu,
             &mut vm,
@@ -1555,7 +1553,7 @@ mod write_readback {
             .guest_memory_mut()
             .ok_or_else(|| coupled_error("write/readback VM lost registered guest memory"))?;
         let completion = mmio
-            .process_virtio_blk_notification(bar, memory)
+            .process_virtio_blk_notification_atomic(bar, memory)
             .map_err(|error| coupled_error(format!("device {index} {kind:?} failed: {error}")))?
             .ok_or_else(|| coupled_error(format!("device {index} BAR disappeared")))?;
 
@@ -1630,10 +1628,7 @@ mod write_readback {
         memory.write(GuestPhysAddr::new(queue.header), &header)?;
         memory.write(GuestPhysAddr::new(queue.data), payload)?;
         memory.write(GuestPhysAddr::new(queue.status), &[0xff])?;
-        memory.write(
-            GuestPhysAddr::new(queue.avail),
-            &[0, 0, 0, 0, 0, 0, 0, 0],
-        )?;
+        memory.write(GuestPhysAddr::new(queue.avail), &[0, 0, 0, 0, 0, 0, 0, 0])?;
         memory.write(
             GuestPhysAddr::new(queue.used),
             &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -1641,9 +1636,7 @@ mod write_readback {
         Ok(())
     }
 
-    fn build_write_readback_program(
-        payloads: &[[u8; VIRTIO_BLK_SECTOR_SIZE]; 2],
-    ) -> GuestProgram {
+    fn build_write_readback_program(payloads: &[[u8; VIRTIO_BLK_SECTOR_SIZE]; 2]) -> GuestProgram {
         let mut code = Vec::new();
         emit_pic_setup(&mut code);
         code.extend_from_slice(&[0xfb, 0x90]);
@@ -1708,8 +1701,7 @@ mod write_readback {
         code.push(0xfa);
         emit_movabs(code, 7, queue.desc);
         code.extend_from_slice(&[0xc7, 0x47, 0x1c]);
-        let descriptor_tail =
-            u32::from(VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE) | (2_u32 << 16);
+        let descriptor_tail = u32::from(VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE) | (2_u32 << 16);
         code.extend_from_slice(&descriptor_tail.to_le_bytes());
         emit_movabs(code, 7, queue.header);
         code.extend_from_slice(&[0xc7, 0x07]);
@@ -1800,15 +1792,17 @@ mod write_readback {
             assert_eq!(&second[..16], b"BLK-WRITE-0001!!");
             assert_eq!(&first[VIRTIO_BLK_SECTOR_SIZE - 8..], b"WRTBACK!");
             assert_eq!(&second[VIRTIO_BLK_SECTOR_SIZE - 8..], b"WRTBK2!!");
-            assert_eq!(TRANSACTION_COUPLED_WRITE_READBACK_PROOF, b"W0aMR0aXY1bNZ1bQD");
+            assert_eq!(
+                TRANSACTION_COUPLED_WRITE_READBACK_PROOF,
+                b"W0aMR0aXY1bNZ1bQD"
+            );
         }
     }
 }
 
 pub use write_readback::{
     run_transaction_coupled_dual_device_write_readback_guest,
-    TransactionCoupledDualDeviceWriteReadbackResult,
-    TRANSACTION_COUPLED_WRITE_READBACK_PROOF,
+    TransactionCoupledDualDeviceWriteReadbackResult, TRANSACTION_COUPLED_WRITE_READBACK_PROOF,
 };
 
 #[cfg(test)]
