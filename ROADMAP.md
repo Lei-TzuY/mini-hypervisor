@@ -4,41 +4,36 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `c871d551fbad5e90f38b4b82601d6f2c98df8d2b` through PR #150 (`Replay two restored devices through reconstructed acceleration`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe usercopy; isolated ring3 address spaces; dirty-page tracking; bounded guest scheduling/wait ownership; bounded page/VCPU/controller/device checkpoints; canonical versioned checkpoint schemas through exactly two quiescent virtio-blk devices; fixed two-registration acceleration ownership; canonical versioned registration-pair ownership; one canonical two-device outer transaction; and transaction-coupled replay on the same restored VM.
+`main` is `bff4fd7ec4032e35e536393190b7f8da88273c60` through PR #151 (`Prove dual-device write/readback after restored acceleration`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe usercopy; isolated ring3 address spaces; dirty-page tracking; bounded guest scheduling/wait ownership; bounded page/VCPU/controller/device checkpoints; canonical versioned checkpoint schemas through exactly two quiescent virtio-blk devices; fixed two-registration acceleration ownership; canonical versioned registration-pair ownership; one canonical two-device outer transaction; transaction-coupled restored acceleration; and independent mutable write/readback continuity for two restored virtio-blk devices.
 
-PR #150 sealed the read-only lifecycle coupling boundary. Its executable path composes the existing two-device checkpoint transaction, discards encoder-side ownership, decodes and materializes the checkpoint plus registration pair from canonical bytes, deliberately corrupts pages/VCPU/PIC/device state, restores exactly, reconstructs fresh ioeventfd/irqfd registrations against that same restored VM, and drives one sector-0 read through each restored virtio-blk queue. Both independent queues advance from `0/0` to `1/1`, both accelerated notifications are consumed by ioeventfd, both completions are delivered by their matching irqfd, and the proof `A0aMB1bND` is observed. Exact merged-main commit `c871d551fbad5e90f38b4b82601d6f2c98df8d2b` completed all 50 push-triggered workflows successfully. Do not farm extra read-only markers, GSI aliases or repeated envelope variants.
+PR #151 sealed the two-device mutable data-plane boundary. On the same exactly restored VM, each reconstructed accelerated device accepts a distinct deterministic sector-0 `T_OUT`, mutates only its own backing, then returns that exact payload through `T_IN`. Both queues advance independently from `0/0` to `2/2`, each device produces exactly two ioeventfd doorbells and two irqfd completions, final backings remain distinct, and the deterministic proof is `W0aMR0aXY1bNZ1bQD`. Exact merged-main commit `bff4fd7ec4032e35e536393190b7f8da88273c60` completed all 51 push-triggered workflows successfully. Do not farm additional sector numbers, payload patterns, or equivalent read/write variants.
 
-## Selected milestone — transaction-coupled dual-device write/readback continuity
+## Selected milestone — acceleration-aware checkpoint quiescence
 
-The next executable boundary is mutable data-plane ownership. The same restored VM must prove that both reconstructed accelerated virtio-blk devices can independently accept a distinct sector-0 write, mutate only their own backing, and then return that exact payload through a subsequent read before completion.
+The next correctness boundary is host acceleration state that exists outside the semantic virtio device. KVM_IOEVENTFD can consume a guest MMIO notify and leave a positive eventfd counter before userspace bridges that notification into `MmioBus`. During that interval the virtio-blk device still reports `notify_pending == false`, so device-only quiescence is insufficient evidence that a checkpoint is safe: the guest queue may already advertise work whose only delivery token lives in an external host fd.
 
-Implementation continues on `milestone/transaction-coupled-dual-device-write-readback` from exact green `main=c871d551fbad5e90f38b4b82601d6f2c98df8d2b`.
+Implementation continues on `milestone/acceleration-aware-checkpoint-quiescence` from exact green `main=bff4fd7ec4032e35e536393190b7f8da88273c60`.
 
 Acceptance contract:
 
-- preserve Rust 1.74 shipped-target MSRV, ordinary CI and every applicable permanent hosted-KVM workflow green on the exact base;
-- reuse the canonical two-device checkpoint transaction and reconstructed registration-pair lifecycle rather than introducing a parallel schema or synthetic device API;
-- prepare exactly two queue-ready, quiescent virtio-blk devices at BARs `0x10000000` and `0x10001000`, with independent queue ownership in checkpoint pages `0x18000` and `0x19000`;
-- capture both queues at exactly `0/0`, serialize the outer transaction, discard encoder-side ownership, decode/re-encode canonically, and materialize only from the byte stream;
-- deliberately corrupt both owned pages, vCPU/PIC state and both device states, prove a real mismatch, then require exact checkpoint restore before acceleration reconstruction;
-- reconstruct the decoded registration pair against the same restored VM;
-- issue one `VIRTIO_BLK_T_OUT` request per restored device using distinct deterministic 512-byte payloads, require descriptor 0 / sector 0 / completion length 1 / status OK, and verify each backing mutates immediately to only its own payload;
-- for each device, rewrite the queue request to `VIRTIO_BLK_T_IN`, overwrite the guest data buffer with a sentinel, submit a second accelerated notification, and require descriptor 0 / sector 0 / completion length 513 / status OK;
-- each accelerated notify must be consumed by KVM_IOEVENTFD without a userspace notify event, queue service must occur against the same restored `MmioBus` and VM guest memory, and completion delivery must use the matching reconstructed irqfd on GSI 0/vector `0x40` and GSI 1/vector `0x41`;
-- after both write/readback pairs, both queues must advance independently from `0/0` to `2/2`, with exactly two doorbell events and two irqfd signals per device;
-- final guest readback and final device backing for each device must equal that device's original distinct write payload, and the two final backings must remain different to reject accidental cross-device aliasing;
-- deterministic evidence must produce proof `W0aMR0aXY1bNZ1bQD` and completion RFLAGS bit 1 plus IF;
-- registration-pair cleanup must run even if replay fails; queue processing, cleanup, restore, ordering, payload or proof failures remain hard failures;
-- add focused unit coverage, an independent KVM integration test, proof binary and permanent hosted-KVM workflow with compilation outside the 30-second execution timeout.
+- preserve Rust 1.74 shipped-target MSRV, ordinary CI and every applicable permanent hosted-KVM workflow;
+- do not serialize raw file descriptors or eventfd kernel state into the checkpoint schema;
+- add a non-consuming readiness probe for reconstructed ioeventfd doorbells; probe failures must fail closed;
+- expose fixed-pair quiescence evidence and reject acceleration-aware checkpoint capture whenever either doorbell is pending;
+- require the guest vCPU to be stopped before the quiescence gate is used, so the probe and subsequent capture have a stable producer boundary;
+- rejection must not consume, clear, service, or acknowledge the pending eventfd count;
+- executable proof must submit exactly one first-device request through KVM_IOEVENTFD, stop after KVM consumed the MMIO notify but before userspace services the eventfd, and observe pending state `[true, false]`;
+- the acceleration-aware two-device checkpoint path must reject that state while the existing semantic device still appears quiescent;
+- immediately after rejection, the same pending state must remain observable and the normal `wait_doorbell` path must still consume exactly count 1;
+- service that preserved request through the real restored-device bridge and atomic virtio-blk queue path, deliver its matching irqfd, and verify the first queue reaches `1/1` while the untouched second queue remains `0/0`;
+- once both eventfds are non-readable and both devices are semantically quiescent, the same acceleration-aware capture path must succeed and record queue ownership `[[1,1],[0,0]]`;
+- deterministic guest/host evidence must produce proof `P0aSD` and completion RFLAGS bit 1 plus IF;
+- add focused unit coverage for the non-consuming eventfd probe, an independent KVM integration test, proof binary, and permanent hosted-KVM workflow.
 
 ## Scope boundary
 
-This milestone is exactly two devices, one vCPU, one sector-0 write and one sector-0 readback per device after restore. It does **not** checkpoint an in-flight write, serialize raw file descriptors, add a third device, add multi-vCPU transaction ownership, claim cross-host/live migration compatibility, add external-storage crash consistency, or make performance/downtime claims.
-
-The intent is to close the ownership gap left by #150: read-only accelerated replay proves transport and interrupt continuity, while distinct write/readback must prove that the restored data plane preserves independent mutable backing ownership across both reconstructed devices.
+This milestone is a **quiescence gate**, not in-flight migration. It does not checkpoint an eventfd counter, raw fd, partially executed virtio request, outstanding irqfd signal, third device, or multi-vCPU producer race. A pending accelerated notification is rejected and preserved for normal servicing; capture is allowed only after host acceleration and semantic device state are both quiescent.
 
 ## Promotion rule
 
-After transaction-coupled dual-device write/readback is integrated and exact merged-`main` ordinary CI plus every applicable permanent hosted-KVM workflow are green, seal this two-device mutable data-plane phase rather than farming repeated sectors or payload variants.
-
-The next architecture frontier should promote whichever real gap remains after this proof: a bounded in-flight queue/checkpoint ownership model if supported by the existing device semantics, coordinated multi-vCPU transaction ownership if queue state is already sealed, or external-storage durability/interoperability only when the repository has a real backend abstraction capable of supporting evidence. Controlled performance/observability work remains later.
+After this gate is integrated and exact merged-`main` CI is green, seal the single-vCPU acceleration/checkpoint ownership boundary. The next architectural frontier should then be coordinated multi-vCPU checkpoint ownership around the same transaction/device surface, because producer quiescence becomes a first-class requirement once more than one vCPU can submit or observe work. Only after that boundary is explicit should the project revisit any bounded in-flight replay token or external-storage durability model.
