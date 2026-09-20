@@ -1,0 +1,85 @@
+name: Strict KVM restored multi-producer data-plane replay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint_schema_v1.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_guest.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/restored_multi_producer_data_plane_replay.rs'
+      - 'src/state_snapshot/page_set/transaction_coupled_dual_device_replay.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/kvm/host_registration_pair_schema_v1.rs'
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/bin/restored-multi-producer-data-plane-replay.rs'
+      - 'tests/restored_multi_producer_data_plane_replay_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/restored-multi-producer-data-plane-replay.yml'
+  pull_request:
+    paths:
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint_schema_v1.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_guest.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/restored_multi_producer_data_plane_replay.rs'
+      - 'src/state_snapshot/page_set/transaction_coupled_dual_device_replay.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/kvm/host_registration_pair_schema_v1.rs'
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/bin/restored-multi-producer-data-plane-replay.rs'
+      - 'tests/restored_multi_producer_data_plane_replay_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/restored-multi-producer-data-plane-replay.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-restored-multi-producer-data-plane-replay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build restored multi-producer replay proof
+        run: cargo build --quiet --bin restored-multi-producer-data-plane-replay
+      - name: Execute restored multi-producer replay proof on KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/restored-multi-producer-data-plane-replay)"
+          printf '%s\n' "$output"
+
+          grep -F 'multi-producer replay transaction: version=1 ' <<<"$output"
+          grep -F 'pages=5 canonical=true' <<<"$output"
+          grep -F 'multi-producer replay bars: [268435456, 268439552]' <<<"$output"
+          grep -F 'multi-producer replay ioapic: [0x50, 0x100000000000051]' <<<"$output"
+          grep -F 'multi-producer replay capture pending: [false, false]' <<<"$output"
+          grep -F 'multi-producer replay reconstructed pending: [false, false]' <<<"$output"
+          grep -F 'multi-producer replay mutation: exact=false queue-pages=[Some(false), Some(false)]' <<<"$output"
+          grep -F 'multi-producer replay restore exact: true' <<<"$output"
+          grep -F 'multi-producer replay queues: [[2, 2], [2, 2]]' <<<"$output"
+          grep -F 'multi-producer replay doorbells: [2, 2]' <<<"$output"
+          grep -F 'multi-producer replay irqfd: [2, 2]' <<<"$output"
+          grep -F 'multi-producer replay payload exact: [true, true]' <<<"$output"
+          grep -F 'multi-producer replay backing distinct: true' <<<"$output"
+          grep -F 'multi-producer replay proofs: [87, 48, 97, 77, 82, 48, 97, 88, 68] / [89, 49, 98, 78, 90, 49, 98, 81, 69]' <<<"$output"
+          grep -F 'multi-producer replay capture rips: [0x1000e, 0x11006]' <<<"$output"
+          grep -F 'multi-producer replay completion rips: [0x1015c, 0x11154]' <<<"$output"
