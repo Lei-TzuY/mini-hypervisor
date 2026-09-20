@@ -23,6 +23,19 @@ impl super::MmioBus {
     }
 
     #[must_use]
+    pub(crate) fn virtio_blk_queue_indices_at(&self, address: u64) -> Option<[u16; 2]> {
+        self.virtio_blk_devices
+            .iter()
+            .find(|device| device.bar0() == address)
+            .map(|device| {
+                [
+                    device.checkpoint_last_avail_idx(),
+                    device.checkpoint_last_used_idx(),
+                ]
+            })
+    }
+
+    #[must_use]
     pub fn virtio_blk_sector_at(&self, address: u64) -> Option<&[u8; VIRTIO_BLK_SECTOR_SIZE]> {
         self.virtio_blk_devices
             .iter()
