@@ -200,8 +200,7 @@ pub fn run_transaction_coupled_dual_device_replay_guest(
         FIRST_HANDLER_MARKER,
         FIRST_ACK_MARKER,
     );
-    let first_handler =
-        FlatGuestImage::new(FIRST_HANDLER, FIRST_HANDLER, &first_handler_bytes)?;
+    let first_handler = FlatGuestImage::new(FIRST_HANDLER, FIRST_HANDLER, &first_handler_bytes)?;
     let second_handler_bytes = build_handler(
         MULTI_DEVICE_SECOND_VIRTUAL_PAGE,
         SECOND_HANDLER_MARKER,
