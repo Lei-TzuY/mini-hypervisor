@@ -112,7 +112,10 @@ impl super::MmioBus {
             return Ok(None);
         };
         let token = VirtioBlkPendingNotificationToken::capture(device).map_err(|error| {
-            virtio_blk_checkpoint_error("capture virtio-blk pending notification", error.to_string())
+            virtio_blk_checkpoint_error(
+                "capture virtio-blk pending notification",
+                error.to_string(),
+            )
         })?;
         Ok(Some((device.clone(), token)))
     }
