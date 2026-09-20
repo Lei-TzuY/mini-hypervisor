@@ -34,11 +34,11 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
         let first_device = capture_required_device(mmio, bars[0], "first two-vCPU transaction")?;
         let second_device = capture_required_device(mmio, bars[1], "second two-vCPU transaction")?;
         let controller = BoundedTwoVcpuFullControllerCheckpoint::capture(
-            first,
-            second,
-            vm,
-            msr_policy,
-            page_addresses,
+            context.first,
+            context.second,
+            context.vm,
+            context.msr_policy,
+            context.page_addresses,
         )?;
         Ok(Self {
             controller,
@@ -47,16 +47,10 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
     }
 
     pub(crate) fn capture_with_pending_completion(
-        first: &Vcpu,
-        second: &Vcpu,
-        vm: &crate::kvm::Vm,
-        msr_policy: &GuestMsrAccessPolicy,
-        mmio: &MmioBus,
-        bars: [u64; 2],
-        page_addresses: &[GuestPhysAddr],
+        context: TwoVcpuTwoDeviceCaptureContext<'_>,
         pending_bar: u64,
     ) -> Result<(Self, VirtioBlkPendingCompletionToken), Error> {
-        let bars = canonical_two_virtio_blk_bars(bars)?;
+        let bars = canonical_two_virtio_blk_bars(context.bars)?;
         if pending_bar != bars[0] && pending_bar != bars[1] {
             return Err(page_set_error(
                 "two-vCPU pending-completion checkpoint binding",
@@ -65,7 +59,8 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
         }
 
         let (first_device, token, second_device) = if pending_bar == bars[0] {
-            let (pending, token) = mmio
+            let (pending, token) = context
+                .mmio
                 .capture_virtio_blk_checkpoint_with_pending_completion_at(bars[0])?
                 .ok_or_else(|| {
                     page_set_error(
@@ -74,18 +69,19 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
                     )
                 })?;
             let other = capture_required_device(
-                mmio,
+                context.mmio,
                 bars[1],
                 "second fully-quiescent two-vCPU transaction",
             )?;
             (pending, token, other)
         } else {
             let other = capture_required_device(
-                mmio,
+                context.mmio,
                 bars[0],
                 "first fully-quiescent two-vCPU transaction",
             )?;
-            let (pending, token) = mmio
+            let (pending, token) = context
+                .mmio
                 .capture_virtio_blk_checkpoint_with_pending_completion_at(bars[1])?
                 .ok_or_else(|| {
                     page_set_error(
@@ -267,6 +263,29 @@ impl TwoVcpuTwoDeviceCheckpointTransaction {
         })
     }
 
+    fn capture_with_pending_completion(
+        context: TwoVcpuTwoDeviceCaptureContext<'_>,
+        pair: HostRegistrationSpecPair,
+        registrations: &ReconstructedHostRegistrationPair,
+        pending_bar: u64,
+    ) -> Result<(Self, VirtioBlkPendingCompletionToken), Error> {
+        let bars = canonical_two_virtio_blk_bars(context.bars)?;
+        require_registration_pair_matches_devices(pair, bars)?;
+        registrations.require_checkpoint_quiescent()?;
+        let (checkpoint, token) =
+            BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint::capture_with_pending_completion(
+                context,
+                pending_bar,
+            )?;
+        Ok((
+            Self {
+                checkpoint,
+                registrations: HostRegistrationPairCheckpoint::capture(pair),
+            },
+            token,
+        ))
+    }
+
     #[must_use]
     const fn checkpoint(&self) -> &BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
         &self.checkpoint
@@ -339,6 +358,97 @@ impl TwoVcpuTwoDeviceCheckpointTransaction {
                 )),
             };
         }
+        Ok((post_reconstruction, registrations))
+    }
+
+    fn restore_and_reconstruct_with_pending_completion(
+        &self,
+        backend: &crate::kvm::KvmBackend,
+        first: &mut Vcpu,
+        second: &mut Vcpu,
+        vm: &mut crate::kvm::Vm,
+        mmio: &mut MmioBus,
+        token: &VirtioBlkPendingCompletionToken,
+    ) -> Result<
+        (
+            BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison,
+            ReconstructedHostRegistrationPair,
+        ),
+        Error,
+    > {
+        let restored = self
+            .checkpoint
+            .restore_and_verify_with_pending_completion(first, second, vm, mmio, token)?;
+        if !restored.is_exact_match() {
+            return Err(page_set_error(
+                "two-vCPU pending-completion transaction restore",
+                "token-aware checkpoint did not verify exactly; host registrations were not reconstructed",
+            ));
+        }
+
+        let registrations = self.registrations.reconstruct(backend, vm)?;
+        if let Err(error) = registrations.require_checkpoint_quiescent() {
+            let cleanup = registrations.deassign(vm);
+            return match cleanup {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(page_set_error(
+                    "two-vCPU pending-completion reconstruction cleanup",
+                    format!(
+                        "reconstructed pair was not quiescent: {error}; cleanup also failed: {cleanup_error}"
+                    ),
+                )),
+            };
+        }
+
+        let post_reconstruction = match self.checkpoint.verify(first, second, vm, mmio) {
+            Ok(comparison) => comparison,
+            Err(error) => {
+                let cleanup = registrations.deassign(vm);
+                return match cleanup {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(page_set_error(
+                        "two-vCPU pending-completion post-registration cleanup",
+                        format!(
+                            "post-registration verification failed: {error}; cleanup also failed: {cleanup_error}"
+                        ),
+                    )),
+                };
+            }
+        };
+        if !post_reconstruction.is_exact_match() {
+            let cleanup = registrations.deassign(vm);
+            return match cleanup {
+                Ok(()) => Err(page_set_error(
+                    "two-vCPU pending-completion post-registration verification",
+                    "reconstructing host registrations changed token-aware restored state",
+                )),
+                Err(cleanup_error) => Err(page_set_error(
+                    "two-vCPU pending-completion post-registration cleanup",
+                    format!(
+                        "registration reconstruction changed restored state; cleanup also failed: {cleanup_error}"
+                    ),
+                )),
+            };
+        }
+
+        token
+            .validate_device(
+                self.checkpoint
+                    .device(token.bar0())
+                    .ok_or_else(|| {
+                        page_set_error(
+                            "two-vCPU pending-completion restored token binding",
+                            format!("token BAR {:#x} disappeared", token.bar0()),
+                        )
+                    })?,
+            )
+            .map_err(|error| {
+                page_set_error(
+                    "two-vCPU pending-completion restored token validation",
+                    error.to_string(),
+                )
+            })?;
+
         Ok((post_reconstruction, registrations))
     }
 }
