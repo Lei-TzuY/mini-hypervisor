@@ -1805,6 +1805,440 @@ pub use write_readback::{
     TransactionCoupledDualDeviceWriteReadbackResult, TRANSACTION_COUPLED_WRITE_READBACK_PROOF,
 };
 
+mod acceleration_checkpoint_quiescence {
+    use super::*;
+
+    pub const ACCELERATION_CHECKPOINT_QUIESCENCE_PROOF: &[u8; 5] = b"P0aSD";
+
+    const PENDING_MARKER: u8 = b'P';
+    const SERVICED_MARKER: u8 = b'S';
+    const QUIESCENCE_EXIT_BUDGET: u32 = 16;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct AccelerationCheckpointQuiescenceResult {
+        rejected_pending: [bool; 2],
+        pending_after_rejection: [bool; 2],
+        preserved_doorbell_count: u64,
+        serviced_queue_indices: [[u16; 2]; 2],
+        captured_queue_indices: [[u16; 2]; 2],
+        proof: Vec<u8>,
+        completion_rflags: u64,
+    }
+
+    impl AccelerationCheckpointQuiescenceResult {
+        #[must_use]
+        pub const fn rejected_pending(&self) -> [bool; 2] {
+            self.rejected_pending
+        }
+
+        #[must_use]
+        pub const fn pending_after_rejection(&self) -> [bool; 2] {
+            self.pending_after_rejection
+        }
+
+        #[must_use]
+        pub const fn preserved_doorbell_count(&self) -> u64 {
+            self.preserved_doorbell_count
+        }
+
+        #[must_use]
+        pub const fn serviced_queue_indices(&self) -> [[u16; 2]; 2] {
+            self.serviced_queue_indices
+        }
+
+        #[must_use]
+        pub const fn captured_queue_indices(&self) -> [[u16; 2]; 2] {
+            self.captured_queue_indices
+        }
+
+        #[must_use]
+        pub fn proof(&self) -> &[u8] {
+            &self.proof
+        }
+
+        #[must_use]
+        pub const fn completion_rflags(&self) -> u64 {
+            self.completion_rflags
+        }
+    }
+
+    pub fn run_acceleration_checkpoint_quiescence_guest(
+    ) -> Result<AccelerationCheckpointQuiescenceResult, Error> {
+        let program = build_quiescence_program();
+        let guest = FlatGuestImage::new(ENTRY, ENTRY, &program.bytes)?;
+        let first_handler_bytes = build_handler(
+            LONG_MODE_MMIO_VIRTUAL_PAGE,
+            FIRST_HANDLER_MARKER,
+            FIRST_ACK_MARKER,
+        );
+        let first_handler =
+            FlatGuestImage::new(FIRST_HANDLER, FIRST_HANDLER, &first_handler_bytes)?;
+
+        let backend = KvmBackend::open()?;
+        let mut vm = backend.create_vm_with_irqchip()?;
+        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE)?;
+        let mmio_layout = LongModeMmioBootLayout::with_device_mappings(
+            memory.region(),
+            guest.entry(),
+            LONG_MODE_MMIO_STACK_POINTER,
+            vec![
+                LongModeMmioPageMapping::new(
+                    LONG_MODE_MMIO_VIRTUAL_PAGE,
+                    crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+                ),
+                LongModeMmioPageMapping::new(
+                    MULTI_DEVICE_SECOND_VIRTUAL_PAGE,
+                    crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+                ),
+            ],
+        )
+        .expect("fixed checkpoint-quiescence MMIO mappings remain valid");
+        let interrupt_layout = LongModeInterruptLayout::with_gates(
+            memory.region(),
+            guest.entry(),
+            LONG_MODE_MMIO_STACK_POINTER,
+            vec![LongModeInterruptGate::new(
+                TWO_HOST_REGISTRATION_FIRST_VECTOR,
+                first_handler.entry(),
+            )],
+        )
+        .expect("fixed checkpoint-quiescence interrupt gate remains valid");
+
+        interrupt_layout.install_tables(&mut memory)?;
+        mmio_layout.install_page_tables(&mut memory)?;
+        guest.load(&mut memory)?;
+        first_handler.load(&mut memory)?;
+        initialize_queue_memory(&mut memory, FIRST_QUEUE)?;
+        initialize_queue_memory(&mut memory, SECOND_QUEUE)?;
+        vm.register_guest_memory(memory)?;
+
+        let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
+        vcpu.initialize_long_mode_interrupts(&interrupt_layout)?;
+        let _ = vcpu.configure_legacy_pic_extint()?;
+        let msr_policy = GuestMsrAccessPolicy::from_host(backend.host_msr_indices(), &[])
+            .expect("empty checkpoint-quiescence MSR policy is valid by construction");
+
+        let mut mmio = MmioBus::empty();
+        mmio.register_virtio_blk_device_at(crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR)
+            .expect("fixed first checkpoint-quiescence BAR remains available");
+        mmio.register_virtio_blk_device_at(crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR)
+            .expect("fixed second checkpoint-quiescence BAR remains available");
+        let first_ready = ready_device(
+            crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+            FIRST_QUEUE,
+        )?;
+        let second_ready = ready_device(
+            crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+            SECOND_QUEUE,
+        )?;
+        mmio.restore_two_virtio_blk_checkpoints_atomic([
+            (
+                crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+                &first_ready,
+            ),
+            (
+                crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+                &second_ready,
+            ),
+        ])?;
+
+        run_to_capture(&mut vcpu, program.capture_rip)?;
+        require_ready_devices(&mmio)?;
+
+        let pair = default_two_host_registration_pair()?;
+        let registrations = HostRegistrationPairCheckpoint::capture(pair).reconstruct(&backend, &vm)?;
+        let execution = run_quiescence_scenario(
+            &mut vcpu,
+            &mut vm,
+            &mut mmio,
+            &msr_policy,
+            &registrations,
+            &program,
+        );
+        let cleanup = registrations.deassign(&vm);
+        match (execution, cleanup) {
+            (Ok(result), Ok(())) => Ok(result),
+            (Err(execution_error), Err(cleanup_error)) => Err(coupled_error(format!(
+                "checkpoint-quiescence proof failed: {execution_error}; cleanup also failed: {cleanup_error}"
+            ))),
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
+    fn run_quiescence_scenario(
+        vcpu: &mut Vcpu,
+        vm: &mut crate::kvm::Vm,
+        mmio: &mut MmioBus,
+        msr_policy: &GuestMsrAccessPolicy,
+        registrations: &ReconstructedHostRegistrationPair,
+        program: &GuestProgram,
+    ) -> Result<AccelerationCheckpointQuiescenceResult, Error> {
+        let mut port_io = PortIoBus::with_debug_port();
+        let _ = run_expected_debug_output(
+            vcpu,
+            &mut port_io,
+            PENDING_MARKER,
+            "accelerated checkpoint pending-doorbell barrier",
+        )?;
+        let _ = single_step_to_quiescence(
+            vcpu,
+            program.pending_rip,
+            "accelerated checkpoint pending-doorbell quiescence",
+        )?;
+
+        if mmio.take_device_event_record().is_some() {
+            return Err(coupled_error(
+                "pending ioeventfd doorbell unexpectedly reached userspace MMIO",
+            ));
+        }
+        let rejected_pending = registrations.pending_doorbells()?;
+        if rejected_pending != [true, false] {
+            return Err(coupled_error(format!(
+                "expected only first ioeventfd doorbell pending before capture, got {rejected_pending:?}"
+            )));
+        }
+
+        if BoundedFullControllerTwoVirtioBlkCheckpoint::capture_with_acceleration_quiescence(
+            vcpu,
+            vm,
+            msr_policy,
+            mmio,
+            [
+                crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+                crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+            ],
+            &[
+                TRANSACTION_COUPLED_SECOND_PAGE,
+                TRANSACTION_COUPLED_FIRST_PAGE,
+            ],
+            registrations,
+        )
+        .is_ok()
+        {
+            return Err(coupled_error(
+                "acceleration-aware checkpoint capture accepted a pending ioeventfd doorbell",
+            ));
+        }
+
+        let pending_after_rejection = registrations.pending_doorbells()?;
+        if pending_after_rejection != rejected_pending {
+            return Err(coupled_error(format!(
+                "checkpoint rejection consumed or changed ioeventfd readiness: before={rejected_pending:?} after={pending_after_rejection:?}"
+            )));
+        }
+
+        let preserved_doorbell_count = registrations.wait_doorbell(0, WAIT_MILLIS)?;
+        if preserved_doorbell_count != 1 {
+            return Err(coupled_error(format!(
+                "pending ioeventfd counter changed across rejected capture: expected 1, got {preserved_doorbell_count}"
+            )));
+        }
+        if registrations.pending_doorbells()? != [false, false] {
+            return Err(coupled_error(
+                "ioeventfd doorbell remained pending after the normal service path consumed it",
+            ));
+        }
+
+        let bar = crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR;
+        if !mmio.apply_virtio_blk_host_notification(bar, 0)? {
+            return Err(coupled_error(
+                "first virtio-blk BAR disappeared while servicing preserved doorbell",
+            ));
+        }
+        let memory = vm
+            .guest_memory_mut()
+            .ok_or_else(|| coupled_error("checkpoint-quiescence VM lost registered guest memory"))?;
+        let completion = mmio
+            .process_virtio_blk_notification_atomic(bar, memory)
+            .map_err(|error| {
+                coupled_error(format!(
+                    "preserved checkpoint-quiescence request failed: {error}"
+                ))
+            })?
+            .ok_or_else(|| coupled_error("first virtio-blk BAR disappeared during queue service"))?;
+        validate_completion(Some(completion), "checkpoint-quiescence first")?;
+        registrations.signal_irq(0)?;
+
+        let (proof, completion_rflags) =
+            run_after_preserved_service(vcpu, mmio, &mut port_io, program.completion_rip)?;
+        let serviced_queue_indices = [
+            queue_indices(mmio, crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR)?,
+            queue_indices(mmio, crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR)?,
+        ];
+        if serviced_queue_indices != [[1, 1], [0, 0]] {
+            return Err(coupled_error(format!(
+                "service did not advance exactly the pending first queue: {serviced_queue_indices:?}"
+            )));
+        }
+
+        let captured = BoundedFullControllerTwoVirtioBlkCheckpoint::capture_with_acceleration_quiescence(
+            vcpu,
+            vm,
+            msr_policy,
+            mmio,
+            [
+                crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+                crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+            ],
+            &[
+                TRANSACTION_COUPLED_SECOND_PAGE,
+                TRANSACTION_COUPLED_FIRST_PAGE,
+            ],
+            registrations,
+        )?;
+        let captured_queue_indices = captured_queue_indices(&captured)?;
+        if captured_queue_indices != [[1, 1], [0, 0]] {
+            return Err(coupled_error(format!(
+                "quiescent accelerated capture recorded unexpected queue ownership: {captured_queue_indices:?}"
+            )));
+        }
+
+        Ok(AccelerationCheckpointQuiescenceResult {
+            rejected_pending,
+            pending_after_rejection,
+            preserved_doorbell_count,
+            serviced_queue_indices,
+            captured_queue_indices,
+            proof,
+            completion_rflags,
+        })
+    }
+
+    fn captured_queue_indices(
+        checkpoint: &BoundedFullControllerTwoVirtioBlkCheckpoint,
+    ) -> Result<[[u16; 2]; 2], Error> {
+        let mut indices = [[0_u16; 2]; 2];
+        for (index, bar) in [
+            crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+            crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let device = checkpoint
+                .device(bar)
+                .ok_or_else(|| coupled_error(format!("captured BAR {bar:#x} disappeared")))?;
+            if !device.checkpoint_quiescent() {
+                return Err(coupled_error(format!(
+                    "captured BAR {bar:#x} was not device-quiescent"
+                )));
+            }
+            indices[index] = [
+                device.checkpoint_last_avail_idx(),
+                device.checkpoint_last_used_idx(),
+            ];
+        }
+        Ok(indices)
+    }
+
+    fn run_after_preserved_service(
+        vcpu: &mut Vcpu,
+        mmio: &mut MmioBus,
+        port_io: &mut PortIoBus,
+        completion_rip: u64,
+    ) -> Result<(Vec<u8>, u64), Error> {
+        for _ in 0..QUIESCENCE_EXIT_BUDGET {
+            let exit = vcpu.run_once()?;
+            let disposition = dispatch_vcpu_exit(vcpu, exit, port_io, mmio)?;
+            match disposition {
+                VmExitDisposition::Continue(continuation) => {
+                    if is_debug_output(&continuation, DONE_MARKER) {
+                        let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
+                        if proof.as_slice() != ACCELERATION_CHECKPOINT_QUIESCENCE_PROOF {
+                            return Err(coupled_error(format!(
+                                "expected checkpoint-quiescence proof {:?}, got {proof:?}",
+                                ACCELERATION_CHECKPOINT_QUIESCENCE_PROOF
+                            )));
+                        }
+                        let (_, completion_rflags) = single_step_to_quiescence(
+                            vcpu,
+                            completion_rip,
+                            "accelerated checkpoint post-service quiescence",
+                        )?;
+                        return Ok((proof, completion_rflags));
+                    }
+                }
+                VmExitDisposition::Stopped(report) => {
+                    return Err(coupled_error(format!(
+                        "checkpoint-quiescence guest stopped before completion: {report}"
+                    )));
+                }
+            }
+        }
+        Err(coupled_error(
+            "checkpoint-quiescence guest exceeded bounded exit budget",
+        ))
+    }
+
+    fn build_quiescence_program() -> QuiescenceGuestProgram {
+        let mut code = Vec::new();
+        emit_pic_setup(&mut code);
+        code.extend_from_slice(&[0xfb, 0x90]);
+        emit_debug(&mut code, CAPTURE_MARKER);
+        let capture_rip = ENTRY.get() + code.len() as u64;
+        code.push(0x90);
+
+        emit_movabs(&mut code, 7, FIRST_AVAIL);
+        code.extend_from_slice(&[0x66, 0xc7, 0x47, 0x02, 0x01, 0x00]);
+        emit_movabs(&mut code, 3, LONG_MODE_MMIO_VIRTUAL_PAGE);
+        code.extend_from_slice(&[0x66, 0xc7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
+        emit_debug(&mut code, PENDING_MARKER);
+        let pending_rip = ENTRY.get() + code.len() as u64;
+        code.push(0x90);
+
+        code.extend_from_slice(&[0xfa, 0xfb, 0xf4]);
+        emit_guest_completion_checks(&mut code, FIRST_QUEUE);
+        emit_debug(&mut code, SERVICED_MARKER);
+        emit_debug(&mut code, DONE_MARKER);
+        let completion_rip = ENTRY.get() + code.len() as u64;
+        code.push(0x90);
+        code.push(0xf4);
+
+        QuiescenceGuestProgram {
+            bytes: code,
+            capture_rip,
+            pending_rip,
+            completion_rip,
+        }
+    }
+
+    #[derive(Debug)]
+    struct QuiescenceGuestProgram {
+        bytes: Vec<u8>,
+        capture_rip: u64,
+        pending_rip: u64,
+        completion_rip: u64,
+    }
+
+    impl From<QuiescenceGuestProgram> for GuestProgram {
+        fn from(program: QuiescenceGuestProgram) -> Self {
+            GuestProgram {
+                bytes: program.bytes,
+                capture_rip: program.capture_rip,
+                completion_rip: program.completion_rip,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn quiescence_program_has_stable_pending_and_completion_boundaries() {
+            let program = build_quiescence_program();
+            assert!(program.capture_rip < program.pending_rip);
+            assert!(program.pending_rip < program.completion_rip);
+            assert_eq!(ACCELERATION_CHECKPOINT_QUIESCENCE_PROOF, b"P0aSD");
+        }
+    }
+}
+
+pub use acceleration_checkpoint_quiescence::{
+    run_acceleration_checkpoint_quiescence_guest, AccelerationCheckpointQuiescenceResult,
+    ACCELERATION_CHECKPOINT_QUIESCENCE_PROOF,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
