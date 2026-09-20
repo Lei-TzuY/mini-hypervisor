@@ -1,5 +1,4 @@
 use mini_hypervisor::error::{Error, HostEnvironmentError};
-use mini_hypervisor::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR;
 use mini_hypervisor::state_snapshot::{
     run_pending_completion_token_replay_guest, PENDING_COMPLETION_TOKEN_PROOF,
 };
@@ -10,7 +9,7 @@ fn serviced_completion_crosses_v2_checkpoint_before_fresh_irqfd_delivery() {
         Ok(result) => {
             assert_eq!(result.schema_version(), 2);
             assert_eq!(result.page_count(), 5);
-            assert_eq!(result.token_bar(), TWO_HOST_REGISTRATION_FIRST_BAR);
+            assert_eq!(result.token_bar(), 0x1000_0000);
             assert_eq!(result.token_queue(), 0);
             assert_eq!(result.token_indices(), [1, 1]);
             assert!(result.ordinary_capture_rejected());
