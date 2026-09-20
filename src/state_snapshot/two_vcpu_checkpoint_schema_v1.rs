@@ -481,8 +481,7 @@ mod two_vcpu_full_controller_schema_tests {
         bytes[8..10].copy_from_slice(&VERSIONED_TWO_VCPU_FULL_CONTROLLER_VERSION.to_le_bytes());
         bytes[10..12]
             .copy_from_slice(&VERSIONED_TWO_VCPU_FULL_CONTROLLER_ARCH_X86_64.to_le_bytes());
-        bytes[12..16]
-            .copy_from_slice(&(TWO_VCPU_FULL_CONTROLLER_HEADER_LEN as u32).to_le_bytes());
+        bytes[12..16].copy_from_slice(&(TWO_VCPU_FULL_CONTROLLER_HEADER_LEN as u32).to_le_bytes());
         bytes[16..24].copy_from_slice(&(total_len as u64).to_le_bytes());
         bytes[24..32].copy_from_slice(&(primary_len as u64).to_le_bytes());
         bytes[32..40].copy_from_slice(&(secondary_len as u64).to_le_bytes());
@@ -513,9 +512,7 @@ mod two_vcpu_full_controller_schema_tests {
         bad_architecture[10..12].copy_from_slice(&2_u16.to_le_bytes());
         assert_eq!(
             VersionedTwoVcpuFullControllerCheckpointV1::decode(&bad_architecture),
-            Err(
-                VersionedTwoVcpuFullControllerCheckpointError::UnsupportedArchitecture(2)
-            )
+            Err(VersionedTwoVcpuFullControllerCheckpointError::UnsupportedArchitecture(2))
         );
 
         let mut bad_header_len = base.clone();
@@ -541,17 +538,18 @@ mod two_vcpu_full_controller_schema_tests {
         bad_mp[48..52].copy_from_slice(&5_u32.to_le_bytes());
         assert_eq!(
             VersionedTwoVcpuFullControllerCheckpointV1::decode(&bad_mp),
-            Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidMpState {
-                vcpu: 1,
-                state: 5,
-            })
+            Err(
+                VersionedTwoVcpuFullControllerCheckpointError::InvalidMpState { vcpu: 1, state: 5 }
+            )
         );
 
         let mut bad_flags = base.clone();
         bad_flags[52..56].copy_from_slice(&1_u32.to_le_bytes());
         assert_eq!(
             VersionedTwoVcpuFullControllerCheckpointV1::decode(&bad_flags),
-            Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroFlags(1))
+            Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroFlags(
+                1
+            ))
         );
 
         let mut bad_reserved = base.clone();
