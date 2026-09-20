@@ -1,0 +1,71 @@
+name: Strict KVM versioned host-registration pair
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/kvm/sys.rs'
+      - 'src/kvm/irqchip.rs'
+      - 'src/kvm/irqfd_timer.rs'
+      - 'src/kvm/ioeventfd_roundtrip.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/kvm/host_registration_schema_v1.rs'
+      - 'src/kvm/host_registration_pair_schema_v1.rs'
+      - 'src/mmio/long_mode.rs'
+      - 'src/mmio/multi_device.rs'
+      - 'src/mmio/routing.rs'
+      - 'src/bin/versioned-host-registration-pair.rs'
+      - 'tests/versioned_host_registration_pair_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-host-registration-pair.yml'
+  pull_request:
+    paths:
+      - 'src/kvm/sys.rs'
+      - 'src/kvm/irqchip.rs'
+      - 'src/kvm/irqfd_timer.rs'
+      - 'src/kvm/ioeventfd_roundtrip.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/kvm/host_registration_schema_v1.rs'
+      - 'src/kvm/host_registration_pair_schema_v1.rs'
+      - 'src/mmio/long_mode.rs'
+      - 'src/mmio/multi_device.rs'
+      - 'src/mmio/routing.rs'
+      - 'src/bin/versioned-host-registration-pair.rs'
+      - 'tests/versioned_host_registration_pair_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-host-registration-pair.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-versioned-host-registration-pair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build versioned registration-pair proof
+        run: cargo build --quiet --bin versioned-host-registration-pair
+      - name: Execute versioned registration-pair proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/versioned-host-registration-pair)"
+          printf '%s\n' "$output"
+
+          grep -F 'versioned registration-pair schema: version=1 encoded_bytes=128 nested_versions=[1, 1] canonical=true' <<<"$output"
+          grep -F 'versioned registration-pair doorbells: [268435712, 268439808]' <<<"$output"
+          grep -F 'versioned registration-pair gsis: [0, 1]' <<<"$output"
+          grep -F 'versioned registration-pair vectors: [64, 65]' <<<"$output"
+          grep -F 'versioned registration-pair generation events: [[1, 1], [1, 1]]' <<<"$output"
+          grep -F 'versioned registration-pair proof: [82, 65, 48, 77, 66, 49, 78, 67, 69, 48, 80, 70, 49, 81, 68]' <<<"$output"
+
+          completion="$(grep -F 'versioned registration-pair completion rflags:' <<<"$output")"
+          rflags_hex="${completion##*: }"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
+          (( (rflags & 0x200) == 0x200 ))
