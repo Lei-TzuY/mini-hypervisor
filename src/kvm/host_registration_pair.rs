@@ -372,11 +372,13 @@ fn run_two_host_registration_acceleration_guest(
         &mut vcpu,
         &mut port_io,
         &first_generation,
-        TWO_HOST_REGISTRATION_FIRST_ARMED_GEN1,
-        TWO_HOST_REGISTRATION_FIRST_RESUMED_GEN1,
-        TWO_HOST_REGISTRATION_SECOND_ARMED_GEN1,
-        TWO_HOST_REGISTRATION_SECOND_RESUMED_GEN1,
-        "first reconstructed generation",
+        RegistrationGenerationMarkers {
+            first_armed: TWO_HOST_REGISTRATION_FIRST_ARMED_GEN1,
+            first_resumed: TWO_HOST_REGISTRATION_FIRST_RESUMED_GEN1,
+            second_armed: TWO_HOST_REGISTRATION_SECOND_ARMED_GEN1,
+            second_resumed: TWO_HOST_REGISTRATION_SECOND_RESUMED_GEN1,
+            label: "first reconstructed generation",
+        },
     )?;
 
     let _reconstruct = run_expected_debug_output(
@@ -398,11 +400,13 @@ fn run_two_host_registration_acceleration_guest(
         &mut vcpu,
         &mut port_io,
         &second_generation,
-        TWO_HOST_REGISTRATION_FIRST_ARMED_GEN2,
-        TWO_HOST_REGISTRATION_FIRST_RESUMED_GEN2,
-        TWO_HOST_REGISTRATION_SECOND_ARMED_GEN2,
-        TWO_HOST_REGISTRATION_SECOND_RESUMED_GEN2,
-        "second reconstructed generation",
+        RegistrationGenerationMarkers {
+            first_armed: TWO_HOST_REGISTRATION_FIRST_ARMED_GEN2,
+            first_resumed: TWO_HOST_REGISTRATION_FIRST_RESUMED_GEN2,
+            second_armed: TWO_HOST_REGISTRATION_SECOND_ARMED_GEN2,
+            second_resumed: TWO_HOST_REGISTRATION_SECOND_RESUMED_GEN2,
+            label: "second reconstructed generation",
+        },
     )?;
 
     let _done = run_expected_debug_output(
@@ -456,21 +460,26 @@ fn run_two_host_registration_acceleration_guest(
     })
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RegistrationGenerationMarkers {
+    first_armed: u8,
+    first_resumed: u8,
+    second_armed: u8,
+    second_resumed: u8,
+    label: &'static str,
+}
+
 fn run_registration_generation(
     vm: &Vm,
     vcpu: &mut crate::vcpu::Vcpu,
     port_io: &mut crate::portio::PortIoBus,
     registrations: &ReconstructedHostRegistrationPair,
-    first_armed: u8,
-    first_resumed: u8,
-    second_armed: u8,
-    second_resumed: u8,
-    generation: &'static str,
+    markers: RegistrationGenerationMarkers,
 ) -> Result<[u64; 2], crate::error::Error> {
     let _first_armed = run_expected_debug_output(
         vcpu,
         port_io,
-        first_armed,
+        markers.first_armed,
         "two host-registration first doorbell barrier",
     )?;
     let first_state = vcpu.registers()?;
@@ -483,7 +492,7 @@ fn run_registration_generation(
     if first_count != 1 {
         return Err(verification_error(
             "two host-registration first doorbell count",
-            format!("{generation}: expected 1, got {first_count}"),
+            format!("{}: expected 1, got {first_count}", markers.label),
         ));
     }
     registrations.signal_irq(0)?;
@@ -498,14 +507,14 @@ fn run_registration_generation(
     let _first_resumed = run_expected_debug_output(
         vcpu,
         port_io,
-        first_resumed,
+        markers.first_resumed,
         "two host-registration first resumed main",
     )?;
 
     let _second_armed = run_expected_debug_output(
         vcpu,
         port_io,
-        second_armed,
+        markers.second_armed,
         "two host-registration second doorbell barrier",
     )?;
     let second_state = vcpu.registers()?;
@@ -518,7 +527,7 @@ fn run_registration_generation(
     if second_count != 1 {
         return Err(verification_error(
             "two host-registration second doorbell count",
-            format!("{generation}: expected 1, got {second_count}"),
+            format!("{}: expected 1, got {second_count}", markers.label),
         ));
     }
     registrations.signal_irq(1)?;
@@ -533,7 +542,7 @@ fn run_registration_generation(
     let _second_resumed = run_expected_debug_output(
         vcpu,
         port_io,
-        second_resumed,
+        markers.second_resumed,
         "two host-registration second resumed main",
     )?;
 
