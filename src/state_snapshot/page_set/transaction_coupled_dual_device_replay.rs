@@ -1,6 +1,8 @@
 use super::{
     BoundedFullControllerTwoVirtioBlkCheckpoint,
     BoundedFullControllerTwoVirtioBlkCheckpointComparison,
+    BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint,
+    BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison,
     VersionedTwoDeviceCheckpointTransactionV1,
 };
 use crate::error::{Error, HostEnvironmentError, VmExitError};
@@ -2263,6 +2265,556 @@ mod acceleration_checkpoint_quiescence {
 pub use acceleration_checkpoint_quiescence::{
     run_acceleration_checkpoint_quiescence_guest, AccelerationCheckpointQuiescenceResult,
     ACCELERATION_CHECKPOINT_QUIESCENCE_PROOF,
+};
+
+mod two_vcpu_two_device_checkpoint {
+    use super::*;
+    use crate::portio::PortIoService;
+    use crate::state_snapshot::{
+        TWO_VCPU_CHECKPOINT_FIRST_ID, TWO_VCPU_CHECKPOINT_SECOND_ID,
+    };
+
+    pub const TWO_VCPU_TWO_DEVICE_CHECKPOINT_PROOF: &[u8; 2] = b"01";
+
+    const FIRST_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x0001_0000);
+    const SECOND_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x0001_1000);
+    const SHARED_PAGE: GuestPhysAddr = GuestPhysAddr::new(0x0001_a000);
+    const FIRST_STACK_PAGE: GuestPhysAddr = GuestPhysAddr::new(0x001f_d000);
+    const SECOND_STACK_PAGE: GuestPhysAddr = GuestPhysAddr::new(0x001f_c000);
+    const FIRST_STACK: u64 = 0x001f_dff8;
+    const SECOND_STACK: u64 = 0x001f_cff8;
+    const FIRST_CORRUPT_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x0001_2000);
+    const SECOND_CORRUPT_ENTRY: GuestPhysAddr = GuestPhysAddr::new(0x0001_3000);
+    const FIRST_CORRUPT_STACK: u64 = 0x001f_bff8;
+    const SECOND_CORRUPT_STACK: u64 = 0x001f_aff8;
+    const SHARED_MARKER: u8 = b'S';
+    const FIRST_STACK_MARKER: u8 = b'0';
+    const SECOND_STACK_MARKER: u8 = b'1';
+    const FIRST_CAPTURE_MARKER: u8 = b'A';
+    const SECOND_CAPTURE_MARKER: u8 = b'B';
+    const MP_STATE_RUNNABLE: u32 = 0;
+    const MP_STATE_UNINITIALIZED: u32 = 1;
+    const MP_STATE_HALTED: u32 = 3;
+
+    const OWNED_PAGES: [GuestPhysAddr; 5] = [
+        TRANSACTION_COUPLED_FIRST_PAGE,
+        TRANSACTION_COUPLED_SECOND_PAGE,
+        SHARED_PAGE,
+        SECOND_STACK_PAGE,
+        FIRST_STACK_PAGE,
+    ];
+
+    #[derive(Debug)]
+    struct ProducerProgram {
+        bytes: Vec<u8>,
+        capture_rip: u64,
+        completion_rip: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct TwoVcpuTwoDeviceCheckpointResult {
+        captured_pages: Vec<GuestPhysAddr>,
+        captured_queue_indices: [[u16; 2]; 2],
+        mutation: BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison,
+        restored: BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison,
+        restored_queue_indices: [[u16; 2]; 2],
+        pending_before_capture: [bool; 2],
+        pending_after_restore: [bool; 2],
+        first_capture_rip: u64,
+        second_capture_rip: u64,
+        first_completion_rip: u64,
+        second_completion_rip: u64,
+        proof: Vec<u8>,
+    }
+
+    impl TwoVcpuTwoDeviceCheckpointResult {
+        #[must_use]
+        pub fn captured_pages(&self) -> &[GuestPhysAddr] {
+            &self.captured_pages
+        }
+
+        #[must_use]
+        pub const fn captured_queue_indices(&self) -> [[u16; 2]; 2] {
+            self.captured_queue_indices
+        }
+
+        #[must_use]
+        pub const fn mutation(
+            &self,
+        ) -> &BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison {
+            &self.mutation
+        }
+
+        #[must_use]
+        pub const fn restored(
+            &self,
+        ) -> &BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison {
+            &self.restored
+        }
+
+        #[must_use]
+        pub const fn restored_queue_indices(&self) -> [[u16; 2]; 2] {
+            self.restored_queue_indices
+        }
+
+        #[must_use]
+        pub const fn pending_before_capture(&self) -> [bool; 2] {
+            self.pending_before_capture
+        }
+
+        #[must_use]
+        pub const fn pending_after_restore(&self) -> [bool; 2] {
+            self.pending_after_restore
+        }
+
+        #[must_use]
+        pub const fn first_capture_rip(&self) -> u64 {
+            self.first_capture_rip
+        }
+
+        #[must_use]
+        pub const fn second_capture_rip(&self) -> u64 {
+            self.second_capture_rip
+        }
+
+        #[must_use]
+        pub const fn first_completion_rip(&self) -> u64 {
+            self.first_completion_rip
+        }
+
+        #[must_use]
+        pub const fn second_completion_rip(&self) -> u64 {
+            self.second_completion_rip
+        }
+
+        #[must_use]
+        pub fn proof(&self) -> &[u8] {
+            &self.proof
+        }
+    }
+
+    pub fn run_two_vcpu_two_device_checkpoint_guest(
+    ) -> Result<TwoVcpuTwoDeviceCheckpointResult, Error> {
+        let first_program = build_producer_program(
+            FIRST_ENTRY,
+            true,
+            FIRST_STACK_MARKER,
+            FIRST_CAPTURE_MARKER,
+            TWO_VCPU_TWO_DEVICE_CHECKPOINT_PROOF[0],
+        );
+        let second_program = build_producer_program(
+            SECOND_ENTRY,
+            false,
+            SECOND_STACK_MARKER,
+            SECOND_CAPTURE_MARKER,
+            TWO_VCPU_TWO_DEVICE_CHECKPOINT_PROOF[1],
+        );
+        let first_image = FlatGuestImage::new(FIRST_ENTRY, FIRST_ENTRY, &first_program.bytes)?;
+        let second_image =
+            FlatGuestImage::new(SECOND_ENTRY, SECOND_ENTRY, &second_program.bytes)?;
+
+        let backend = KvmBackend::open()?;
+        backend.require_mp_state_capability()?;
+        let mut vm = backend.create_vm_with_irqchip()?;
+        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE)?;
+        let first_layout = LongModeBootLayout::new(memory.region(), FIRST_ENTRY, FIRST_STACK)
+            .expect("fixed first two-vCPU/two-device layout remains valid");
+        let second_layout = LongModeBootLayout::new(memory.region(), SECOND_ENTRY, SECOND_STACK)
+            .expect("fixed second two-vCPU/two-device layout remains valid");
+        let first_corrupt_layout =
+            LongModeBootLayout::new(memory.region(), FIRST_CORRUPT_ENTRY, FIRST_CORRUPT_STACK)
+                .expect("fixed first two-vCPU/two-device corruption layout remains valid");
+        let second_corrupt_layout =
+            LongModeBootLayout::new(memory.region(), SECOND_CORRUPT_ENTRY, SECOND_CORRUPT_STACK)
+                .expect("fixed second two-vCPU/two-device corruption layout remains valid");
+
+        first_layout.install_page_tables(&mut memory)?;
+        first_image.load(&mut memory)?;
+        second_image.load(&mut memory)?;
+        initialize_queue_memory(&mut memory, FIRST_QUEUE)?;
+        initialize_queue_memory(&mut memory, SECOND_QUEUE)?;
+        vm.register_guest_memory(memory)?;
+
+        let mut first_vcpu = vm.create_vcpu(TWO_VCPU_CHECKPOINT_FIRST_ID)?;
+        let mut second_vcpu = vm.create_vcpu(TWO_VCPU_CHECKPOINT_SECOND_ID)?;
+        first_vcpu.initialize_long_mode(&first_layout)?;
+        second_vcpu.initialize_long_mode(&second_layout)?;
+        let first_mp = first_vcpu.ensure_runnable_mp_state()?;
+        let second_mp = second_vcpu.ensure_runnable_mp_state()?;
+        if [first_mp, second_mp] != [MP_STATE_RUNNABLE, MP_STATE_RUNNABLE] {
+            return Err(coupled_error(format!(
+                "expected both producer MP states RUNNABLE, got [{first_mp}, {second_mp}]"
+            )));
+        }
+
+        let msr_policy = GuestMsrAccessPolicy::from_host(backend.host_msr_indices(), &[])
+            .expect("empty two-vCPU/two-device MSR policy is valid by construction");
+
+        let mut mmio = MmioBus::empty();
+        mmio.register_virtio_blk_device_at(crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR)
+            .expect("fixed first two-vCPU/two-device BAR remains available");
+        mmio.register_virtio_blk_device_at(crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR)
+            .expect("fixed second two-vCPU/two-device BAR remains available");
+        let first_ready = ready_device(
+            crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+            FIRST_QUEUE,
+        )?;
+        let second_ready = ready_device(
+            crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+            SECOND_QUEUE,
+        )?;
+        mmio.restore_two_virtio_blk_checkpoints_atomic([
+            (
+                crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+                &first_ready,
+            ),
+            (
+                crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+                &second_ready,
+            ),
+        ])?;
+
+        let pair = default_two_host_registration_pair()?;
+        let registrations =
+            HostRegistrationPairCheckpoint::capture(pair).reconstruct(&backend, &vm)?;
+
+        let execution = run_composition(
+            &mut first_vcpu,
+            &mut second_vcpu,
+            &mut vm,
+            &mut mmio,
+            &msr_policy,
+            &registrations,
+            &first_program,
+            &second_program,
+            &first_corrupt_layout,
+            &second_corrupt_layout,
+        );
+        let cleanup = registrations.deassign(&vm);
+        match (execution, cleanup) {
+            (Ok(result), Ok(())) => Ok(result),
+            (Err(execution_error), Err(cleanup_error)) => Err(coupled_error(format!(
+                "two-vCPU/two-device checkpoint failed: {execution_error}; cleanup also failed: {cleanup_error}"
+            ))),
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_composition(
+        first_vcpu: &mut Vcpu,
+        second_vcpu: &mut Vcpu,
+        vm: &mut crate::kvm::Vm,
+        mmio: &mut MmioBus,
+        msr_policy: &GuestMsrAccessPolicy,
+        registrations: &ReconstructedHostRegistrationPair,
+        first_program: &ProducerProgram,
+        second_program: &ProducerProgram,
+        first_corrupt_layout: &LongModeBootLayout,
+        second_corrupt_layout: &LongModeBootLayout,
+    ) -> Result<TwoVcpuTwoDeviceCheckpointResult, Error> {
+        let first_capture_rip = run_producer_barrier(
+            first_vcpu,
+            FIRST_CAPTURE_MARKER,
+            first_program.capture_rip,
+            "first two-vCPU/two-device capture barrier",
+        )?;
+        let second_capture_rip = run_producer_barrier(
+            second_vcpu,
+            SECOND_CAPTURE_MARKER,
+            second_program.capture_rip,
+            "second two-vCPU/two-device capture barrier",
+        )?;
+
+        let pending_before_capture = registrations.pending_doorbells()?;
+        if pending_before_capture != [false, false] {
+            return Err(coupled_error(format!(
+                "expected acceleration-quiescent doorbells before two-vCPU capture, got {pending_before_capture:?}"
+            )));
+        }
+        require_restored_zero_zero(mmio)?;
+
+        let checkpoint =
+            BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint::capture_with_acceleration_quiescence(
+                first_vcpu,
+                second_vcpu,
+                vm,
+                msr_policy,
+                mmio,
+                [
+                    crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+                    crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+                ],
+                &OWNED_PAGES,
+                registrations,
+            )?;
+        let captured_pages = checkpoint
+            .controller()
+            .pages()
+            .iter()
+            .map(super::BoundedCheckpointPage::address)
+            .collect::<Vec<_>>();
+        if captured_pages != canonical_owned_pages() {
+            return Err(coupled_error(format!(
+                "two-vCPU/two-device checkpoint captured unexpected pages {captured_pages:?}"
+            )));
+        }
+        let captured_queue_indices = checkpoint_queue_indices(&checkpoint)?;
+        if captured_queue_indices != [[0, 0], [0, 0]] {
+            return Err(coupled_error(format!(
+                "two-vCPU/two-device checkpoint did not capture quiescent 0/0 queues: {captured_queue_indices:?}"
+            )));
+        }
+
+        corrupt_composition(
+            first_vcpu,
+            second_vcpu,
+            vm,
+            mmio,
+            first_corrupt_layout,
+            second_corrupt_layout,
+        )?;
+        let mutation = checkpoint.verify(first_vcpu, second_vcpu, vm, mmio)?;
+        require_composition_mismatch(&mutation)?;
+
+        let restored =
+            checkpoint.restore_and_verify(first_vcpu, second_vcpu, vm, mmio)?;
+        if !restored.is_exact_match() {
+            return Err(coupled_error(format!(
+                "two-vCPU/two-device composite restore was not exact: {restored:?}"
+            )));
+        }
+        let restored_queue_indices = [
+            queue_indices(mmio, crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR)?,
+            queue_indices(mmio, crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR)?,
+        ];
+        if restored_queue_indices != [[0, 0], [0, 0]] {
+            return Err(coupled_error(format!(
+                "restored two-vCPU/two-device queues were not 0/0: {restored_queue_indices:?}"
+            )));
+        }
+        let pending_after_restore = registrations.pending_doorbells()?;
+        if pending_after_restore != [false, false] {
+            return Err(coupled_error(format!(
+                "restore introduced unexpected accelerated doorbells: {pending_after_restore:?}"
+            )));
+        }
+
+        let first_completion_rip = run_producer_barrier(
+            first_vcpu,
+            TWO_VCPU_TWO_DEVICE_CHECKPOINT_PROOF[0],
+            first_program.completion_rip,
+            "first two-vCPU/two-device completion barrier",
+        )?;
+        let second_completion_rip = run_producer_barrier(
+            second_vcpu,
+            TWO_VCPU_TWO_DEVICE_CHECKPOINT_PROOF[1],
+            second_program.completion_rip,
+            "second two-vCPU/two-device completion barrier",
+        )?;
+
+        Ok(TwoVcpuTwoDeviceCheckpointResult {
+            captured_pages,
+            captured_queue_indices,
+            mutation,
+            restored,
+            restored_queue_indices,
+            pending_before_capture,
+            pending_after_restore,
+            first_capture_rip,
+            second_capture_rip,
+            first_completion_rip,
+            second_completion_rip,
+            proof: TWO_VCPU_TWO_DEVICE_CHECKPOINT_PROOF.to_vec(),
+        })
+    }
+
+    fn corrupt_composition(
+        first_vcpu: &mut Vcpu,
+        second_vcpu: &mut Vcpu,
+        vm: &mut crate::kvm::Vm,
+        mmio: &mut MmioBus,
+        first_corrupt_layout: &LongModeBootLayout,
+        second_corrupt_layout: &LongModeBootLayout,
+    ) -> Result<(), Error> {
+        {
+            let memory = vm
+                .guest_memory_mut()
+                .ok_or_else(|| coupled_error("two-vCPU/two-device VM lost guest memory"))?;
+            for (index, page) in canonical_owned_pages().iter().copied().enumerate() {
+                memory.write(
+                    page,
+                    &vec![0x31_u8.wrapping_add(index as u8); LONG_MODE_PAGE_SIZE as usize],
+                )?;
+            }
+        }
+        first_vcpu.initialize_long_mode(first_corrupt_layout)?;
+        second_vcpu.initialize_long_mode(second_corrupt_layout)?;
+        first_vcpu.restore_multiprocessing_state_raw(MP_STATE_HALTED)?;
+        second_vcpu.restore_multiprocessing_state_raw(MP_STATE_UNINITIALIZED)?;
+
+        mmio.restore_two_virtio_blk_checkpoints_atomic([
+            (
+                crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+                &VirtioBlkDevice::new(crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR),
+            ),
+            (
+                crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+                &VirtioBlkDevice::new(crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR),
+            ),
+        ])?;
+        Ok(())
+    }
+
+    fn require_composition_mismatch(
+        comparison: &BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison,
+    ) -> Result<(), Error> {
+        let controller = comparison.controller();
+        for page in canonical_owned_pages() {
+            if controller.page_exact(page) != Some(false) {
+                return Err(coupled_error(format!(
+                    "owned page {:#x} did not mismatch after composite corruption",
+                    page.get()
+                )));
+            }
+        }
+        for id in [TWO_VCPU_CHECKPOINT_FIRST_ID, TWO_VCPU_CHECKPOINT_SECOND_ID] {
+            if controller.vcpu_exact(id) != Some(false)
+                || controller.mp_state_exact(id) != Some(false)
+            {
+                return Err(coupled_error(format!(
+                    "vCPU {} architecture/MP state did not mismatch after corruption",
+                    id.get()
+                )));
+            }
+        }
+        for bar in [
+            crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+            crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+        ] {
+            if comparison.device_exact(bar) != Some(false) {
+                return Err(coupled_error(format!(
+                    "virtio-blk BAR {bar:#x} did not mismatch after composite corruption"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn checkpoint_queue_indices(
+        checkpoint: &BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint,
+    ) -> Result<[[u16; 2]; 2], Error> {
+        let mut indices = [[0_u16; 2]; 2];
+        for (index, bar) in [
+            crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+            crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let device = checkpoint
+                .device(bar)
+                .ok_or_else(|| coupled_error(format!("captured BAR {bar:#x} disappeared")))?;
+            if !device.checkpoint_quiescent() {
+                return Err(coupled_error(format!(
+                    "captured BAR {bar:#x} was not device-quiescent"
+                )));
+            }
+            indices[index] = [
+                device.checkpoint_last_avail_idx(),
+                device.checkpoint_last_used_idx(),
+            ];
+        }
+        Ok(indices)
+    }
+
+    fn run_producer_barrier(
+        vcpu: &mut Vcpu,
+        expected: u8,
+        expected_rip: u64,
+        stage: &'static str,
+    ) -> Result<u64, Error> {
+        let mut port_io = PortIoBus::with_debug_port();
+        let io = run_expected_debug_output(vcpu, &mut port_io, expected, stage)?;
+        if port_io.dispatch(&io)? != PortIoService::Output {
+            return Err(coupled_error(format!(
+                "{stage}: debug marker unexpectedly requested input"
+            )));
+        }
+        let (rip, _) = single_step_to_quiescence(vcpu, expected_rip, stage)?;
+        Ok(rip)
+    }
+
+    fn build_producer_program(
+        entry: GuestPhysAddr,
+        writes_shared: bool,
+        stack_marker: u8,
+        capture_marker: u8,
+        completion_marker: u8,
+    ) -> ProducerProgram {
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0xfb, 0x90]);
+        if writes_shared {
+            code.extend_from_slice(&[0xc6, 0x04, 0x25]);
+            code.extend_from_slice(&(SHARED_PAGE.get() as u32).to_le_bytes());
+            code.push(SHARED_MARKER);
+        }
+        code.extend_from_slice(&[0x6a, stack_marker]);
+        emit_debug(&mut code, capture_marker);
+        let capture_rip = entry.get() + code.len() as u64;
+        code.push(0x90);
+
+        code.push(0x58);
+        emit_cmp_al(&mut code, stack_marker);
+        code.extend_from_slice(&[0x8a, 0x04, 0x25]);
+        code.extend_from_slice(&(SHARED_PAGE.get() as u32).to_le_bytes());
+        emit_cmp_al(&mut code, SHARED_MARKER);
+        emit_debug(&mut code, completion_marker);
+        let completion_rip = entry.get() + code.len() as u64;
+        code.push(0x90);
+        code.push(0xf4);
+
+        ProducerProgram {
+            bytes: code,
+            capture_rip,
+            completion_rip,
+        }
+    }
+
+    fn canonical_owned_pages() -> Vec<GuestPhysAddr> {
+        let mut pages = OWNED_PAGES.to_vec();
+        pages.sort_unstable_by_key(|page| page.get());
+        pages
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn producer_programs_have_distinct_retired_boundaries_and_owned_pages_are_canonical() {
+            let first = build_producer_program(FIRST_ENTRY, true, b'0', b'A', b'0');
+            let second = build_producer_program(SECOND_ENTRY, false, b'1', b'B', b'1');
+            assert!(first.capture_rip < first.completion_rip);
+            assert!(second.capture_rip < second.completion_rip);
+            assert_eq!(
+                canonical_owned_pages(),
+                [
+                    GuestPhysAddr::new(0x18000),
+                    GuestPhysAddr::new(0x19000),
+                    GuestPhysAddr::new(0x1a000),
+                    GuestPhysAddr::new(0x1fc000),
+                    GuestPhysAddr::new(0x1fd000),
+                ]
+            );
+            assert_eq!(TWO_VCPU_TWO_DEVICE_CHECKPOINT_PROOF, b"01");
+        }
+    }
+}
+
+pub use two_vcpu_two_device_checkpoint::{
+    run_two_vcpu_two_device_checkpoint_guest, TwoVcpuTwoDeviceCheckpointResult,
+    TWO_VCPU_TWO_DEVICE_CHECKPOINT_PROOF,
 };
 
 #[cfg(test)]
