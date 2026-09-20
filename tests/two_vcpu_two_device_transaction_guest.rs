@@ -28,7 +28,9 @@ fn two_vcpu_two_device_transaction_restores_every_owned_layer_and_reconstructs_q
                 assert_eq!(restored.controller().page_exact(page), Some(true));
             }
             assert_eq!(
-                mutation.controller().page_exact(TWO_VCPU_CHECKPOINT_SHARED_PAGE),
+                mutation
+                    .controller()
+                    .page_exact(TWO_VCPU_CHECKPOINT_SHARED_PAGE),
                 Some(false)
             );
             assert_eq!(
