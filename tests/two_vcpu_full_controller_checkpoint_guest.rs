@@ -16,13 +16,19 @@ fn two_vcpu_full_controller_checkpoint_restores_both_vcpus_both_lapics_and_vm_ir
         Ok(result) => {
             assert_eq!(result.captured_pages(), TWO_VCPU_CHECKPOINT_OWNERSHIP_SET);
 
-            assert_eq!(result.first_capture().vcpu_id(), TWO_VCPU_CHECKPOINT_FIRST_ID);
+            assert_eq!(
+                result.first_capture().vcpu_id(),
+                TWO_VCPU_CHECKPOINT_FIRST_ID
+            );
             assert_eq!(result.first_capture().exit(), VcpuExit::Hlt);
             assert_eq!(
                 result.first_capture().rip(),
                 TWO_VCPU_CHECKPOINT_FIRST_CAPTURE_RIP
             );
-            assert_eq!(result.second_capture().vcpu_id(), TWO_VCPU_CHECKPOINT_SECOND_ID);
+            assert_eq!(
+                result.second_capture().vcpu_id(),
+                TWO_VCPU_CHECKPOINT_SECOND_ID
+            );
             assert_eq!(result.second_capture().exit(), VcpuExit::Hlt);
             assert_eq!(
                 result.second_capture().rip(),
@@ -55,13 +61,19 @@ fn two_vcpu_full_controller_checkpoint_restores_both_vcpus_both_lapics_and_vm_ir
 
             assert_eq!(result.first_proof(), TWO_VCPU_CHECKPOINT_FIRST_PROOF);
             assert_eq!(result.second_proof(), TWO_VCPU_CHECKPOINT_SECOND_PROOF);
-            assert_eq!(result.first_terminal().vcpu_id(), TWO_VCPU_CHECKPOINT_FIRST_ID);
+            assert_eq!(
+                result.first_terminal().vcpu_id(),
+                TWO_VCPU_CHECKPOINT_FIRST_ID
+            );
             assert_eq!(result.first_terminal().exit(), VcpuExit::Hlt);
             assert_eq!(
                 result.first_terminal().rip(),
                 TWO_VCPU_CHECKPOINT_FIRST_TERMINAL_RIP
             );
-            assert_eq!(result.second_terminal().vcpu_id(), TWO_VCPU_CHECKPOINT_SECOND_ID);
+            assert_eq!(
+                result.second_terminal().vcpu_id(),
+                TWO_VCPU_CHECKPOINT_SECOND_ID
+            );
             assert_eq!(result.second_terminal().exit(), VcpuExit::Hlt);
             assert_eq!(
                 result.second_terminal().rip(),
