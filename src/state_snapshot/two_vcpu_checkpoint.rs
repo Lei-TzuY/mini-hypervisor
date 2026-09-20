@@ -52,12 +52,12 @@ const TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_MARKER: u8 = b'B';
 const TWO_VCPU_FULL_CONTROLLER_MP_STATE_RUNNABLE: u32 = 0;
 const TWO_VCPU_FULL_CONTROLLER_MP_STATE_UNINITIALIZED: u32 = 1;
 const TWO_VCPU_FULL_CONTROLLER_MP_STATE_HALTED: u32 = 3;
-const TWO_VCPU_FULL_CONTROLLER_FIRST_CAPTURE_RIP: u64 = TWO_VCPU_CHECKPOINT_FIRST_ENTRY.get() + 15;
-const TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_RIP: u64 = TWO_VCPU_CHECKPOINT_SECOND_ENTRY.get() + 7;
+const TWO_VCPU_FULL_CONTROLLER_FIRST_CAPTURE_RIP: u64 = TWO_VCPU_CHECKPOINT_FIRST_ENTRY.get() + 14;
+const TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_RIP: u64 = TWO_VCPU_CHECKPOINT_SECOND_ENTRY.get() + 6;
 const TWO_VCPU_FULL_CONTROLLER_FIRST_COMPLETION_RIP: u64 =
-    TWO_VCPU_CHECKPOINT_FIRST_ENTRY.get() + 36;
+    TWO_VCPU_CHECKPOINT_FIRST_ENTRY.get() + 35;
 const TWO_VCPU_FULL_CONTROLLER_SECOND_COMPLETION_RIP: u64 =
-    TWO_VCPU_CHECKPOINT_SECOND_ENTRY.get() + 28;
+    TWO_VCPU_CHECKPOINT_SECOND_ENTRY.get() + 27;
 
 #[rustfmt::skip]
 const TWO_VCPU_FULL_CONTROLLER_FIRST_GUEST_BYTES: [u8; 42] = [
@@ -1140,9 +1140,10 @@ fn run_full_controller_debug_barrier(
     }
 
     // KVM_EXIT_IO exposes an operation whose userspace completion is finalized only when KVM_RUN
-    // is re-entered. Never checkpoint that intermediate kvm_run state. Single-step the dedicated
-    // adjacent NOP so the marker I/O retires first and KVM returns KVM_EXIT_DEBUG at a fully
-    // architectural boundary while the stack marker remains untouched.
+    // is re-entered. Never checkpoint that intermediate kvm_run state. Re-enter with guest
+    // single-step enabled: KVM retires the pending I/O instruction, advances RIP to the adjacent
+    // guard NOP, and returns KVM_EXIT_DEBUG before executing that NOP. The stack marker therefore
+    // remains untouched while the I/O completion is no longer outstanding.
     vcpu.set_guest_single_step(true)?;
     let step_result = vcpu.run_once();
     let disable_result = vcpu.set_guest_single_step(false);
@@ -1388,10 +1389,10 @@ mod tests {
             &TWO_VCPU_FULL_CONTROLLER_SECOND_GUEST_BYTES[2..7],
             &[0xb0, b'B', 0xe6, 0xe9, 0x90]
         );
-        assert_eq!(TWO_VCPU_FULL_CONTROLLER_FIRST_CAPTURE_RIP, 0x1000f);
-        assert_eq!(TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_RIP, 0x11007);
-        assert_eq!(TWO_VCPU_FULL_CONTROLLER_FIRST_COMPLETION_RIP, 0x10024);
-        assert_eq!(TWO_VCPU_FULL_CONTROLLER_SECOND_COMPLETION_RIP, 0x1101c);
+        assert_eq!(TWO_VCPU_FULL_CONTROLLER_FIRST_CAPTURE_RIP, 0x1000e);
+        assert_eq!(TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_RIP, 0x11006);
+        assert_eq!(TWO_VCPU_FULL_CONTROLLER_FIRST_COMPLETION_RIP, 0x10023);
+        assert_eq!(TWO_VCPU_FULL_CONTROLLER_SECOND_COMPLETION_RIP, 0x1101b);
     }
 
     #[test]
