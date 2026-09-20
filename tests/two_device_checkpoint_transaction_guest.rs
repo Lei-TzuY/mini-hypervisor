@@ -90,16 +90,10 @@ fn two_device_transaction_decodes_both_components_then_executes_restore_and_acce
                 X86_RFLAGS_INTERRUPT_ENABLE
             );
 
-            assert_eq!(
-                result.acceleration_doorbells(),
-                [0x1000_0100, 0x1000_1100]
-            );
+            assert_eq!(result.acceleration_doorbells(), [0x1000_0100, 0x1000_1100]);
             assert_eq!(result.acceleration_gsis(), [0, 1]);
             assert_eq!(result.acceleration_vectors(), [0x40, 0x41]);
-            assert_eq!(
-                result.acceleration_generation_events(),
-                [[1, 1], [1, 1]]
-            );
+            assert_eq!(result.acceleration_generation_events(), [[1, 1], [1, 1]]);
             assert_eq!(result.acceleration_proof(), b"RA0MB1NCE0PF1QD");
             assert_eq!(result.acceleration_completion_rflags() & 0x2, 0x2);
             assert_eq!(
