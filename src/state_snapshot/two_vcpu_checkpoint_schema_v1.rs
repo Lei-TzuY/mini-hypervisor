@@ -469,6 +469,106 @@ fn validate_mp_states(
 mod two_vcpu_full_controller_schema_tests {
     use super::*;
 
+    fn controller_header_fixture() -> Vec<u8> {
+        let primary_len = 1_usize;
+        let secondary_len = 1_usize;
+        let total_len = TWO_VCPU_FULL_CONTROLLER_HEADER_LEN
+            + primary_len
+            + secondary_len
+            + TWO_VCPU_FULL_CONTROLLER_STATE_LEN;
+        let mut bytes = vec![0_u8; total_len];
+        bytes[0..8].copy_from_slice(&VERSIONED_TWO_VCPU_FULL_CONTROLLER_MAGIC);
+        bytes[8..10].copy_from_slice(&VERSIONED_TWO_VCPU_FULL_CONTROLLER_VERSION.to_le_bytes());
+        bytes[10..12]
+            .copy_from_slice(&VERSIONED_TWO_VCPU_FULL_CONTROLLER_ARCH_X86_64.to_le_bytes());
+        bytes[12..16]
+            .copy_from_slice(&(TWO_VCPU_FULL_CONTROLLER_HEADER_LEN as u32).to_le_bytes());
+        bytes[16..24].copy_from_slice(&(total_len as u64).to_le_bytes());
+        bytes[24..32].copy_from_slice(&(primary_len as u64).to_le_bytes());
+        bytes[32..40].copy_from_slice(&(secondary_len as u64).to_le_bytes());
+        bytes[40..42].copy_from_slice(&0_u16.to_le_bytes());
+        bytes[42..44].copy_from_slice(&1_u16.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn controller_header_metadata_fails_closed_before_nested_decode() {
+        let base = controller_header_fixture();
+
+        let mut bad_magic = base.clone();
+        bad_magic[0] ^= 0xff;
+        assert_eq!(
+            VersionedTwoVcpuFullControllerCheckpointV1::decode(&bad_magic),
+            Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidMagic)
+        );
+
+        let mut bad_version = base.clone();
+        bad_version[8..10].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuFullControllerCheckpointV1::decode(&bad_version),
+            Err(VersionedTwoVcpuFullControllerCheckpointError::UnsupportedVersion(2))
+        );
+
+        let mut bad_architecture = base.clone();
+        bad_architecture[10..12].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuFullControllerCheckpointV1::decode(&bad_architecture),
+            Err(
+                VersionedTwoVcpuFullControllerCheckpointError::UnsupportedArchitecture(2)
+            )
+        );
+
+        let mut bad_header_len = base.clone();
+        bad_header_len[12..16].copy_from_slice(&63_u32.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuFullControllerCheckpointV1::decode(&bad_header_len),
+            Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidHeaderLength(63))
+        );
+
+        let mut bad_ids = base.clone();
+        bad_ids[40..42].copy_from_slice(&1_u16.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuFullControllerCheckpointV1::decode(&bad_ids),
+            Err(
+                VersionedTwoVcpuFullControllerCheckpointError::NonCanonicalVcpuIds {
+                    primary: 1,
+                    secondary: 1,
+                }
+            )
+        );
+
+        let mut bad_mp = base.clone();
+        bad_mp[48..52].copy_from_slice(&5_u32.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuFullControllerCheckpointV1::decode(&bad_mp),
+            Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidMpState {
+                vcpu: 1,
+                state: 5,
+            })
+        );
+
+        let mut bad_flags = base.clone();
+        bad_flags[52..56].copy_from_slice(&1_u32.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuFullControllerCheckpointV1::decode(&bad_flags),
+            Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroFlags(1))
+        );
+
+        let mut bad_reserved = base.clone();
+        bad_reserved[56..64].copy_from_slice(&1_u64.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuFullControllerCheckpointV1::decode(&bad_reserved),
+            Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroReserved(1))
+        );
+
+        let mut truncated = base;
+        truncated.pop();
+        assert!(matches!(
+            VersionedTwoVcpuFullControllerCheckpointV1::decode(&truncated),
+            Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidTotalLength { .. })
+        ));
+    }
+
     #[test]
     fn vcpu_ids_must_be_canonical() {
         assert!(validate_vcpu_ids([VcpuId::new(0), VcpuId::new(1)]).is_ok());
