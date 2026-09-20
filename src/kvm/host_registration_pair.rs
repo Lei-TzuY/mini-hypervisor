@@ -243,7 +243,7 @@ impl KvmBackend {
     }
 }
 
-fn default_two_host_registration_pair(
+pub(crate) fn default_two_host_registration_pair(
 ) -> Result<HostRegistrationSpecPair, crate::error::Error> {
     let first_spec = HostRegistrationSpec::new(
         TWO_HOST_REGISTRATION_FIRST_DOORBELL,
@@ -260,7 +260,7 @@ fn default_two_host_registration_pair(
     HostRegistrationSpecPair::new([second_spec, first_spec])
 }
 
-fn run_two_host_registration_acceleration_guest_with_pair(
+pub(crate) fn run_two_host_registration_acceleration_guest_with_pair(
     config: crate::config::VmConfig,
     pair: HostRegistrationSpecPair,
 ) -> Result<TwoHostRegistrationAccelerationResult, crate::error::Error> {
