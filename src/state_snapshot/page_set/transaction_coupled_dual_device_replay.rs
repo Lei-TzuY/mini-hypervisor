@@ -1971,7 +1971,7 @@ mod acceleration_checkpoint_quiescence {
         mmio: &mut MmioBus,
         msr_policy: &GuestMsrAccessPolicy,
         registrations: &ReconstructedHostRegistrationPair,
-        program: &GuestProgram,
+        program: &QuiescenceGuestProgram,
     ) -> Result<AccelerationCheckpointQuiescenceResult, Error> {
         let mut port_io = PortIoBus::with_debug_port();
         let _ = run_expected_debug_output(
@@ -2208,16 +2208,6 @@ mod acceleration_checkpoint_quiescence {
         capture_rip: u64,
         pending_rip: u64,
         completion_rip: u64,
-    }
-
-    impl From<QuiescenceGuestProgram> for GuestProgram {
-        fn from(program: QuiescenceGuestProgram) -> Self {
-            GuestProgram {
-                bytes: program.bytes,
-                capture_rip: program.capture_rip,
-                completion_rip: program.completion_rip,
-            }
-        }
     }
 
     #[cfg(test)]
