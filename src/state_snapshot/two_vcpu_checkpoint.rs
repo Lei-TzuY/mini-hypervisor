@@ -640,8 +640,16 @@ fn corrupt_full_controller_state(
     second: &Vcpu,
     vm: &Vm,
 ) -> Result<(), Error> {
-    vm.restore_master_pic_state(&checkpoint.master_pic.with_imr(checkpoint.master_pic.imr() ^ 0x01))?;
-    vm.restore_slave_pic_state(&checkpoint.slave_pic.with_imr(checkpoint.slave_pic.imr() ^ 0x02))?;
+    vm.restore_master_pic_state(
+        &checkpoint
+            .master_pic
+            .with_imr(checkpoint.master_pic.imr() ^ 0x01),
+    )?;
+    vm.restore_slave_pic_state(
+        &checkpoint
+            .slave_pic
+            .with_imr(checkpoint.slave_pic.imr() ^ 0x02),
+    )?;
 
     let ioapic_entry = checkpoint
         .ioapic
