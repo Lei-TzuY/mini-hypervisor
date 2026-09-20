@@ -432,16 +432,12 @@ impl TwoVcpuTwoDeviceCheckpointTransaction {
         }
 
         token
-            .validate_device(
-                self.checkpoint
-                    .device(token.bar0())
-                    .ok_or_else(|| {
-                        page_set_error(
-                            "two-vCPU pending-completion restored token binding",
-                            format!("token BAR {:#x} disappeared", token.bar0()),
-                        )
-                    })?,
-            )
+            .validate_device(self.checkpoint.device(token.bar0()).ok_or_else(|| {
+                page_set_error(
+                    "two-vCPU pending-completion restored token binding",
+                    format!("token BAR {:#x} disappeared", token.bar0()),
+                )
+            })?)
             .map_err(|error| {
                 page_set_error(
                     "two-vCPU pending-completion restored token validation",
