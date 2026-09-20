@@ -208,7 +208,8 @@ impl super::MmioBus {
         ] {
             if snapshot.bar0() != address
                 || !snapshot.checkpoint_backing_portable()
-                || !snapshot.checkpoint_fully_quiescent() {
+                || !snapshot.checkpoint_fully_quiescent()
+            {
                 return Err(virtio_blk_checkpoint_error(
                     "restore two virtio-blk checkpoint states",
                     format!(
