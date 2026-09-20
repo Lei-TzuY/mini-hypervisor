@@ -1,8 +1,8 @@
 use crate::error::{Error, HostEnvironmentError};
 use crate::memory::GuestMemory;
 use crate::portio::pci::virtio_blk::{
-    VirtioBlkDevice, VirtioBlkPendingCompletionToken, VirtioBlkProcessError,
-    VirtioBlkQueueCompletion, VIRTIO_BLK_SECTOR_SIZE,
+    VirtioBlkDevice, VirtioBlkPendingCompletionToken, VirtioBlkPendingNotificationToken,
+    VirtioBlkProcessError, VirtioBlkQueueCompletion, VIRTIO_BLK_SECTOR_SIZE,
 };
 use std::io;
 
@@ -89,6 +89,23 @@ impl super::MmioBus {
         };
         let token = VirtioBlkPendingCompletionToken::capture(device).map_err(|error| {
             virtio_blk_checkpoint_error("capture virtio-blk pending completion", error.to_string())
+        })?;
+        Ok(Some((device.clone(), token)))
+    }
+
+    pub(crate) fn capture_virtio_blk_checkpoint_with_pending_notification_at(
+        &self,
+        address: u64,
+    ) -> Result<Option<(VirtioBlkDevice, VirtioBlkPendingNotificationToken)>, Error> {
+        let Some(device) = self
+            .virtio_blk_devices
+            .iter()
+            .find(|device| device.bar0() == address)
+        else {
+            return Ok(None);
+        };
+        let token = VirtioBlkPendingNotificationToken::capture(device).map_err(|error| {
+            virtio_blk_checkpoint_error("capture virtio-blk pending notification", error.to_string())
         })?;
         Ok(Some((device.clone(), token)))
     }
@@ -297,6 +314,104 @@ impl super::MmioBus {
         {
             return Err(virtio_blk_checkpoint_error(
                 "restore two virtio-blk checkpoint states with pending completion",
+                "all live devices must be fully quiescent before token-aware restore",
+            ));
+        }
+
+        if first_index < second_index {
+            let (before_second, second_and_after) =
+                self.virtio_blk_devices.split_at_mut(second_index);
+            before_second[first_index] = first_snapshot.clone();
+            second_and_after[0] = second_snapshot.clone();
+        } else {
+            let (before_first, first_and_after) = self.virtio_blk_devices.split_at_mut(first_index);
+            before_first[second_index] = second_snapshot.clone();
+            first_and_after[0] = first_snapshot.clone();
+        }
+        Ok(())
+    }
+
+    pub(crate) fn restore_two_virtio_blk_checkpoints_atomic_with_pending_notification(
+        &mut self,
+        checkpoints: [(u64, &VirtioBlkDevice); 2],
+        token: &VirtioBlkPendingNotificationToken,
+    ) -> Result<(), Error> {
+        let [(first_address, first_snapshot), (second_address, second_snapshot)] = checkpoints;
+        if first_address >= second_address {
+            return Err(virtio_blk_checkpoint_error(
+                "restore two virtio-blk checkpoint states with pending notification",
+                "two-device checkpoint BARs must be distinct and strictly increasing",
+            ));
+        }
+        if token.bar0() != first_address && token.bar0() != second_address {
+            return Err(virtio_blk_checkpoint_error(
+                "restore two virtio-blk checkpoint states with pending notification",
+                format!(
+                    "pending-notification BAR {:#x} is outside checkpoint BARs",
+                    token.bar0()
+                ),
+            ));
+        }
+
+        for (address, snapshot) in [
+            (first_address, first_snapshot),
+            (second_address, second_snapshot),
+        ] {
+            if snapshot.bar0() != address {
+                return Err(virtio_blk_checkpoint_error(
+                    "restore two virtio-blk checkpoint states with pending notification",
+                    format!(
+                        "snapshot BAR {:#x} does not match {address:#x}",
+                        snapshot.bar0()
+                    ),
+                ));
+            }
+            if address == token.bar0() {
+                token.validate_device(snapshot).map_err(|error| {
+                    virtio_blk_checkpoint_error(
+                        "restore pending virtio-blk notification",
+                        error.to_string(),
+                    )
+                })?;
+            } else if !snapshot.checkpoint_fully_quiescent() {
+                return Err(virtio_blk_checkpoint_error(
+                    "restore two virtio-blk checkpoint states with pending notification",
+                    format!("non-token device at BAR {address:#x} is not fully quiescent"),
+                ));
+            }
+        }
+
+        let first_index = self
+            .virtio_blk_devices
+            .iter()
+            .position(|device| device.bar0() == first_address)
+            .ok_or_else(|| {
+                virtio_blk_checkpoint_error(
+                    "restore two virtio-blk checkpoint states with pending notification",
+                    format!("live virtio-blk device at BAR {first_address:#x} is missing"),
+                )
+            })?;
+        let second_index = self
+            .virtio_blk_devices
+            .iter()
+            .position(|device| device.bar0() == second_address)
+            .ok_or_else(|| {
+                virtio_blk_checkpoint_error(
+                    "restore two virtio-blk checkpoint states with pending notification",
+                    format!("live virtio-blk device at BAR {second_address:#x} is missing"),
+                )
+            })?;
+        if first_index == second_index {
+            return Err(virtio_blk_checkpoint_error(
+                "restore two virtio-blk checkpoint states with pending notification",
+                "two checkpoint BARs resolved to the same live device",
+            ));
+        }
+        if !self.virtio_blk_devices[first_index].checkpoint_fully_quiescent()
+            || !self.virtio_blk_devices[second_index].checkpoint_fully_quiescent()
+        {
+            return Err(virtio_blk_checkpoint_error(
+                "restore two virtio-blk checkpoint states with pending notification",
                 "all live devices must be fully quiescent before token-aware restore",
             ));
         }
