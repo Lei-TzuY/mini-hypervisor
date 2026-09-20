@@ -334,7 +334,10 @@ mod two_vcpu_two_device_transaction_tests {
         .unwrap();
         assert!(require_registration_pair_matches_devices(
             wrong,
-            [TWO_HOST_REGISTRATION_FIRST_BAR, TWO_HOST_REGISTRATION_SECOND_BAR],
+            [
+                TWO_HOST_REGISTRATION_FIRST_BAR,
+                TWO_HOST_REGISTRATION_SECOND_BAR,
+            ],
         )
         .is_err());
     }
