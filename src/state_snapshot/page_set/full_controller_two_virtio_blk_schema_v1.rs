@@ -114,13 +114,13 @@ impl VersionedFullControllerTwoVirtioBlkCheckpointV1 {
                 .device(bars[0])
                 .expect("checkpoint BAR set owns the first device"),
         )
-        .map_err(|error| Self::map_device_state_error(error))?;
+        .map_err(Self::map_device_state_error)?;
         let second = VirtioBlkCheckpointState::capture(
             checkpoint
                 .device(bars[1])
                 .expect("checkpoint BAR set owns the second device"),
         )
-        .map_err(|error| Self::map_device_state_error(error))?;
+        .map_err(Self::map_device_state_error)?;
         validate_two_device_bars([first.bar0, second.bar0])?;
         Ok(Self {
             controller,
