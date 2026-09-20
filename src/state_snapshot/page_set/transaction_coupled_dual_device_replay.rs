@@ -1072,6 +1072,745 @@ fn coupled_error(detail: impl Into<String>) -> Error {
     })
 }
 
+
+mod write_readback {
+    use super::*;
+    use crate::portio::pci::virtio_blk::{VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT};
+    use crate::portio::virtio_blk_fixture::deterministic_write_readback_sector;
+
+    pub const TRANSACTION_COUPLED_WRITE_READBACK_PROOF: &[u8; 17] =
+        b"W0aMR0aXY1bNZ1bQD";
+
+    const FIRST_WRITE_NOTIFY: u8 = b'W';
+    const FIRST_READ_NOTIFY: u8 = b'R';
+    const FIRST_WRITE_RESUMED: u8 = b'M';
+    const FIRST_READ_RESUMED: u8 = b'X';
+    const SECOND_WRITE_NOTIFY: u8 = b'Y';
+    const SECOND_READ_NOTIFY: u8 = b'Z';
+    const SECOND_WRITE_RESUMED: u8 = b'N';
+    const SECOND_READ_RESUMED: u8 = b'Q';
+    const WRITE_READBACK_EXIT_BUDGET: u32 = 40;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum RequestKind {
+        Write,
+        Read,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct TransactionCoupledDualDeviceWriteReadbackResult {
+        mutation: BoundedFullControllerTwoVirtioBlkCheckpointComparison,
+        restored: BoundedFullControllerTwoVirtioBlkCheckpointComparison,
+        transaction_version: u16,
+        encoded_len: usize,
+        bars: [u64; 2],
+        queue_indices: [[u16; 2]; 2],
+        doorbell_events: [u64; 2],
+        irqfd_signals: [u32; 2],
+        write_payloads: [Vec<u8>; 2],
+        readback: [Vec<u8>; 2],
+        backing: [Vec<u8>; 2],
+        proof: Vec<u8>,
+        completion_rflags: u64,
+    }
+
+    impl TransactionCoupledDualDeviceWriteReadbackResult {
+        #[must_use]
+        pub const fn mutation(&self) -> &BoundedFullControllerTwoVirtioBlkCheckpointComparison {
+            &self.mutation
+        }
+
+        #[must_use]
+        pub const fn restored(&self) -> &BoundedFullControllerTwoVirtioBlkCheckpointComparison {
+            &self.restored
+        }
+
+        #[must_use]
+        pub const fn transaction_version(&self) -> u16 {
+            self.transaction_version
+        }
+
+        #[must_use]
+        pub const fn encoded_len(&self) -> usize {
+            self.encoded_len
+        }
+
+        #[must_use]
+        pub const fn bars(&self) -> [u64; 2] {
+            self.bars
+        }
+
+        #[must_use]
+        pub const fn queue_indices(&self) -> [[u16; 2]; 2] {
+            self.queue_indices
+        }
+
+        #[must_use]
+        pub const fn doorbell_events(&self) -> [u64; 2] {
+            self.doorbell_events
+        }
+
+        #[must_use]
+        pub const fn irqfd_signals(&self) -> [u32; 2] {
+            self.irqfd_signals
+        }
+
+        #[must_use]
+        pub fn write_payloads(&self) -> [&[u8]; 2] {
+            [&self.write_payloads[0], &self.write_payloads[1]]
+        }
+
+        #[must_use]
+        pub fn readback(&self) -> [&[u8]; 2] {
+            [&self.readback[0], &self.readback[1]]
+        }
+
+        #[must_use]
+        pub fn backing(&self) -> [&[u8]; 2] {
+            [&self.backing[0], &self.backing[1]]
+        }
+
+        #[must_use]
+        pub fn proof(&self) -> &[u8] {
+            &self.proof
+        }
+
+        #[must_use]
+        pub const fn completion_rflags(&self) -> u64 {
+            self.completion_rflags
+        }
+    }
+
+    #[derive(Debug)]
+    struct WriteReadbackEvidence {
+        doorbell_events: [u64; 2],
+        irqfd_signals: [u32; 2],
+        proof: Vec<u8>,
+        completion_rflags: u64,
+    }
+
+    pub fn run_transaction_coupled_dual_device_write_readback_guest(
+    ) -> Result<TransactionCoupledDualDeviceWriteReadbackResult, Error> {
+        let payloads = [
+            deterministic_write_readback_sector(),
+            second_write_readback_sector(),
+        ];
+        if payloads[0] == payloads[1] {
+            return Err(coupled_error("write payloads must be distinct"));
+        }
+
+        let program = build_write_readback_program(&payloads);
+        let guest = FlatGuestImage::new(ENTRY, ENTRY, &program.bytes)?;
+        let first_handler_bytes = build_handler(
+            LONG_MODE_MMIO_VIRTUAL_PAGE,
+            FIRST_HANDLER_MARKER,
+            FIRST_ACK_MARKER,
+        );
+        let first_handler =
+            FlatGuestImage::new(FIRST_HANDLER, FIRST_HANDLER, &first_handler_bytes)?;
+        let second_handler_bytes = build_handler(
+            MULTI_DEVICE_SECOND_VIRTUAL_PAGE,
+            SECOND_HANDLER_MARKER,
+            SECOND_ACK_MARKER,
+        );
+        let second_handler =
+            FlatGuestImage::new(SECOND_HANDLER, SECOND_HANDLER, &second_handler_bytes)?;
+
+        let backend = KvmBackend::open()?;
+        let mut vm = backend.create_vm_with_irqchip()?;
+        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE)?;
+        let mmio_layout = LongModeMmioBootLayout::with_device_mappings(
+            memory.region(),
+            guest.entry(),
+            LONG_MODE_MMIO_STACK_POINTER,
+            vec![
+                LongModeMmioPageMapping::new(
+                    LONG_MODE_MMIO_VIRTUAL_PAGE,
+                    crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+                ),
+                LongModeMmioPageMapping::new(
+                    MULTI_DEVICE_SECOND_VIRTUAL_PAGE,
+                    crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+                ),
+            ],
+        )
+        .expect("fixed write/readback MMIO mappings remain valid");
+        let interrupt_layout = LongModeInterruptLayout::with_gates(
+            memory.region(),
+            guest.entry(),
+            LONG_MODE_MMIO_STACK_POINTER,
+            vec![
+                LongModeInterruptGate::new(
+                    TWO_HOST_REGISTRATION_FIRST_VECTOR,
+                    first_handler.entry(),
+                ),
+                LongModeInterruptGate::new(
+                    TWO_HOST_REGISTRATION_SECOND_VECTOR,
+                    second_handler.entry(),
+                ),
+            ],
+        )
+        .expect("fixed write/readback interrupt gates remain valid");
+        let corrupt_layout = LongModeBootLayout::new(memory.region(), CORRUPT_ENTRY, CORRUPT_STACK)
+            .expect("fixed write/readback corruption layout remains valid");
+
+        interrupt_layout.install_tables(&mut memory)?;
+        mmio_layout.install_page_tables(&mut memory)?;
+        guest.load(&mut memory)?;
+        first_handler.load(&mut memory)?;
+        second_handler.load(&mut memory)?;
+        initialize_write_queue_memory(&mut memory, FIRST_QUEUE, &payloads[0])?;
+        initialize_write_queue_memory(&mut memory, SECOND_QUEUE, &payloads[1])?;
+        vm.register_guest_memory(memory)?;
+
+        let mut vcpu = vm.create_vcpu(VcpuId::BOOT)?;
+        vcpu.initialize_long_mode_interrupts(&interrupt_layout)?;
+        let _ = vcpu.configure_legacy_pic_extint()?;
+        let msr_policy = GuestMsrAccessPolicy::from_host(backend.host_msr_indices(), &[])
+            .expect("empty write/readback MSR policy is valid by construction");
+
+        let mut mmio = MmioBus::empty();
+        mmio.register_virtio_blk_device_at(crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR)
+            .expect("fixed first write/readback BAR remains available");
+        mmio.register_virtio_blk_device_at(crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR)
+            .expect("fixed second write/readback BAR remains available");
+        let first_ready = ready_device(
+            crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+            FIRST_QUEUE,
+        )?;
+        let second_ready = ready_device(
+            crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+            SECOND_QUEUE,
+        )?;
+        mmio.restore_two_virtio_blk_checkpoints_atomic([
+            (
+                crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+                &first_ready,
+            ),
+            (
+                crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+                &second_ready,
+            ),
+        ])?;
+
+        run_to_capture(&mut vcpu, program.capture_rip)?;
+        require_ready_devices(&mmio)?;
+
+        let captured = BoundedFullControllerTwoVirtioBlkCheckpoint::capture(
+            &vcpu,
+            &vm,
+            &msr_policy,
+            &mmio,
+            [
+                crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+                crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+            ],
+            &[
+                TRANSACTION_COUPLED_SECOND_PAGE,
+                TRANSACTION_COUPLED_FIRST_PAGE,
+            ],
+        )?;
+        require_quiescent_zero_zero(&captured)?;
+
+        let encoded = {
+            let pair = default_two_host_registration_pair()?;
+            VersionedTwoDeviceCheckpointTransactionV1::from_checkpoint_and_pair(&captured, pair)
+                .map_err(|error| coupled_error(error.to_string()))?
+                .encode()
+                .map_err(|error| coupled_error(error.to_string()))?
+        };
+        drop(captured);
+
+        let decoded = VersionedTwoDeviceCheckpointTransactionV1::decode(&encoded)
+            .map_err(|error| coupled_error(error.to_string()))?;
+        if decoded
+            .encode()
+            .map_err(|error| coupled_error(error.to_string()))?
+            != encoded
+        {
+            return Err(coupled_error(
+                "write/readback transaction did not re-encode canonically",
+            ));
+        }
+        let transaction_version = decoded.version();
+        let bars = decoded.checkpoint_bars();
+        let (checkpoint, registration_pair) = decoded
+            .materialize(backend.host_msr_indices())
+            .map_err(|error| coupled_error(error.to_string()))?;
+        drop(decoded);
+
+        corrupt_owned_state(&checkpoint, &vcpu, &mut vm, &mut mmio, &corrupt_layout)?;
+        let mutation = checkpoint.verify(&vcpu, &vm, &mmio)?;
+        require_mutation_mismatch(&mutation)?;
+
+        let restored = checkpoint.restore_and_verify(&vcpu, &mut vm, &mut mmio)?;
+        require_exact_restore(&restored)?;
+        require_restored_zero_zero(&mmio)?;
+
+        let registrations =
+            HostRegistrationPairCheckpoint::capture(registration_pair).reconstruct(&backend, &vm)?;
+        let replay = run_write_readback_replay(
+            &mut vcpu,
+            &mut vm,
+            &mut mmio,
+            &registrations,
+            program.completion_rip,
+            &payloads,
+        );
+        let cleanup = registrations.deassign(&vm);
+        let replay = match (replay, cleanup) {
+            (Ok(replay), Ok(())) => replay,
+            (Err(replay_error), Err(cleanup_error)) => {
+                return Err(coupled_error(format!(
+                    "write/readback replay failed: {replay_error}; cleanup also failed: {cleanup_error}"
+                )));
+            }
+            (_, Err(error)) => return Err(error),
+            (Err(error), Ok(())) => return Err(error),
+        };
+
+        let queue_indices = [
+            queue_indices(&mmio, crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR)?,
+            queue_indices(&mmio, crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR)?,
+        ];
+        if queue_indices != [[2, 2], [2, 2]] {
+            return Err(coupled_error(format!(
+                "write/readback queues did not advance independently to 2/2: {queue_indices:?}"
+            )));
+        }
+
+        let readback = [read_data(&vm, FIRST_DATA)?, read_data(&vm, SECOND_DATA)?];
+        let backing = [
+            mmio.virtio_blk_sector_at(crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR)
+                .ok_or_else(|| coupled_error("first write/readback backing disappeared"))?
+                .to_vec(),
+            mmio.virtio_blk_sector_at(crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR)
+                .ok_or_else(|| coupled_error("second write/readback backing disappeared"))?
+                .to_vec(),
+        ];
+        for index in 0..2 {
+            if readback[index].as_slice() != payloads[index]
+                || backing[index].as_slice() != payloads[index]
+            {
+                return Err(coupled_error(format!(
+                    "device {index} write/readback continuity mismatch"
+                )));
+            }
+        }
+        if backing[0] == backing[1] {
+            return Err(coupled_error(
+                "dual-device write/readback backings unexpectedly alias to the same payload",
+            ));
+        }
+
+        Ok(TransactionCoupledDualDeviceWriteReadbackResult {
+            mutation,
+            restored,
+            transaction_version,
+            encoded_len: encoded.len(),
+            bars,
+            queue_indices,
+            doorbell_events: replay.doorbell_events,
+            irqfd_signals: replay.irqfd_signals,
+            write_payloads: [payloads[0].to_vec(), payloads[1].to_vec()],
+            readback,
+            backing,
+            proof: replay.proof,
+            completion_rflags: replay.completion_rflags,
+        })
+    }
+
+    fn run_write_readback_replay(
+        vcpu: &mut Vcpu,
+        vm: &mut crate::kvm::Vm,
+        mmio: &mut MmioBus,
+        registrations: &ReconstructedHostRegistrationPair,
+        completion_rip: u64,
+        payloads: &[[u8; VIRTIO_BLK_SECTOR_SIZE]; 2],
+    ) -> Result<WriteReadbackEvidence, Error> {
+        let mut port_io = PortIoBus::with_debug_port();
+        let mut doorbell_events = [0_u64; 2];
+        let mut irqfd_signals = [0_u32; 2];
+        let mut completions: [Option<VirtioBlkQueueCompletion>; 4] = [None; 4];
+
+        for _ in 0..WRITE_READBACK_EXIT_BUDGET {
+            let exit = vcpu.run_once()?;
+            let disposition = dispatch_vcpu_exit(vcpu, exit, &mut port_io, mmio)?;
+            match disposition {
+                VmExitDisposition::Continue(continuation) => {
+                    let request = if is_debug_output(&continuation, FIRST_WRITE_NOTIFY) {
+                        Some((0, RequestKind::Write))
+                    } else if is_debug_output(&continuation, FIRST_READ_NOTIFY) {
+                        Some((0, RequestKind::Read))
+                    } else if is_debug_output(&continuation, SECOND_WRITE_NOTIFY) {
+                        Some((1, RequestKind::Write))
+                    } else if is_debug_output(&continuation, SECOND_READ_NOTIFY) {
+                        Some((1, RequestKind::Read))
+                    } else {
+                        None
+                    };
+                    if let Some((index, kind)) = request {
+                        service_write_readback_notification(
+                            index,
+                            kind,
+                            registrations,
+                            vm,
+                            mmio,
+                            &mut doorbell_events,
+                            &mut irqfd_signals,
+                            &mut completions,
+                            payloads,
+                        )?;
+                    } else if is_debug_output(&continuation, DONE_MARKER) {
+                        let proof = port_io.debug_output().unwrap_or(&[]).to_vec();
+                        if proof.as_slice() != TRANSACTION_COUPLED_WRITE_READBACK_PROOF {
+                            return Err(coupled_error(format!(
+                                "expected write/readback proof {:?}, got {proof:?}",
+                                TRANSACTION_COUPLED_WRITE_READBACK_PROOF
+                            )));
+                        }
+                        validate_write_readback_completions(completions)?;
+                        if doorbell_events != [2, 2] || irqfd_signals != [2, 2] {
+                            return Err(coupled_error(format!(
+                                "expected two ioeventfd and irqfd events per device, got doorbells={doorbell_events:?} irqfd={irqfd_signals:?}"
+                            )));
+                        }
+                        if mmio.take_device_event_record().is_some() {
+                            return Err(coupled_error(
+                                "write/readback acceleration left a userspace notify event",
+                            ));
+                        }
+                        let (_, completion_rflags) = single_step_to_quiescence(
+                            vcpu,
+                            completion_rip,
+                            "coupled write/readback completion",
+                        )?;
+                        return Ok(WriteReadbackEvidence {
+                            doorbell_events,
+                            irqfd_signals,
+                            proof,
+                            completion_rflags,
+                        });
+                    }
+                }
+                VmExitDisposition::Stopped(report) => {
+                    return Err(coupled_error(format!(
+                        "write/readback replay stopped before completion: {report}"
+                    )));
+                }
+            }
+        }
+
+        Err(coupled_error(
+            "write/readback replay exceeded bounded exit budget",
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn service_write_readback_notification(
+        index: usize,
+        kind: RequestKind,
+        registrations: &ReconstructedHostRegistrationPair,
+        vm: &mut crate::kvm::Vm,
+        mmio: &mut MmioBus,
+        doorbell_events: &mut [u64; 2],
+        irqfd_signals: &mut [u32; 2],
+        completions: &mut [Option<VirtioBlkQueueCompletion>; 4],
+        payloads: &[[u8; VIRTIO_BLK_SECTOR_SIZE]; 2],
+    ) -> Result<(), Error> {
+        let slot = index * 2 + usize::from(kind == RequestKind::Read);
+        if completions[slot].is_some() {
+            return Err(coupled_error(format!(
+                "device {index} {kind:?} notification was duplicated"
+            )));
+        }
+        if kind == RequestKind::Read && completions[index * 2].is_none() {
+            return Err(coupled_error(format!(
+                "device {index} read arrived before its write completion"
+            )));
+        }
+        if mmio.take_device_event_record().is_some() {
+            return Err(coupled_error(format!(
+                "device {index} {kind:?} notify unexpectedly reached userspace MMIO"
+            )));
+        }
+        let count = registrations.wait_doorbell(index, WAIT_MILLIS)?;
+        if count != 1 {
+            return Err(coupled_error(format!(
+                "device {index} {kind:?} ioeventfd counter was {count}, expected 1"
+            )));
+        }
+        doorbell_events[index] += count;
+        let bar = if index == 0 {
+            crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR
+        } else {
+            crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR
+        };
+        if !mmio.apply_virtio_blk_host_notification(bar, 0)? {
+            return Err(coupled_error(format!(
+                "device {index} lost its restored BAR during {kind:?}"
+            )));
+        }
+        let memory = vm
+            .guest_memory_mut()
+            .ok_or_else(|| coupled_error("write/readback VM lost registered guest memory"))?;
+        let completion = mmio
+            .process_virtio_blk_notification(bar, memory)
+            .map_err(|error| coupled_error(format!("device {index} {kind:?} failed: {error}")))?
+            .ok_or_else(|| coupled_error(format!("device {index} BAR disappeared")))?;
+
+        match kind {
+            RequestKind::Write => {
+                if completion.descriptor_id() != 0
+                    || completion.length() != 1
+                    || completion.sector() != 0
+                {
+                    return Err(coupled_error(format!(
+                        "device {index} write completion mismatch: {completion:?}"
+                    )));
+                }
+                let backing = mmio
+                    .virtio_blk_sector_at(bar)
+                    .ok_or_else(|| coupled_error(format!("device {index} backing disappeared")))?;
+                if backing.as_slice() != payloads[index] {
+                    return Err(coupled_error(format!(
+                        "device {index} write did not mutate its backing to the requested payload"
+                    )));
+                }
+            }
+            RequestKind::Read => {
+                if completion.descriptor_id() != 0
+                    || completion.length() != (VIRTIO_BLK_SECTOR_SIZE + 1) as u32
+                    || completion.sector() != 0
+                {
+                    return Err(coupled_error(format!(
+                        "device {index} read completion mismatch: {completion:?}"
+                    )));
+                }
+            }
+        }
+        completions[slot] = Some(completion);
+        registrations.signal_irq(index)?;
+        irqfd_signals[index] += 1;
+        Ok(())
+    }
+
+    fn validate_write_readback_completions(
+        completions: [Option<VirtioBlkQueueCompletion>; 4],
+    ) -> Result<(), Error> {
+        for (index, completion) in completions.into_iter().enumerate() {
+            if completion.is_none() {
+                return Err(coupled_error(format!(
+                    "write/readback completion slot {index} was never produced"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn initialize_write_queue_memory(
+        memory: &mut GuestMemory,
+        queue: QueueLayout,
+        payload: &[u8; VIRTIO_BLK_SECTOR_SIZE],
+    ) -> Result<(), Error> {
+        write_descriptor(memory, queue, 0, queue.header, 16, VIRTQ_DESC_F_NEXT, 1)?;
+        write_descriptor(
+            memory,
+            queue,
+            1,
+            queue.data,
+            VIRTIO_BLK_SECTOR_SIZE as u32,
+            VIRTQ_DESC_F_NEXT,
+            2,
+        )?;
+        write_descriptor(memory, queue, 2, queue.status, 1, VIRTQ_DESC_F_WRITE, 0)?;
+
+        let mut header = [0_u8; 16];
+        header[0..4].copy_from_slice(&VIRTIO_BLK_T_OUT.to_le_bytes());
+        memory.write(GuestPhysAddr::new(queue.header), &header)?;
+        memory.write(GuestPhysAddr::new(queue.data), payload)?;
+        memory.write(GuestPhysAddr::new(queue.status), &[0xff])?;
+        memory.write(
+            GuestPhysAddr::new(queue.avail),
+            &[0, 0, 0, 0, 0, 0, 0, 0],
+        )?;
+        memory.write(
+            GuestPhysAddr::new(queue.used),
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        )?;
+        Ok(())
+    }
+
+    fn build_write_readback_program(
+        payloads: &[[u8; VIRTIO_BLK_SECTOR_SIZE]; 2],
+    ) -> GuestProgram {
+        let mut code = Vec::new();
+        emit_pic_setup(&mut code);
+        code.extend_from_slice(&[0xfb, 0x90]);
+        emit_debug(&mut code, CAPTURE_MARKER);
+        let capture_rip = ENTRY.get() + code.len() as u64;
+        code.push(0x90);
+
+        emit_write_then_read(
+            &mut code,
+            FIRST_QUEUE,
+            LONG_MODE_MMIO_VIRTUAL_PAGE,
+            FIRST_WRITE_NOTIFY,
+            FIRST_WRITE_RESUMED,
+            FIRST_READ_NOTIFY,
+            FIRST_READ_RESUMED,
+            &payloads[0],
+        );
+        emit_write_then_read(
+            &mut code,
+            SECOND_QUEUE,
+            MULTI_DEVICE_SECOND_VIRTUAL_PAGE,
+            SECOND_WRITE_NOTIFY,
+            SECOND_WRITE_RESUMED,
+            SECOND_READ_NOTIFY,
+            SECOND_READ_RESUMED,
+            &payloads[1],
+        );
+
+        emit_debug(&mut code, DONE_MARKER);
+        let completion_rip = ENTRY.get() + code.len() as u64;
+        code.push(0x90);
+        code.push(0xf4);
+
+        GuestProgram {
+            bytes: code,
+            capture_rip,
+            completion_rip,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_write_then_read(
+        code: &mut Vec<u8>,
+        queue: QueueLayout,
+        virtual_bar: u64,
+        write_notify: u8,
+        write_resumed: u8,
+        read_notify: u8,
+        read_resumed: u8,
+        payload: &[u8; VIRTIO_BLK_SECTOR_SIZE],
+    ) {
+        code.push(0xfa);
+        emit_movabs(code, 7, queue.avail);
+        code.extend_from_slice(&[0xc7, 0x07, 0x00, 0x00, 0x01, 0x00]);
+        emit_movabs(code, 3, virtual_bar);
+        code.extend_from_slice(&[0x66, 0xc7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
+        emit_debug(code, write_notify);
+        code.extend_from_slice(&[0xfb, 0xf4]);
+        emit_write_completion_checks(code, queue);
+        emit_debug(code, write_resumed);
+
+        code.push(0xfa);
+        emit_movabs(code, 7, queue.desc);
+        code.extend_from_slice(&[0xc7, 0x47, 0x1c]);
+        let descriptor_tail =
+            u32::from(VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE) | (2_u32 << 16);
+        code.extend_from_slice(&descriptor_tail.to_le_bytes());
+        emit_movabs(code, 7, queue.header);
+        code.extend_from_slice(&[0xc7, 0x07]);
+        code.extend_from_slice(&VIRTIO_BLK_T_IN.to_le_bytes());
+        emit_movabs(code, 7, queue.status);
+        code.extend_from_slice(&[0xc6, 0x07, 0xff]);
+        emit_movabs(code, 7, queue.data);
+        emit_movabs(code, 0, 0x5a5a_5a5a_5a5a_5a5a);
+        code.extend_from_slice(&[0x48, 0xc7, 0xc1, 0x40, 0x00, 0x00, 0x00]);
+        code.extend_from_slice(&[0xf3, 0x48, 0xab]);
+        emit_movabs(code, 7, queue.avail);
+        code.extend_from_slice(&[0xc7, 0x07, 0x00, 0x00, 0x02, 0x00]);
+        code.extend_from_slice(&[0x66, 0xc7, 0x47, 0x06, 0x00, 0x00]);
+        emit_movabs(code, 3, virtual_bar);
+        code.extend_from_slice(&[0x66, 0xc7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
+        emit_debug(code, read_notify);
+        code.extend_from_slice(&[0xfb, 0xf4]);
+        emit_read_completion_checks(code, queue, payload);
+        emit_debug(code, read_resumed);
+    }
+
+    fn emit_write_completion_checks(code: &mut Vec<u8>, queue: QueueLayout) {
+        emit_movabs(code, 7, queue.used);
+        code.extend_from_slice(&[0x0f, 0xb7, 0x47, 0x02, 0x83, 0xf8, 0x01]);
+        emit_equal_or_ud2(code);
+        code.extend_from_slice(&[0x8b, 0x47, 0x04, 0x85, 0xc0]);
+        emit_equal_or_ud2(code);
+        code.extend_from_slice(&[0x8b, 0x47, 0x08]);
+        emit_cmp_eax(code, 1);
+        emit_movabs(code, 7, queue.status);
+        code.extend_from_slice(&[0x8a, 0x07]);
+        emit_cmp_al(code, VIRTIO_BLK_S_OK);
+    }
+
+    fn emit_read_completion_checks(
+        code: &mut Vec<u8>,
+        queue: QueueLayout,
+        payload: &[u8; VIRTIO_BLK_SECTOR_SIZE],
+    ) {
+        emit_movabs(code, 7, queue.used);
+        code.extend_from_slice(&[0x0f, 0xb7, 0x47, 0x02, 0x83, 0xf8, 0x02]);
+        emit_equal_or_ud2(code);
+        code.extend_from_slice(&[0x8b, 0x47, 0x0c, 0x85, 0xc0]);
+        emit_equal_or_ud2(code);
+        code.extend_from_slice(&[0x8b, 0x47, 0x10]);
+        emit_cmp_eax(code, (VIRTIO_BLK_SECTOR_SIZE + 1) as u32);
+        emit_movabs(code, 7, queue.status);
+        code.extend_from_slice(&[0x8a, 0x07]);
+        emit_cmp_al(code, VIRTIO_BLK_S_OK);
+
+        let middle = u64::from_le_bytes(payload[8..16].try_into().expect("fixed payload slice"));
+        let tail = u64::from_le_bytes(
+            payload[VIRTIO_BLK_SECTOR_SIZE - 8..]
+                .try_into()
+                .expect("fixed payload tail"),
+        );
+        emit_movabs(code, 7, queue.data);
+        code.extend_from_slice(&[0x48, 0x8b, 0x47, 0x08]);
+        emit_movabs(code, 1, middle);
+        code.extend_from_slice(&[0x48, 0x39, 0xc8]);
+        emit_equal_or_ud2(code);
+        code.extend_from_slice(&[0x48, 0x8b, 0x87, 0xf8, 0x01, 0x00, 0x00]);
+        emit_movabs(code, 1, tail);
+        code.extend_from_slice(&[0x48, 0x39, 0xc8]);
+        emit_equal_or_ud2(code);
+    }
+
+    fn second_write_readback_sector() -> [u8; VIRTIO_BLK_SECTOR_SIZE] {
+        let mut bytes = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = (index as u8).wrapping_mul(37).wrapping_add(19);
+        }
+        bytes[..16].copy_from_slice(b"BLK-WRITE-0001!!");
+        bytes[VIRTIO_BLK_SECTOR_SIZE - 8..].copy_from_slice(b"WRTBK2!!");
+        bytes
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn write_payloads_are_distinct_and_stable() {
+            let first = deterministic_write_readback_sector();
+            let second = second_write_readback_sector();
+            assert_ne!(first, second);
+            assert_eq!(&first[..16], b"BLK-WRITE-0000!!");
+            assert_eq!(&second[..16], b"BLK-WRITE-0001!!");
+            assert_eq!(&first[VIRTIO_BLK_SECTOR_SIZE - 8..], b"WRTBACK!");
+            assert_eq!(&second[VIRTIO_BLK_SECTOR_SIZE - 8..], b"WRTBK2!!");
+            assert_eq!(TRANSACTION_COUPLED_WRITE_READBACK_PROOF, b"W0aMR0aXY1bNZ1bQD");
+        }
+    }
+}
+
+pub use write_readback::{
+    run_transaction_coupled_dual_device_write_readback_guest,
+    TransactionCoupledDualDeviceWriteReadbackResult,
+    TRANSACTION_COUPLED_WRITE_READBACK_PROOF,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
