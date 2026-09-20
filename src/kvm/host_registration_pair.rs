@@ -118,6 +118,26 @@ impl ReconstructedHostRegistrationPair {
         self.registration(index)?.signal_irq()
     }
 
+    pub(crate) fn pending_doorbells(&self) -> Result<[bool; 2], crate::error::Error> {
+        Ok([
+            self.registrations[0].doorbell_pending()?,
+            self.registrations[1].doorbell_pending()?,
+        ])
+    }
+
+    pub(crate) fn require_checkpoint_quiescent(&self) -> Result<(), crate::error::Error> {
+        let pending = self.pending_doorbells()?;
+        if pending != [false, false] {
+            return Err(host_registration_error(
+                "validate host-registration pair checkpoint quiescence",
+                format!(
+                    "accelerated ioeventfd doorbells remain pending: {pending:?}; service or explicitly cancel them before checkpoint capture"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn deassign(self, vm: &Vm) -> Result<(), crate::error::Error> {
         let [first, second] = self.registrations;
         let second_result = second.deassign(vm);

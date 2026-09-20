@@ -158,6 +158,15 @@ impl ReconstructedHostRegistrations {
         })
     }
 
+    pub(crate) fn doorbell_pending(&self) -> Result<bool, Error> {
+        eventfd_pending(&self.doorbell_reader).map_err(|source| {
+            host_registration_error_with_source(
+                "probe reconstructed ioeventfd checkpoint quiescence",
+                source,
+            )
+        })
+    }
+
     pub(crate) fn signal_irq(&self) -> Result<(), Error> {
         self.irq_signal.signal().map_err(|source| {
             host_registration_error_with_source("signal reconstructed irqfd eventfd", source)
@@ -190,6 +199,36 @@ impl ReconstructedHostRegistrations {
     }
 }
 
+fn eventfd_pending(eventfd: &EventFd) -> io::Result<bool> {
+    let mut pollfd = libc::pollfd {
+        fd: eventfd.fd.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        // SAFETY: poll receives one valid pollfd and does not retain the pointer after returning.
+        let ready = unsafe { libc::poll(&mut pollfd, 1, 0) };
+        if ready == 0 {
+            return Ok(false);
+        }
+        if ready == -1 {
+            let source = io::Error::last_os_error();
+            if source.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(source);
+        }
+        let terminal = libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
+        if pollfd.revents & terminal != 0 {
+            return Err(io::Error::other(format!(
+                "eventfd checkpoint-quiescence poll returned terminal revents {:#x}",
+                pollfd.revents
+            )));
+        }
+        return Ok(pollfd.revents & libc::POLLIN != 0);
+    }
+}
+
 fn host_registration_error(operation: &'static str, detail: impl Into<String>) -> Error {
     host_registration_error_with_source(
         operation,
@@ -204,6 +243,18 @@ fn host_registration_error_with_source(operation: &'static str, source: std::io:
 #[cfg(test)]
 mod host_registration_tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_quiescence_probe_is_non_consuming() {
+        let eventfd = EventFd::new().unwrap();
+        assert!(!eventfd_pending(&eventfd).unwrap());
+
+        eventfd.signal().unwrap();
+        assert!(eventfd_pending(&eventfd).unwrap());
+        assert!(eventfd_pending(&eventfd).unwrap());
+        assert_eq!(wait_eventfd_value(&eventfd, 0).unwrap(), 1);
+        assert!(!eventfd_pending(&eventfd).unwrap());
+    }
 
     #[test]
     fn descriptor_owns_semantics_without_a_raw_fd() {

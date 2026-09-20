@@ -1,3 +1,4 @@
+use crate::kvm::sys::ReconstructedHostRegistrationPair;
 use crate::mmio::MmioBus;
 use crate::portio::pci::virtio_blk::{VirtioBlkDevice, VIRTIO_BLK_BAR_SIZE};
 
@@ -25,6 +26,22 @@ impl BoundedFullControllerTwoVirtioBlkCheckpoint {
             controller,
             devices: [(bars[0], first), (bars[1], second)],
         })
+    }
+
+    pub(crate) fn capture_with_acceleration_quiescence(
+        vcpu: &Vcpu,
+        vm: &crate::kvm::Vm,
+        msr_policy: &GuestMsrAccessPolicy,
+        mmio: &MmioBus,
+        bars: [u64; 2],
+        page_addresses: &[GuestPhysAddr],
+        registrations: &ReconstructedHostRegistrationPair,
+    ) -> Result<Self, Error> {
+        // The caller must already have stopped guest execution. Polling the ioeventfds is
+        // intentionally non-consuming, so a rejected capture leaves every pending doorbell
+        // available to the normal queue-service path.
+        registrations.require_checkpoint_quiescent()?;
+        Self::capture(vcpu, vm, msr_policy, mmio, bars, page_addresses)
     }
 
     #[must_use]

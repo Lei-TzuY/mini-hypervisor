@@ -1,0 +1,71 @@
+name: Strict KVM acceleration-aware checkpoint quiescence
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/kvm/sys.rs'
+      - 'src/kvm/irqfd_timer.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk.rs'
+      - 'src/state_snapshot/page_set/transaction_coupled_dual_device_replay.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/bin/acceleration-checkpoint-quiescence.rs'
+      - 'tests/acceleration_checkpoint_quiescence_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/acceleration-checkpoint-quiescence.yml'
+  pull_request:
+    paths:
+      - 'src/kvm/sys.rs'
+      - 'src/kvm/irqfd_timer.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk.rs'
+      - 'src/state_snapshot/page_set/transaction_coupled_dual_device_replay.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/bin/acceleration-checkpoint-quiescence.rs'
+      - 'tests/acceleration_checkpoint_quiescence_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/acceleration-checkpoint-quiescence.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-acceleration-checkpoint-quiescence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build acceleration-aware checkpoint proof
+        run: cargo build --quiet --bin acceleration-checkpoint-quiescence
+      - name: Execute acceleration-aware checkpoint proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/acceleration-checkpoint-quiescence)"
+          printf '%s\n' "$output"
+
+          grep -F 'acceleration checkpoint rejected pending: [true, false]' <<<"$output"
+          grep -F 'acceleration checkpoint pending preserved: [true, false]' <<<"$output"
+          grep -F 'acceleration checkpoint preserved doorbell count: 1' <<<"$output"
+          grep -F 'acceleration checkpoint serviced queues: [[1, 1], [0, 0]]' <<<"$output"
+          grep -F 'acceleration checkpoint captured queues: [[1, 1], [0, 0]]' <<<"$output"
+          grep -F 'acceleration checkpoint proof: [80, 48, 97, 83, 68]' <<<"$output"
+
+          completion="$(grep -F 'acceleration checkpoint completion rflags:' <<<"$output")"
+          rflags_hex="${completion##*: }"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
+          (( (rflags & 0x200) == 0x200 ))
