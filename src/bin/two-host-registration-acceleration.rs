@@ -5,10 +5,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     match KvmBackend::run_two_host_registration_acceleration_guest(VmConfig::default()) {
         Ok(result) => {
-            println!(
-                "two-registration doorbells: {:?}",
-                result.doorbells()
-            );
+            println!("two-registration doorbells: {:?}", result.doorbells());
             println!("two-registration gsis: {:?}", result.gsis());
             println!("two-registration vectors: {:?}", result.vectors());
             println!(
