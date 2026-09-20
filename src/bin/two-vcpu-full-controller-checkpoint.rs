@@ -19,7 +19,7 @@ fn main() -> ExitCode {
                     .join(",")
             );
             println!(
-                "two-vCPU full-controller corruption: shared={:?} first-stack={:?} second-stack={:?} vcpu0={:?} vcpu1={:?} master={} slave={} ioapic={} lapic0={:?} lapic1={:?}",
+                "two-vCPU full-controller corruption: shared={:?} first-stack={:?} second-stack={:?} vcpu0={:?} vcpu1={:?} mp0={:?} mp1={:?} master={} slave={} ioapic={} lapic0={:?} lapic1={:?}",
                 result.corruption().page_exact(TWO_VCPU_CHECKPOINT_SHARED_PAGE),
                 result
                     .corruption()
@@ -29,6 +29,8 @@ fn main() -> ExitCode {
                     .page_exact(TWO_VCPU_CHECKPOINT_SECOND_STACK_PAGE),
                 result.corruption().vcpu_exact(TWO_VCPU_CHECKPOINT_FIRST_ID),
                 result.corruption().vcpu_exact(TWO_VCPU_CHECKPOINT_SECOND_ID),
+                result.corruption().mp_state_exact(TWO_VCPU_CHECKPOINT_FIRST_ID),
+                result.corruption().mp_state_exact(TWO_VCPU_CHECKPOINT_SECOND_ID),
                 result.corruption().master_pic_exact(),
                 result.corruption().slave_pic_exact(),
                 result.corruption().ioapic_exact(),
@@ -46,6 +48,8 @@ fn main() -> ExitCode {
                     .page_exact(TWO_VCPU_CHECKPOINT_SECOND_STACK_PAGE),
                 result.restored().vcpu_exact(TWO_VCPU_CHECKPOINT_FIRST_ID),
                 result.restored().vcpu_exact(TWO_VCPU_CHECKPOINT_SECOND_ID),
+                result.restored().mp_state_exact(TWO_VCPU_CHECKPOINT_FIRST_ID),
+                result.restored().mp_state_exact(TWO_VCPU_CHECKPOINT_SECOND_ID),
                 result.restored().master_pic_exact(),
                 result.restored().slave_pic_exact(),
                 result.restored().ioapic_exact(),
@@ -53,12 +57,14 @@ fn main() -> ExitCode {
                 result.restored().lapic_exact(TWO_VCPU_CHECKPOINT_SECOND_ID)
             );
             println!(
-                "two-vCPU full-controller first capture: {}",
-                result.first_capture()
+                "two-vCPU full-controller first capture: rip={:#x} rflags={:#x}",
+                result.first_capture_rip(),
+                result.first_capture_rflags()
             );
             println!(
-                "two-vCPU full-controller second capture: {}",
-                result.second_capture()
+                "two-vCPU full-controller second capture: rip={:#x} rflags={:#x}",
+                result.second_capture_rip(),
+                result.second_capture_rflags()
             );
             println!(
                 "two-vCPU full-controller first proof: {:?}",
@@ -69,12 +75,14 @@ fn main() -> ExitCode {
                 result.second_proof()
             );
             println!(
-                "two-vCPU full-controller first terminal: {}",
-                result.first_terminal()
+                "two-vCPU full-controller first completion: rip={:#x} rflags={:#x}",
+                result.first_completion_rip(),
+                result.first_completion_rflags()
             );
             println!(
-                "two-vCPU full-controller second terminal: {}",
-                result.second_terminal()
+                "two-vCPU full-controller second completion: rip={:#x} rflags={:#x}",
+                result.second_completion_rip(),
+                result.second_completion_rflags()
             );
             assert_eq!(result.captured_pages(), TWO_VCPU_CHECKPOINT_OWNERSHIP_SET);
             ExitCode::SUCCESS
