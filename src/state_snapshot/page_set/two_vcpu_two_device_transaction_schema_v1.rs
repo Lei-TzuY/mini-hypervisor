@@ -1,6 +1,6 @@
 use super::{
-    decode_device_state, encode_device_state, validate_two_device_bars,
-    VersionedFullControllerVirtioBlkCheckpointError, VIRTIO_BLK_STATE_LEN,
+    decode_device_state, encode_device_state, VersionedFullControllerVirtioBlkCheckpointError,
+    VIRTIO_BLK_STATE_LEN,
 };
 use crate::kvm::sys::{
     HostRegistrationSpecPair, VersionedHostRegistrationPairError, VersionedHostRegistrationPairV1,
@@ -33,6 +33,7 @@ pub enum VersionedTwoVcpuTwoDeviceCheckpointError {
     InvalidDeviceCount(u32),
     NonZeroFlags(u32),
     NonZeroReserved(u64),
+    NonCanonicalBars { first: u64, second: u64 },
     LengthOverflow,
     Controller(VersionedTwoVcpuFullControllerCheckpointError),
     Device(VersionedFullControllerVirtioBlkCheckpointError),
@@ -51,6 +52,7 @@ impl std::fmt::Display for VersionedTwoVcpuTwoDeviceCheckpointError {
             Self::InvalidDeviceCount(count) => write!(f, "two-vCPU two-device checkpoint device count {count} is not 2"),
             Self::NonZeroFlags(flags) => write!(f, "two-vCPU two-device checkpoint v1 flags must be zero, got {flags:#x}"),
             Self::NonZeroReserved(value) => write!(f, "two-vCPU two-device checkpoint reserved field must be zero, got {value:#x}"),
+            Self::NonCanonicalBars { first, second } => write!(f, "two-vCPU two-device checkpoint BARs must be distinct, aligned and strictly increasing, got {first:#x}, {second:#x}"),
             Self::LengthOverflow => write!(f, "two-vCPU two-device checkpoint length arithmetic overflowed"),
             Self::Controller(error) => write!(f, "nested two-vCPU controller checkpoint is invalid: {error}"),
             Self::Device(error) => write!(f, "nested virtio-blk checkpoint is invalid: {error}"),
@@ -89,7 +91,7 @@ impl VersionedTwoVcpuTwoDeviceCheckpointV1 {
         let controller =
             VersionedTwoVcpuFullControllerCheckpointV1::from_checkpoint(checkpoint.controller())?;
         let bars = checkpoint.device_bars();
-        validate_two_device_bars(bars).map_err(Self::map_parent_checkpoint_error)?;
+        validate_versioned_two_device_bars(bars)?;
         let first = VirtioBlkCheckpointState::capture(
             checkpoint
                 .device(bars[0])
@@ -102,8 +104,7 @@ impl VersionedTwoVcpuTwoDeviceCheckpointV1 {
                 .expect("canonical checkpoint owns second device"),
         )
         .map_err(Self::map_device_state_error)?;
-        validate_two_device_bars([first.bar0, second.bar0])
-            .map_err(Self::map_parent_checkpoint_error)?;
+        validate_versioned_two_device_bars([first.bar0, second.bar0])?;
         Ok(Self {
             controller,
             devices: [first, second],
@@ -116,26 +117,6 @@ impl VersionedTwoVcpuTwoDeviceCheckpointV1 {
         VersionedTwoVcpuTwoDeviceCheckpointError::Device(
             VersionedFullControllerVirtioBlkCheckpointError::Device(error),
         )
-    }
-
-    fn map_parent_checkpoint_error(
-        error: super::VersionedFullControllerTwoVirtioBlkCheckpointError,
-    ) -> VersionedTwoVcpuTwoDeviceCheckpointError {
-        match error {
-            super::VersionedFullControllerTwoVirtioBlkCheckpointError::Device(error) => {
-                VersionedTwoVcpuTwoDeviceCheckpointError::Device(error)
-            }
-            other => VersionedTwoVcpuTwoDeviceCheckpointError::Device(
-                VersionedFullControllerVirtioBlkCheckpointError::Device(
-                    VirtioBlkCheckpointStateError::InvalidBar0 {
-                        bar0: match other {
-                            super::VersionedFullControllerTwoVirtioBlkCheckpointError::NonCanonicalBars { first, .. } => first,
-                            _ => 0,
-                        },
-                    },
-                ),
-            ),
-        }
     }
 
     #[must_use]
@@ -179,7 +160,7 @@ impl VersionedTwoVcpuTwoDeviceCheckpointV1 {
     }
 
     pub(crate) fn encode(&self) -> Result<Vec<u8>, VersionedTwoVcpuTwoDeviceCheckpointError> {
-        validate_two_device_bars(self.device_bars()).map_err(Self::map_parent_checkpoint_error)?;
+        validate_versioned_two_device_bars(self.device_bars())?;
         let controller = self.controller.encode()?;
         let first = encode_device_state(&self.devices[0])
             .map_err(VersionedTwoVcpuTwoDeviceCheckpointError::Device)?;
@@ -301,8 +282,7 @@ impl VersionedTwoVcpuTwoDeviceCheckpointV1 {
             .map_err(VersionedTwoVcpuTwoDeviceCheckpointError::Device)?;
         let second = decode_device_state(&bytes[first_end..])
             .map_err(VersionedTwoVcpuTwoDeviceCheckpointError::Device)?;
-        validate_two_device_bars([first.bar0, second.bar0])
-            .map_err(Self::map_parent_checkpoint_error)?;
+        validate_versioned_two_device_bars([first.bar0, second.bar0])?;
         Ok(Self {
             controller,
             devices: [first, second],
@@ -316,7 +296,7 @@ impl VersionedTwoVcpuTwoDeviceCheckpointV1 {
         BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint,
         VersionedTwoVcpuTwoDeviceCheckpointError,
     > {
-        validate_two_device_bars(self.device_bars()).map_err(Self::map_parent_checkpoint_error)?;
+        validate_versioned_two_device_bars(self.device_bars())?;
         let controller = self.controller.materialize(host_msrs)?;
         let first = self.devices[0]
             .materialize()
@@ -332,6 +312,19 @@ impl VersionedTwoVcpuTwoDeviceCheckpointV1 {
             ],
         })
     }
+}
+
+fn validate_versioned_two_device_bars(
+    bars: [u64; 2],
+) -> Result<(), VersionedTwoVcpuTwoDeviceCheckpointError> {
+    let alignment = u64::from(crate::portio::pci::virtio_blk::VIRTIO_BLK_BAR_SIZE);
+    if bars[0] >= bars[1] || bars[0] % alignment != 0 || bars[1] % alignment != 0 {
+        return Err(VersionedTwoVcpuTwoDeviceCheckpointError::NonCanonicalBars {
+            first: bars[0],
+            second: bars[1],
+        });
+    }
+    Ok(())
 }
 
 pub const VERSIONED_TWO_VCPU_TWO_DEVICE_TRANSACTION_MAGIC: [u8; 8] = *b"MHV2TX\0\0";
