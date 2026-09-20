@@ -68,9 +68,16 @@ impl super::MmioBus {
             return Ok(None);
         };
         if !device.checkpoint_fully_quiescent() {
+            let detail = if device.checkpoint_notification_pending() {
+                "device has a serviced host notification awaiting queue processing; pending notification requires an explicit service token"
+            } else if device.checkpoint_completion_pending() {
+                "device has a serviced queue completion awaiting irqfd delivery; pending completion requires an explicit delivery token"
+            } else {
+                "device is not fully quiescent and does not match a supported token-owned checkpoint state"
+            };
             return Err(virtio_blk_checkpoint_error(
                 "capture virtio-blk checkpoint state",
-                "device is not fully quiescent; pending completion requires an explicit delivery token",
+                detail,
             ));
         }
         Ok(Some(device.clone()))
