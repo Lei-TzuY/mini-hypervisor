@@ -1,0 +1,73 @@
+name: Strict KVM pending notification token replay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/restored_multi_producer_data_plane_replay.rs'
+      - 'src/state_snapshot/page_set/pending_completion_token_replay.rs'
+      - 'src/state_snapshot/page_set/pending_notification_token_replay.rs'
+      - 'src/bin/pending-notification-token-replay.rs'
+      - 'tests/pending_notification_token_replay_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/pending-notification-token-replay.yml'
+  pull_request:
+    paths:
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/restored_multi_producer_data_plane_replay.rs'
+      - 'src/state_snapshot/page_set/pending_completion_token_replay.rs'
+      - 'src/state_snapshot/page_set/pending_notification_token_replay.rs'
+      - 'src/bin/pending-notification-token-replay.rs'
+      - 'tests/pending_notification_token_replay_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/pending-notification-token-replay.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-pending-notification-token:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build pending notification replay proof
+        run: cargo build --quiet --bin pending-notification-token-replay
+      - name: Execute pending notification replay proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/pending-notification-token-replay)"
+          printf '%s\n' "$output"
+
+          grep -F 'pending notification transaction: version=3 ' <<<"$output"
+          grep -F 'pending notification bars: [268435456, 268439552]' <<<"$output"
+          grep -F 'pending notification token: bar=0x10000000 queue=0 indices=[0, 0]' <<<"$output"
+          grep -F 'pending notification ordinary capture rejected: true' <<<"$output"
+          grep -F 'pending notification capture eventfds: [false, false]' <<<"$output"
+          grep -F 'pending notification reconstructed eventfds: [false, false]' <<<"$output"
+          grep -F 'pending notification queues at token: [[0, 0], [0, 0]]' <<<"$output"
+          grep -F 'pending notification queues after restore: [[0, 0], [0, 0]]' <<<"$output"
+          grep -F 'pending notification semantic state restored: true' <<<"$output"
+          grep -F 'pending notification backing unchanged at token: true' <<<"$output"
+          grep -F 'pending notification final queues: [[2, 2], [0, 0]]' <<<"$output"
+          grep -F 'pending notification doorbells: [2, 0]' <<<"$output"
+          grep -F 'pending notification irqfd: [2, 0]' <<<"$output"
+          grep -F 'pending notification proof: [87, 48, 97, 77, 82, 48, 97, 88, 68]' <<<"$output"
+          grep -F 'pending notification exact restore: true' <<<"$output"
