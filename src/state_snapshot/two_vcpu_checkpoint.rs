@@ -52,36 +52,34 @@ const TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_MARKER: u8 = b'B';
 const TWO_VCPU_FULL_CONTROLLER_MP_STATE_RUNNABLE: u32 = 0;
 const TWO_VCPU_FULL_CONTROLLER_MP_STATE_UNINITIALIZED: u32 = 1;
 const TWO_VCPU_FULL_CONTROLLER_MP_STATE_HALTED: u32 = 3;
-const TWO_VCPU_FULL_CONTROLLER_FIRST_CAPTURE_RIP: u64 =
-    TWO_VCPU_CHECKPOINT_FIRST_ENTRY.get() + 14;
-const TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_RIP: u64 =
-    TWO_VCPU_CHECKPOINT_SECOND_ENTRY.get() + 6;
+const TWO_VCPU_FULL_CONTROLLER_FIRST_CAPTURE_RIP: u64 = TWO_VCPU_CHECKPOINT_FIRST_ENTRY.get() + 15;
+const TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_RIP: u64 = TWO_VCPU_CHECKPOINT_SECOND_ENTRY.get() + 7;
 const TWO_VCPU_FULL_CONTROLLER_FIRST_COMPLETION_RIP: u64 =
-    TWO_VCPU_CHECKPOINT_FIRST_ENTRY.get() + 34;
+    TWO_VCPU_CHECKPOINT_FIRST_ENTRY.get() + 36;
 const TWO_VCPU_FULL_CONTROLLER_SECOND_COMPLETION_RIP: u64 =
-    TWO_VCPU_CHECKPOINT_SECOND_ENTRY.get() + 26;
+    TWO_VCPU_CHECKPOINT_SECOND_ENTRY.get() + 28;
 
 #[rustfmt::skip]
-const TWO_VCPU_FULL_CONTROLLER_FIRST_GUEST_BYTES: [u8; 40] = [
+const TWO_VCPU_FULL_CONTROLLER_FIRST_GUEST_BYTES: [u8; 42] = [
     0xc6, 0x04, 0x25, 0x00, 0x00, 0x03, 0x00, TWO_VCPU_CHECKPOINT_SHARED_MARKER,
     0x6a, TWO_VCPU_CHECKPOINT_FIRST_MARKER,
-    0xb0, TWO_VCPU_FULL_CONTROLLER_FIRST_CAPTURE_MARKER, 0xe6, 0xe9,
-    0x58, 0x3c, TWO_VCPU_CHECKPOINT_FIRST_MARKER, 0x75, 0x10,
+    0xb0, TWO_VCPU_FULL_CONTROLLER_FIRST_CAPTURE_MARKER, 0xe6, 0xe9, 0x90,
+    0x58, 0x3c, TWO_VCPU_CHECKPOINT_FIRST_MARKER, 0x75, 0x11,
     0x8a, 0x04, 0x25, 0x00, 0x00, 0x03, 0x00,
-    0x3c, TWO_VCPU_CHECKPOINT_SHARED_MARKER, 0x75, 0x05,
-    0xb0, TWO_VCPU_CHECKPOINT_FIRST_MARKER, 0xe6, 0xe9,
+    0x3c, TWO_VCPU_CHECKPOINT_SHARED_MARKER, 0x75, 0x06,
+    0xb0, TWO_VCPU_CHECKPOINT_FIRST_MARKER, 0xe6, 0xe9, 0x90,
     0xf4,
     0xb0, b'F', 0xe6, 0xe9, 0xf4,
 ];
 
 #[rustfmt::skip]
-const TWO_VCPU_FULL_CONTROLLER_SECOND_GUEST_BYTES: [u8; 32] = [
+const TWO_VCPU_FULL_CONTROLLER_SECOND_GUEST_BYTES: [u8; 34] = [
     0x6a, TWO_VCPU_CHECKPOINT_SECOND_MARKER,
-    0xb0, TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_MARKER, 0xe6, 0xe9,
-    0x58, 0x3c, TWO_VCPU_CHECKPOINT_SECOND_MARKER, 0x75, 0x10,
+    0xb0, TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_MARKER, 0xe6, 0xe9, 0x90,
+    0x58, 0x3c, TWO_VCPU_CHECKPOINT_SECOND_MARKER, 0x75, 0x11,
     0x8a, 0x04, 0x25, 0x00, 0x00, 0x03, 0x00,
-    0x3c, TWO_VCPU_CHECKPOINT_SHARED_MARKER, 0x75, 0x05,
-    0xb0, TWO_VCPU_CHECKPOINT_SECOND_MARKER, 0xe6, 0xe9,
+    0x3c, TWO_VCPU_CHECKPOINT_SHARED_MARKER, 0x75, 0x06,
+    0xb0, TWO_VCPU_CHECKPOINT_SECOND_MARKER, 0xe6, 0xe9, 0x90,
     0xf4,
     0xb0, b'F', 0xe6, 0xe9, 0xf4,
 ];
@@ -716,8 +714,7 @@ pub fn run_two_vcpu_full_controller_checkpoint_guest(
     let corruption = checkpoint.verify(&first_vcpu, &second_vcpu, &vm)?;
     require_full_controller_mismatch(&corruption)?;
 
-    let restored =
-        checkpoint.restore_and_verify(&mut first_vcpu, &mut second_vcpu, &mut vm)?;
+    let restored = checkpoint.restore_and_verify(&mut first_vcpu, &mut second_vcpu, &mut vm)?;
     if !restored.is_exact_match() {
         return Err(two_vcpu_checkpoint_error(
             TWO_VCPU_CHECKPOINT_FIRST_ID,
@@ -1118,7 +1115,7 @@ fn run_full_controller_debug_barrier(
         return Err(two_vcpu_checkpoint_error(
             vcpu.id(),
             operation,
-            format!("expected KVM_EXIT_IO, got {exit:?}"),
+            format!("expected KVM_EXIT_IO marker, got {exit:?}"),
         ));
     }
     let io_exit = vcpu.port_io_exit()?;
@@ -1138,16 +1135,36 @@ fn run_full_controller_debug_barrier(
         return Err(two_vcpu_checkpoint_error(
             vcpu.id(),
             operation,
-            "debug barrier unexpectedly requested an input response",
+            "debug marker unexpectedly requested an input response",
         ));
     }
+
+    // KVM_EXIT_IO exposes an operation whose userspace completion is finalized only when KVM_RUN
+    // is re-entered. Never checkpoint that intermediate kvm_run state. Single-step the dedicated
+    // adjacent NOP so the marker I/O retires first and KVM returns KVM_EXIT_DEBUG at a fully
+    // architectural boundary while the stack marker remains untouched.
+    vcpu.set_guest_single_step(true)?;
+    let step_result = vcpu.run_once();
+    let disable_result = vcpu.set_guest_single_step(false);
+    let step_exit = match (step_result, disable_result) {
+        (Ok(exit), Ok(())) => exit,
+        (Err(error), _) | (Ok(_), Err(error)) => return Err(error),
+    };
+    if step_exit != VcpuExit::Debug {
+        return Err(two_vcpu_checkpoint_error(
+            vcpu.id(),
+            operation,
+            format!("expected KVM_EXIT_DEBUG after retiring marker I/O, got {step_exit:?}"),
+        ));
+    }
+
     let registers = vcpu.registers()?;
     if registers.rip != expected_rip || registers.rflags & 0x2 != 0x2 {
         return Err(two_vcpu_checkpoint_error(
             vcpu.id(),
             operation,
             format!(
-                "expected stopped RIP {expected_rip:#x} with architectural bit1, got rip={:#x} rflags={:#x}",
+                "expected retired checkpoint RIP {expected_rip:#x} with architectural bit1, got rip={:#x} rflags={:#x}",
                 registers.rip, registers.rflags
             ),
         ));
@@ -1361,20 +1378,20 @@ mod tests {
 
     #[test]
     fn full_controller_guests_use_userspace_barriers_instead_of_hlt_capture() {
-        assert_eq!(TWO_VCPU_FULL_CONTROLLER_FIRST_GUEST_BYTES.len(), 40);
-        assert_eq!(TWO_VCPU_FULL_CONTROLLER_SECOND_GUEST_BYTES.len(), 32);
+        assert_eq!(TWO_VCPU_FULL_CONTROLLER_FIRST_GUEST_BYTES.len(), 42);
+        assert_eq!(TWO_VCPU_FULL_CONTROLLER_SECOND_GUEST_BYTES.len(), 34);
         assert_eq!(
-            &TWO_VCPU_FULL_CONTROLLER_FIRST_GUEST_BYTES[10..14],
-            &[0xb0, b'A', 0xe6, 0xe9]
+            &TWO_VCPU_FULL_CONTROLLER_FIRST_GUEST_BYTES[10..15],
+            &[0xb0, b'A', 0xe6, 0xe9, 0x90]
         );
         assert_eq!(
-            &TWO_VCPU_FULL_CONTROLLER_SECOND_GUEST_BYTES[2..6],
-            &[0xb0, b'B', 0xe6, 0xe9]
+            &TWO_VCPU_FULL_CONTROLLER_SECOND_GUEST_BYTES[2..7],
+            &[0xb0, b'B', 0xe6, 0xe9, 0x90]
         );
-        assert_eq!(TWO_VCPU_FULL_CONTROLLER_FIRST_CAPTURE_RIP, 0x1000e);
-        assert_eq!(TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_RIP, 0x11006);
-        assert_eq!(TWO_VCPU_FULL_CONTROLLER_FIRST_COMPLETION_RIP, 0x10022);
-        assert_eq!(TWO_VCPU_FULL_CONTROLLER_SECOND_COMPLETION_RIP, 0x1101a);
+        assert_eq!(TWO_VCPU_FULL_CONTROLLER_FIRST_CAPTURE_RIP, 0x1000f);
+        assert_eq!(TWO_VCPU_FULL_CONTROLLER_SECOND_CAPTURE_RIP, 0x11007);
+        assert_eq!(TWO_VCPU_FULL_CONTROLLER_FIRST_COMPLETION_RIP, 0x10024);
+        assert_eq!(TWO_VCPU_FULL_CONTROLLER_SECOND_COMPLETION_RIP, 0x1101c);
     }
 
     #[test]
