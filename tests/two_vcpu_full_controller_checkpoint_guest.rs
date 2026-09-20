@@ -13,8 +13,8 @@ fn two_vcpu_full_controller_checkpoint_restores_both_vcpus_both_lapics_and_vm_ir
         Ok(result) => {
             assert_eq!(result.captured_pages(), TWO_VCPU_CHECKPOINT_OWNERSHIP_SET);
 
-            assert_eq!(result.first_capture_rip(), 0x1000e);
-            assert_eq!(result.second_capture_rip(), 0x11006);
+            assert_eq!(result.first_capture_rip(), 0x1000f);
+            assert_eq!(result.second_capture_rip(), 0x11007);
             assert_eq!(result.first_capture_rflags() & 0x2, 0x2);
             assert_eq!(result.second_capture_rflags() & 0x2, 0x2);
 
@@ -46,8 +46,8 @@ fn two_vcpu_full_controller_checkpoint_restores_both_vcpus_both_lapics_and_vm_ir
 
             assert_eq!(result.first_proof(), TWO_VCPU_CHECKPOINT_FIRST_PROOF);
             assert_eq!(result.second_proof(), TWO_VCPU_CHECKPOINT_SECOND_PROOF);
-            assert_eq!(result.first_completion_rip(), 0x10022);
-            assert_eq!(result.second_completion_rip(), 0x1101a);
+            assert_eq!(result.first_completion_rip(), 0x10024);
+            assert_eq!(result.second_completion_rip(), 0x1101c);
             assert_eq!(result.first_completion_rflags() & 0x2, 0x2);
             assert_eq!(result.second_completion_rflags() & 0x2, 0x2);
         }
