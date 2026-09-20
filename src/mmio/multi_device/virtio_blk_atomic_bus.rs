@@ -110,6 +110,81 @@ impl super::MmioBus {
         *device = snapshot.clone();
         Ok(Some(()))
     }
+
+    pub fn restore_two_virtio_blk_checkpoints_atomic(
+        &mut self,
+        checkpoints: [(u64, &VirtioBlkDevice); 2],
+    ) -> Result<(), Error> {
+        let [(first_address, first_snapshot), (second_address, second_snapshot)] = checkpoints;
+        if first_address >= second_address {
+            return Err(virtio_blk_checkpoint_error(
+                "restore two virtio-blk checkpoint states",
+                "two-device checkpoint BARs must be distinct and strictly increasing",
+            ));
+        }
+
+        for (address, snapshot) in [
+            (first_address, first_snapshot),
+            (second_address, second_snapshot),
+        ] {
+            if snapshot.bar0() != address || !snapshot.checkpoint_quiescent() {
+                return Err(virtio_blk_checkpoint_error(
+                    "restore two virtio-blk checkpoint states",
+                    format!(
+                        "snapshot for BAR {address:#x} has mismatched identity or is not quiescent"
+                    ),
+                ));
+            }
+        }
+
+        let first_index = self
+            .virtio_blk_devices
+            .iter()
+            .position(|device| device.bar0() == first_address)
+            .ok_or_else(|| {
+                virtio_blk_checkpoint_error(
+                    "restore two virtio-blk checkpoint states",
+                    format!("live virtio-blk device at BAR {first_address:#x} is missing"),
+                )
+            })?;
+        let second_index = self
+            .virtio_blk_devices
+            .iter()
+            .position(|device| device.bar0() == second_address)
+            .ok_or_else(|| {
+                virtio_blk_checkpoint_error(
+                    "restore two virtio-blk checkpoint states",
+                    format!("live virtio-blk device at BAR {second_address:#x} is missing"),
+                )
+            })?;
+        if first_index == second_index {
+            return Err(virtio_blk_checkpoint_error(
+                "restore two virtio-blk checkpoint states",
+                "two checkpoint BARs resolved to the same live device",
+            ));
+        }
+        if !self.virtio_blk_devices[first_index].checkpoint_quiescent()
+            || !self.virtio_blk_devices[second_index].checkpoint_quiescent()
+        {
+            return Err(virtio_blk_checkpoint_error(
+                "restore two virtio-blk checkpoint states",
+                "all live devices must be quiescent before either device is restored",
+            ));
+        }
+
+        if first_index < second_index {
+            let (before_second, second_and_after) =
+                self.virtio_blk_devices.split_at_mut(second_index);
+            before_second[first_index] = first_snapshot.clone();
+            second_and_after[0] = second_snapshot.clone();
+        } else {
+            let (before_first, first_and_after) =
+                self.virtio_blk_devices.split_at_mut(first_index);
+            before_first[second_index] = second_snapshot.clone();
+            first_and_after[0] = first_snapshot.clone();
+        }
+        Ok(())
+    }
 }
 
 fn virtio_blk_checkpoint_error(operation: &'static str, detail: impl Into<String>) -> Error {
