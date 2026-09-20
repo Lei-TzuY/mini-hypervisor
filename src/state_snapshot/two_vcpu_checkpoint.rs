@@ -5,7 +5,10 @@ use super::{
 use crate::error::{Error, HostEnvironmentError};
 use crate::execution::run_vcpu_until_stopped;
 use crate::kvm::msr::GuestMsrAccessPolicy;
-use crate::kvm::KvmBackend;
+use crate::kvm::sys::{
+    IoapicStateSnapshot, KvmLapicState, MasterPicStateSnapshot, SlavePicStateSnapshot,
+};
+use crate::kvm::{KvmBackend, Vm};
 use crate::loader::FlatGuestImage;
 use crate::long_mode::{LongModeBootLayout, LONG_MODE_IDENTITY_MAP_SIZE, LONG_MODE_PAGE_SIZE};
 use crate::memory::{GuestMemory, GuestPhysAddr};
@@ -37,6 +40,12 @@ pub const TWO_VCPU_CHECKPOINT_OWNERSHIP_SET: [GuestPhysAddr; 3] = [
     TWO_VCPU_CHECKPOINT_SECOND_STACK_PAGE,
     TWO_VCPU_CHECKPOINT_FIRST_STACK_PAGE,
 ];
+
+const TWO_VCPU_FULL_CONTROLLER_IOAPIC_PIN: usize = 16;
+const TWO_VCPU_FULL_CONTROLLER_APIC_SPIV_OFFSET: usize = 0x0f0;
+const TWO_VCPU_FULL_CONTROLLER_APIC_LVT0_OFFSET: usize = 0x350;
+const TWO_VCPU_FULL_CONTROLLER_APIC_SOFTWARE_ENABLE: u32 = 1 << 8;
+const TWO_VCPU_FULL_CONTROLLER_APIC_LVT_MASKED: u32 = 1 << 16;
 
 const FIRST_GUEST_BYTES: [u8; 37] = [
     0xc6,
@@ -239,6 +248,479 @@ impl BoundedTwoVcpuCheckpointComparison {
     pub fn is_exact_match(&self) -> bool {
         self.primary.is_exact_match() && self.secondary.is_exact_match()
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundedTwoVcpuFullControllerCheckpoint {
+    base: BoundedTwoVcpuCheckpoint,
+    master_pic: MasterPicStateSnapshot,
+    slave_pic: SlavePicStateSnapshot,
+    ioapic: IoapicStateSnapshot,
+    lapics: [(VcpuId, KvmLapicState); 2],
+}
+
+impl BoundedTwoVcpuFullControllerCheckpoint {
+    pub fn capture(
+        first: &Vcpu,
+        second: &Vcpu,
+        vm: &Vm,
+        msr_policy: &GuestMsrAccessPolicy,
+        page_addresses: &[GuestPhysAddr],
+    ) -> Result<Self, Error> {
+        let memory = vm.guest_memory().ok_or_else(|| {
+            two_vcpu_checkpoint_error(
+                VcpuId::BOOT,
+                "two-vCPU full-controller checkpoint capture",
+                "VM has no registered guest memory",
+            )
+        })?;
+        let base =
+            BoundedTwoVcpuCheckpoint::capture(first, second, msr_policy, memory, page_addresses)?;
+        let (primary, secondary) = canonical_vcpu_pair(first, second)?;
+        Ok(Self {
+            base,
+            master_pic: vm.capture_master_pic_state()?,
+            slave_pic: vm.capture_slave_pic_state()?,
+            ioapic: vm.capture_ioapic_state()?,
+            lapics: [
+                (primary.id(), primary.capture_lapic_checkpoint_state()?),
+                (secondary.id(), secondary.capture_lapic_checkpoint_state()?),
+            ],
+        })
+    }
+
+    #[must_use]
+    pub const fn vcpu_ids(&self) -> [VcpuId; 2] {
+        self.base.vcpu_ids()
+    }
+
+    #[must_use]
+    pub fn pages(&self) -> &[BoundedCheckpointPage] {
+        self.base.pages()
+    }
+
+    pub fn verify(
+        &self,
+        first: &Vcpu,
+        second: &Vcpu,
+        vm: &Vm,
+    ) -> Result<BoundedTwoVcpuFullControllerCheckpointComparison, Error> {
+        let memory = vm.guest_memory().ok_or_else(|| {
+            two_vcpu_checkpoint_error(
+                VcpuId::BOOT,
+                "two-vCPU full-controller checkpoint verify",
+                "VM has no registered guest memory",
+            )
+        })?;
+        let base = self.base.verify(first, second, memory)?;
+        let (primary, secondary) = self.bind_vcpus(first, second)?;
+        Ok(BoundedTwoVcpuFullControllerCheckpointComparison {
+            base,
+            master_pic: vm.capture_master_pic_state()? == self.master_pic,
+            slave_pic: vm.capture_slave_pic_state()? == self.slave_pic,
+            ioapic: vm.capture_ioapic_state()? == self.ioapic,
+            lapics: [
+                primary.capture_lapic_checkpoint_state()? == self.lapics[0].1,
+                secondary.capture_lapic_checkpoint_state()? == self.lapics[1].1,
+            ],
+        })
+    }
+
+    pub fn restore_and_verify(
+        &self,
+        first: &Vcpu,
+        second: &Vcpu,
+        vm: &mut Vm,
+    ) -> Result<BoundedTwoVcpuFullControllerCheckpointComparison, Error> {
+        let (primary, secondary) = self.bind_vcpus(first, second)?;
+        {
+            let memory = vm.guest_memory_mut().ok_or_else(|| {
+                two_vcpu_checkpoint_error(
+                    VcpuId::BOOT,
+                    "two-vCPU full-controller checkpoint restore",
+                    "VM has no registered guest memory",
+                )
+            })?;
+            let base = self.base.restore_and_verify(primary, secondary, memory)?;
+            if !base.is_exact_match() {
+                return Err(two_vcpu_checkpoint_error(
+                    primary.id(),
+                    "two-vCPU full-controller guest restore verification",
+                    "page/vCPU state was not exact; controller restore was not attempted",
+                ));
+            }
+        }
+
+        vm.restore_master_pic_state(&self.master_pic)?;
+        vm.restore_slave_pic_state(&self.slave_pic)?;
+        vm.restore_ioapic_state(&self.ioapic)?;
+        primary.restore_lapic_checkpoint_state(&self.lapics[0].1)?;
+        secondary.restore_lapic_checkpoint_state(&self.lapics[1].1)?;
+        self.verify(primary, secondary, vm)
+    }
+
+    fn bind_vcpus<'a>(
+        &self,
+        first: &'a Vcpu,
+        second: &'a Vcpu,
+    ) -> Result<(&'a Vcpu, &'a Vcpu), Error> {
+        let (primary, secondary) = canonical_vcpu_pair(first, second)?;
+        if [primary.id(), secondary.id()] != self.vcpu_ids()
+            || self.lapics[0].0 != primary.id()
+            || self.lapics[1].0 != secondary.id()
+        {
+            return Err(two_vcpu_checkpoint_error(
+                primary.id(),
+                "two-vCPU full-controller checkpoint binding",
+                format!(
+                    "checkpoint owns vCPUs {:?} / LAPICs [{}, {}], supplied [{}, {}]",
+                    self.vcpu_ids(),
+                    self.lapics[0].0.get(),
+                    self.lapics[1].0.get(),
+                    primary.id().get(),
+                    secondary.id().get()
+                ),
+            ));
+        }
+        Ok((primary, secondary))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundedTwoVcpuFullControllerCheckpointComparison {
+    base: BoundedTwoVcpuCheckpointComparison,
+    master_pic: bool,
+    slave_pic: bool,
+    ioapic: bool,
+    lapics: [bool; 2],
+}
+
+impl BoundedTwoVcpuFullControllerCheckpointComparison {
+    #[must_use]
+    pub fn page_exact(&self, address: GuestPhysAddr) -> Option<bool> {
+        self.base.page_exact(address)
+    }
+
+    #[must_use]
+    pub fn vcpu_exact(&self, id: VcpuId) -> Option<bool> {
+        self.base.vcpu_exact(id)
+    }
+
+    #[must_use]
+    pub const fn master_pic_exact(&self) -> bool {
+        self.master_pic
+    }
+
+    #[must_use]
+    pub const fn slave_pic_exact(&self) -> bool {
+        self.slave_pic
+    }
+
+    #[must_use]
+    pub const fn ioapic_exact(&self) -> bool {
+        self.ioapic
+    }
+
+    #[must_use]
+    pub fn lapic_exact(&self, id: VcpuId) -> Option<bool> {
+        let ids = self.base.vcpu_ids();
+        if id == ids[0] {
+            Some(self.lapics[0])
+        } else if id == ids[1] {
+            Some(self.lapics[1])
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn is_exact_match(&self) -> bool {
+        self.base.is_exact_match()
+            && self.master_pic
+            && self.slave_pic
+            && self.ioapic
+            && self.lapics == [true, true]
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TwoVcpuFullControllerCheckpointGuestResult {
+    first_capture: VmExitReport,
+    second_capture: VmExitReport,
+    captured_pages: Vec<GuestPhysAddr>,
+    corruption: BoundedTwoVcpuFullControllerCheckpointComparison,
+    restored: BoundedTwoVcpuFullControllerCheckpointComparison,
+    first_proof: Vec<u8>,
+    second_proof: Vec<u8>,
+    first_terminal: VmExitReport,
+    second_terminal: VmExitReport,
+}
+
+impl TwoVcpuFullControllerCheckpointGuestResult {
+    #[must_use]
+    pub const fn first_capture(&self) -> VmExitReport {
+        self.first_capture
+    }
+
+    #[must_use]
+    pub const fn second_capture(&self) -> VmExitReport {
+        self.second_capture
+    }
+
+    #[must_use]
+    pub fn captured_pages(&self) -> &[GuestPhysAddr] {
+        &self.captured_pages
+    }
+
+    #[must_use]
+    pub const fn corruption(&self) -> &BoundedTwoVcpuFullControllerCheckpointComparison {
+        &self.corruption
+    }
+
+    #[must_use]
+    pub const fn restored(&self) -> &BoundedTwoVcpuFullControllerCheckpointComparison {
+        &self.restored
+    }
+
+    #[must_use]
+    pub fn first_proof(&self) -> &[u8] {
+        &self.first_proof
+    }
+
+    #[must_use]
+    pub fn second_proof(&self) -> &[u8] {
+        &self.second_proof
+    }
+
+    #[must_use]
+    pub const fn first_terminal(&self) -> VmExitReport {
+        self.first_terminal
+    }
+
+    #[must_use]
+    pub const fn second_terminal(&self) -> VmExitReport {
+        self.second_terminal
+    }
+}
+
+pub fn run_two_vcpu_full_controller_checkpoint_guest(
+) -> Result<TwoVcpuFullControllerCheckpointGuestResult, Error> {
+    let first_image = FlatGuestImage::new(
+        TWO_VCPU_CHECKPOINT_FIRST_ENTRY,
+        TWO_VCPU_CHECKPOINT_FIRST_ENTRY,
+        &FIRST_GUEST_BYTES,
+    )?;
+    let second_image = FlatGuestImage::new(
+        TWO_VCPU_CHECKPOINT_SECOND_ENTRY,
+        TWO_VCPU_CHECKPOINT_SECOND_ENTRY,
+        &SECOND_GUEST_BYTES,
+    )?;
+
+    let backend = KvmBackend::open()?;
+    let mut vm = backend.create_vm_with_irqchip()?;
+    let mut memory = GuestMemory::new(GuestPhysAddr::new(0), LONG_MODE_IDENTITY_MAP_SIZE)?;
+    let first_layout = LongModeBootLayout::new(
+        memory.region(),
+        first_image.entry(),
+        TWO_VCPU_CHECKPOINT_FIRST_STACK,
+    )
+    .expect("fixed first full-controller two-vCPU layout remains valid");
+    let second_layout = LongModeBootLayout::new(
+        memory.region(),
+        second_image.entry(),
+        TWO_VCPU_CHECKPOINT_SECOND_STACK,
+    )
+    .expect("fixed second full-controller two-vCPU layout remains valid");
+    let first_corrupt_layout =
+        LongModeBootLayout::new(memory.region(), GuestPhysAddr::new(0x12000), 0x1fbff8)
+            .expect("fixed first full-controller corruption layout remains valid");
+    let second_corrupt_layout =
+        LongModeBootLayout::new(memory.region(), GuestPhysAddr::new(0x13000), 0x1faff8)
+            .expect("fixed second full-controller corruption layout remains valid");
+    first_layout.install_page_tables(&mut memory)?;
+    first_image.load(&mut memory)?;
+    second_image.load(&mut memory)?;
+    vm.register_guest_memory(memory)?;
+
+    let mut first_vcpu = vm.create_vcpu(TWO_VCPU_CHECKPOINT_FIRST_ID)?;
+    let mut second_vcpu = vm.create_vcpu(TWO_VCPU_CHECKPOINT_SECOND_ID)?;
+    first_vcpu.initialize_long_mode(&first_layout)?;
+    second_vcpu.initialize_long_mode(&second_layout)?;
+    let msr_policy = GuestMsrAccessPolicy::from_host(backend.host_msr_indices(), &[])
+        .expect("empty full-controller two-vCPU checkpoint MSR policy is valid");
+
+    let first_capture = run_to_quiescent_hlt(
+        &mut first_vcpu,
+        TWO_VCPU_CHECKPOINT_FIRST_CAPTURE_RIP,
+        "first full-controller two-vCPU checkpoint quiescence",
+    )?;
+    let second_capture = run_to_quiescent_hlt(
+        &mut second_vcpu,
+        TWO_VCPU_CHECKPOINT_SECOND_CAPTURE_RIP,
+        "second full-controller two-vCPU checkpoint quiescence",
+    )?;
+
+    let checkpoint = BoundedTwoVcpuFullControllerCheckpoint::capture(
+        &first_vcpu,
+        &second_vcpu,
+        &vm,
+        &msr_policy,
+        &TWO_VCPU_CHECKPOINT_OWNERSHIP_SET,
+    )?;
+    require_captured_roles(&checkpoint.base)?;
+    let captured_pages = checkpoint
+        .pages()
+        .iter()
+        .map(BoundedCheckpointPage::address)
+        .collect::<Vec<_>>();
+
+    corrupt_owned_pages(
+        vm.guest_memory_mut()
+            .expect("registered full-controller two-vCPU memory remains VM-owned"),
+    )?;
+    first_vcpu.initialize_long_mode(&first_corrupt_layout)?;
+    second_vcpu.initialize_long_mode(&second_corrupt_layout)?;
+    corrupt_full_controller_state(&checkpoint, &first_vcpu, &second_vcpu, &vm)?;
+
+    let corruption = checkpoint.verify(&first_vcpu, &second_vcpu, &vm)?;
+    require_full_controller_mismatch(&corruption)?;
+
+    let restored = checkpoint.restore_and_verify(&first_vcpu, &second_vcpu, &mut vm)?;
+    if !restored.is_exact_match() {
+        return Err(two_vcpu_checkpoint_error(
+            TWO_VCPU_CHECKPOINT_FIRST_ID,
+            "two-vCPU full-controller checkpoint restore verification",
+            format!(
+                "restore mismatch: vcpu0={:?} vcpu1={:?} master={} slave={} ioapic={} lapic0={:?} lapic1={:?}",
+                restored.vcpu_exact(TWO_VCPU_CHECKPOINT_FIRST_ID),
+                restored.vcpu_exact(TWO_VCPU_CHECKPOINT_SECOND_ID),
+                restored.master_pic_exact(),
+                restored.slave_pic_exact(),
+                restored.ioapic_exact(),
+                restored.lapic_exact(TWO_VCPU_CHECKPOINT_FIRST_ID),
+                restored.lapic_exact(TWO_VCPU_CHECKPOINT_SECOND_ID)
+            ),
+        ));
+    }
+
+    let (_, first_proof, first_terminal) = resume_and_verify(
+        &mut first_vcpu,
+        TWO_VCPU_CHECKPOINT_FIRST_PROOF,
+        TWO_VCPU_CHECKPOINT_FIRST_TERMINAL_RIP,
+        "first full-controller two-vCPU checkpoint resume",
+    )?;
+    let (_, second_proof, second_terminal) = resume_and_verify(
+        &mut second_vcpu,
+        TWO_VCPU_CHECKPOINT_SECOND_PROOF,
+        TWO_VCPU_CHECKPOINT_SECOND_TERMINAL_RIP,
+        "second full-controller two-vCPU checkpoint resume",
+    )?;
+
+    Ok(TwoVcpuFullControllerCheckpointGuestResult {
+        first_capture,
+        second_capture,
+        captured_pages,
+        corruption,
+        restored,
+        first_proof,
+        second_proof,
+        first_terminal,
+        second_terminal,
+    })
+}
+
+fn corrupt_full_controller_state(
+    checkpoint: &BoundedTwoVcpuFullControllerCheckpoint,
+    first: &Vcpu,
+    second: &Vcpu,
+    vm: &Vm,
+) -> Result<(), Error> {
+    vm.restore_master_pic_state(&checkpoint.master_pic.with_imr(checkpoint.master_pic.imr() ^ 0x01))?;
+    vm.restore_slave_pic_state(&checkpoint.slave_pic.with_imr(checkpoint.slave_pic.imr() ^ 0x02))?;
+
+    let ioapic_entry = checkpoint
+        .ioapic
+        .redirection_entry(TWO_VCPU_FULL_CONTROLLER_IOAPIC_PIN)
+        .expect("fixed full-controller two-vCPU IOAPIC pin remains valid");
+    let corrupt_ioapic = checkpoint
+        .ioapic
+        .with_redirection_entry(
+            TWO_VCPU_FULL_CONTROLLER_IOAPIC_PIN,
+            ioapic_entry ^ (1_u64 << 16),
+        )
+        .expect("fixed full-controller two-vCPU IOAPIC pin remains valid");
+    vm.restore_ioapic_state(&corrupt_ioapic)?;
+
+    let mut first_lapic = checkpoint.lapics[0].1.clone();
+    let first_lvt0 =
+        two_vcpu_read_lapic_register(&first_lapic, TWO_VCPU_FULL_CONTROLLER_APIC_LVT0_OFFSET);
+    two_vcpu_write_lapic_register(
+        &mut first_lapic,
+        TWO_VCPU_FULL_CONTROLLER_APIC_LVT0_OFFSET,
+        first_lvt0 ^ TWO_VCPU_FULL_CONTROLLER_APIC_LVT_MASKED,
+    );
+    first.restore_lapic_checkpoint_state(&first_lapic)?;
+
+    let mut second_lapic = checkpoint.lapics[1].1.clone();
+    let second_spiv =
+        two_vcpu_read_lapic_register(&second_lapic, TWO_VCPU_FULL_CONTROLLER_APIC_SPIV_OFFSET);
+    two_vcpu_write_lapic_register(
+        &mut second_lapic,
+        TWO_VCPU_FULL_CONTROLLER_APIC_SPIV_OFFSET,
+        second_spiv ^ TWO_VCPU_FULL_CONTROLLER_APIC_SOFTWARE_ENABLE,
+    );
+    second.restore_lapic_checkpoint_state(&second_lapic)?;
+    Ok(())
+}
+
+fn require_full_controller_mismatch(
+    comparison: &BoundedTwoVcpuFullControllerCheckpointComparison,
+) -> Result<(), Error> {
+    for address in TWO_VCPU_CHECKPOINT_OWNERSHIP_SET {
+        if comparison.page_exact(address) != Some(false) {
+            return Err(two_vcpu_checkpoint_error(
+                TWO_VCPU_CHECKPOINT_FIRST_ID,
+                "two-vCPU full-controller checkpoint corruption proof",
+                format!("owned page {:#x} did not mismatch", address.get()),
+            ));
+        }
+    }
+    if comparison.vcpu_exact(TWO_VCPU_CHECKPOINT_FIRST_ID) != Some(false)
+        || comparison.vcpu_exact(TWO_VCPU_CHECKPOINT_SECOND_ID) != Some(false)
+        || comparison.master_pic_exact()
+        || comparison.slave_pic_exact()
+        || comparison.ioapic_exact()
+        || comparison.lapic_exact(TWO_VCPU_CHECKPOINT_FIRST_ID) != Some(false)
+        || comparison.lapic_exact(TWO_VCPU_CHECKPOINT_SECOND_ID) != Some(false)
+    {
+        return Err(two_vcpu_checkpoint_error(
+            TWO_VCPU_CHECKPOINT_FIRST_ID,
+            "two-vCPU full-controller checkpoint corruption proof",
+            format!(
+                "expected vCPU/controller/LAPIC mismatches, got vcpu0={:?} vcpu1={:?} master={} slave={} ioapic={} lapic0={:?} lapic1={:?}",
+                comparison.vcpu_exact(TWO_VCPU_CHECKPOINT_FIRST_ID),
+                comparison.vcpu_exact(TWO_VCPU_CHECKPOINT_SECOND_ID),
+                comparison.master_pic_exact(),
+                comparison.slave_pic_exact(),
+                comparison.ioapic_exact(),
+                comparison.lapic_exact(TWO_VCPU_CHECKPOINT_FIRST_ID),
+                comparison.lapic_exact(TWO_VCPU_CHECKPOINT_SECOND_ID)
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn two_vcpu_read_lapic_register(state: &KvmLapicState, offset: usize) -> u32 {
+    u32::from_le_bytes(
+        state.regs[offset..offset + 4]
+            .try_into()
+            .expect("fixed LAPIC register offset remains valid"),
+    )
+}
+
+fn two_vcpu_write_lapic_register(state: &mut KvmLapicState, offset: usize, value: u32) {
+    state.regs[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
