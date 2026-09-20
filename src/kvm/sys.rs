@@ -584,3 +584,4 @@ include!("irqchip.rs");
 include!("host_registration.rs");
 include!("host_registration_pair.rs");
 include!("host_registration_schema_v1.rs");
+include!("host_registration_pair_schema_v1.rs");
