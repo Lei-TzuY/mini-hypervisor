@@ -8,7 +8,7 @@ use crate::kvm::sys::{
 };
 use crate::memory::GuestPhysAddr;
 use crate::mmio::MmioBus;
-use crate::portio::pci::virtio_blk::VirtioBlkDevice;
+use crate::portio::pci::virtio_blk::{VirtioBlkDevice, VirtioBlkPendingCompletionToken};
 use crate::state_snapshot::{
     BoundedTwoVcpuFullControllerCheckpoint, BoundedTwoVcpuFullControllerCheckpointComparison,
 };
@@ -44,6 +44,72 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
             controller,
             devices: [(bars[0], first_device), (bars[1], second_device)],
         })
+    }
+
+    pub(crate) fn capture_with_pending_completion(
+        first: &Vcpu,
+        second: &Vcpu,
+        vm: &crate::kvm::Vm,
+        msr_policy: &GuestMsrAccessPolicy,
+        mmio: &MmioBus,
+        bars: [u64; 2],
+        page_addresses: &[GuestPhysAddr],
+        pending_bar: u64,
+    ) -> Result<(Self, VirtioBlkPendingCompletionToken), Error> {
+        let bars = canonical_two_virtio_blk_bars(bars)?;
+        if pending_bar != bars[0] && pending_bar != bars[1] {
+            return Err(page_set_error(
+                "two-vCPU pending-completion checkpoint binding",
+                format!("pending BAR {pending_bar:#x} is outside canonical BARs {bars:?}"),
+            ));
+        }
+
+        let (first_device, token, second_device) = if pending_bar == bars[0] {
+            let (pending, token) = mmio
+                .capture_virtio_blk_checkpoint_with_pending_completion_at(bars[0])?
+                .ok_or_else(|| {
+                    page_set_error(
+                        "two-vCPU pending-completion checkpoint capture",
+                        format!("pending virtio-blk device at BAR {:#x} is missing", bars[0]),
+                    )
+                })?;
+            let other = capture_required_device(
+                mmio,
+                bars[1],
+                "second fully-quiescent two-vCPU transaction",
+            )?;
+            (pending, token, other)
+        } else {
+            let other = capture_required_device(
+                mmio,
+                bars[0],
+                "first fully-quiescent two-vCPU transaction",
+            )?;
+            let (pending, token) = mmio
+                .capture_virtio_blk_checkpoint_with_pending_completion_at(bars[1])?
+                .ok_or_else(|| {
+                    page_set_error(
+                        "two-vCPU pending-completion checkpoint capture",
+                        format!("pending virtio-blk device at BAR {:#x} is missing", bars[1]),
+                    )
+                })?;
+            (other, token, pending)
+        };
+
+        let controller = BoundedTwoVcpuFullControllerCheckpoint::capture(
+            first,
+            second,
+            vm,
+            msr_policy,
+            page_addresses,
+        )?;
+        Ok((
+            Self {
+                controller,
+                devices: [(bars[0], first_device), (bars[1], second_device)],
+            },
+            token,
+        ))
     }
 
     #[must_use]
@@ -102,6 +168,28 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
             (self.devices[0].0, &self.devices[0].1),
             (self.devices[1].0, &self.devices[1].1),
         ])?;
+
+        self.verify(first, second, vm, mmio)
+    }
+
+    pub(crate) fn restore_and_verify_with_pending_completion(
+        &self,
+        first: &mut Vcpu,
+        second: &mut Vcpu,
+        vm: &mut crate::kvm::Vm,
+        mmio: &mut MmioBus,
+        token: &VirtioBlkPendingCompletionToken,
+    ) -> Result<BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison, Error> {
+        let controller = self.controller.restore_and_verify(first, second, vm)?;
+        require_two_vcpu_controller_exact_before_devices(controller.is_exact_match())?;
+
+        mmio.restore_two_virtio_blk_checkpoints_atomic_with_pending_completion(
+            [
+                (self.devices[0].0, &self.devices[0].1),
+                (self.devices[1].0, &self.devices[1].1),
+            ],
+            token,
+        )?;
 
         self.verify(first, second, vm, mmio)
     }
