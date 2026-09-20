@@ -6,9 +6,9 @@ pub use checkpoint::VirtioBlkCheckpointStateError;
 pub(crate) use checkpoint::{
     VirtioBlkCheckpointState, VirtioBlkPendingCompletionToken, VirtioBlkPendingNotificationToken,
 };
-mod virtio_blk_backing;
 #[path = "virtio_blk_file_backed.rs"]
 mod file_backed;
+mod virtio_blk_backing;
 #[path = "virtio_blk_write_readback.rs"]
 mod write_readback;
 
