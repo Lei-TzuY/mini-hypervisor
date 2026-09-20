@@ -5,8 +5,8 @@ use mini_hypervisor::state_snapshot::{
 };
 
 #[test]
-fn accelerated_checkpoint_rejects_pending_ioeventfd_without_consuming_it_then_captures_after_service()
-{
+fn accelerated_checkpoint_rejects_pending_ioeventfd_without_consuming_it_then_captures_after_service(
+) {
     match run_acceleration_checkpoint_quiescence_guest() {
         Ok(result) => {
             assert_eq!(result.rejected_pending(), [true, false]);
@@ -27,6 +27,8 @@ fn accelerated_checkpoint_rejects_pending_ioeventfd_without_consuming_it_then_ca
                 "skipping acceleration-aware checkpoint quiescence assertion: /dev/kvm unavailable"
             );
         }
-        Err(error) => panic!("acceleration-aware checkpoint quiescence failed unexpectedly: {error}"),
+        Err(error) => {
+            panic!("acceleration-aware checkpoint quiescence failed unexpectedly: {error}")
+        }
     }
 }
