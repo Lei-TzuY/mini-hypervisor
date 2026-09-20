@@ -561,5 +561,6 @@ mod two_vcpu_two_device_transaction_guest {
     use super::*;
     include!("two_vcpu_two_device_transaction_guest.rs");
     include!("restored_multi_producer_data_plane_replay.rs");
+    include!("pending_completion_token_replay.rs");
 }
 pub use two_vcpu_two_device_transaction_guest::*;
