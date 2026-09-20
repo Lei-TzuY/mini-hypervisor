@@ -82,4 +82,4 @@ jobs:
           grep -F 'multi-producer replay backing distinct: true' <<<"$output"
           grep -F 'multi-producer replay proofs: [87, 48, 97, 77, 82, 48, 97, 88, 68] / [89, 49, 98, 78, 90, 49, 98, 81, 69]' <<<"$output"
           grep -F 'multi-producer replay capture rips: [0x1000e, 0x11006]' <<<"$output"
-          grep -F 'multi-producer replay completion rips: [0x1015c, 0x11154]' <<<"$output"
+          grep -F 'multi-producer replay completion rips: [0x10184, 0x1117c]' <<<"$output"
