@@ -59,8 +59,111 @@ impl FullControllerTwoVirtioBlkCheckpointGuestResult {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TwoVirtioBlkCheckpointTransport {
+    Direct,
+    VersionedV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VersionedFullControllerTwoVirtioBlkEvidence {
+    schema_version: u16,
+    encoded_len: usize,
+    page_count: usize,
+    msr_count: usize,
+    bars: [u64; 2],
+    backing_len_each: usize,
+    canonical_roundtrip: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionedFullControllerTwoVirtioBlkCheckpointGuestResult {
+    checkpoint: FullControllerTwoVirtioBlkCheckpointGuestResult,
+    schema_version: u16,
+    encoded_len: usize,
+    page_count: usize,
+    msr_count: usize,
+    bars: [u64; 2],
+    backing_len_each: usize,
+    canonical_roundtrip: bool,
+}
+
+impl VersionedFullControllerTwoVirtioBlkCheckpointGuestResult {
+    #[must_use]
+    pub const fn checkpoint(&self) -> &FullControllerTwoVirtioBlkCheckpointGuestResult {
+        &self.checkpoint
+    }
+
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    #[must_use]
+    pub const fn encoded_len(&self) -> usize {
+        self.encoded_len
+    }
+
+    #[must_use]
+    pub const fn page_count(&self) -> usize {
+        self.page_count
+    }
+
+    #[must_use]
+    pub const fn msr_count(&self) -> usize {
+        self.msr_count
+    }
+
+    #[must_use]
+    pub const fn bars(&self) -> [u64; 2] {
+        self.bars
+    }
+
+    #[must_use]
+    pub const fn backing_len_each(&self) -> usize {
+        self.backing_len_each
+    }
+
+    #[must_use]
+    pub const fn canonical_roundtrip(&self) -> bool {
+        self.canonical_roundtrip
+    }
+}
+
 pub fn run_full_controller_two_virtio_blk_checkpoint_guest(
 ) -> Result<FullControllerTwoVirtioBlkCheckpointGuestResult, Error> {
+    let (result, _) =
+        run_full_controller_two_virtio_blk_checkpoint_core(TwoVirtioBlkCheckpointTransport::Direct)?;
+    Ok(result)
+}
+
+pub fn run_versioned_full_controller_two_virtio_blk_checkpoint_guest(
+) -> Result<VersionedFullControllerTwoVirtioBlkCheckpointGuestResult, Error> {
+    let (checkpoint, evidence) = run_full_controller_two_virtio_blk_checkpoint_core(
+        TwoVirtioBlkCheckpointTransport::VersionedV1,
+    )?;
+    let evidence = evidence.expect("versioned two-device transport always returns schema evidence");
+    Ok(VersionedFullControllerTwoVirtioBlkCheckpointGuestResult {
+        checkpoint,
+        schema_version: evidence.schema_version,
+        encoded_len: evidence.encoded_len,
+        page_count: evidence.page_count,
+        msr_count: evidence.msr_count,
+        bars: evidence.bars,
+        backing_len_each: evidence.backing_len_each,
+        canonical_roundtrip: evidence.canonical_roundtrip,
+    })
+}
+
+fn run_full_controller_two_virtio_blk_checkpoint_core(
+    transport: TwoVirtioBlkCheckpointTransport,
+) -> Result<
+    (
+        FullControllerTwoVirtioBlkCheckpointGuestResult,
+        Option<VersionedFullControllerTwoVirtioBlkEvidence>,
+    ),
+    Error,
+> {
     let guest = crate::loader::FlatGuestImage::new(
         CONTROLLER_CHECKPOINT_ENTRY,
         CONTROLLER_CHECKPOINT_ENTRY,
@@ -138,7 +241,7 @@ pub fn run_full_controller_two_virtio_blk_checkpoint_guest(
     ])?;
 
     let capture = controller_run_to_quiescent_debug(&mut vcpu)?;
-    let checkpoint = BoundedFullControllerTwoVirtioBlkCheckpoint::capture(
+    let captured_checkpoint = BoundedFullControllerTwoVirtioBlkCheckpoint::capture(
         &vcpu,
         &vm,
         &msr_policy,
@@ -149,6 +252,9 @@ pub fn run_full_controller_two_virtio_blk_checkpoint_guest(
         ],
         &[CONTROLLER_CHECKPOINT_PAGE],
     )?;
+    full_controller_require_capture_contract(captured_checkpoint.controller())?;
+    let (checkpoint, versioned) =
+        prepare_two_virtio_blk_checkpoint_transport(captured_checkpoint, &backend, transport)?;
     full_controller_require_capture_contract(checkpoint.controller())?;
     if checkpoint.device_bars()
         != [
@@ -335,19 +441,98 @@ pub fn run_full_controller_two_virtio_blk_checkpoint_guest(
         ));
     }
 
-    Ok(FullControllerTwoVirtioBlkCheckpointGuestResult {
-        capture,
-        mutation,
-        restored,
-        captured_bars: checkpoint.device_bars(),
-        captured_statuses: [
-            TWO_VIRTIO_BLK_CHECKPOINT_FIRST_STATUS,
-            TWO_VIRTIO_BLK_CHECKPOINT_SECOND_STATUS,
-        ],
-        restored_statuses,
-        proof,
-        completion_rflags: completion.rflags,
-    })
+    Ok((
+        FullControllerTwoVirtioBlkCheckpointGuestResult {
+            capture,
+            mutation,
+            restored,
+            captured_bars: checkpoint.device_bars(),
+            captured_statuses: [
+                TWO_VIRTIO_BLK_CHECKPOINT_FIRST_STATUS,
+                TWO_VIRTIO_BLK_CHECKPOINT_SECOND_STATUS,
+            ],
+            restored_statuses,
+            proof,
+            completion_rflags: completion.rflags,
+        },
+        versioned,
+    ))
+}
+
+fn prepare_two_virtio_blk_checkpoint_transport(
+    checkpoint: BoundedFullControllerTwoVirtioBlkCheckpoint,
+    backend: &crate::kvm::KvmBackend,
+    transport: TwoVirtioBlkCheckpointTransport,
+) -> Result<
+    (
+        BoundedFullControllerTwoVirtioBlkCheckpoint,
+        Option<VersionedFullControllerTwoVirtioBlkEvidence>,
+    ),
+    Error,
+> {
+    match transport {
+        TwoVirtioBlkCheckpointTransport::Direct => Ok((checkpoint, None)),
+        TwoVirtioBlkCheckpointTransport::VersionedV1 => {
+            let schema =
+                VersionedFullControllerTwoVirtioBlkCheckpointV1::from_checkpoint(&checkpoint)
+                    .map_err(|error| {
+                        page_set_error(
+                            "versioned two virtio-blk checkpoint capture",
+                            error.to_string(),
+                        )
+                    })?;
+            let encoded = schema.encode().map_err(|error| {
+                page_set_error(
+                    "versioned two virtio-blk checkpoint encode",
+                    error.to_string(),
+                )
+            })?;
+            let encoded_len = encoded.len();
+
+            // Prove the byte boundary owns the transport: the process-local checkpoint and
+            // encoder-side semantic object are discarded before decode/materialize.
+            drop(schema);
+            drop(checkpoint);
+
+            let decoded =
+                VersionedFullControllerTwoVirtioBlkCheckpointV1::decode(&encoded).map_err(
+                    |error| {
+                        page_set_error(
+                            "versioned two virtio-blk checkpoint decode",
+                            error.to_string(),
+                        )
+                    },
+                )?;
+            let canonical = decoded.encode().map_err(|error| {
+                page_set_error(
+                    "versioned two virtio-blk checkpoint canonical re-encode",
+                    error.to_string(),
+                )
+            })?;
+            if canonical != encoded {
+                return Err(page_set_error(
+                    "versioned two virtio-blk checkpoint canonical re-encode",
+                    "decoded checkpoint did not reproduce the canonical byte stream",
+                ));
+            }
+            let evidence = VersionedFullControllerTwoVirtioBlkEvidence {
+                schema_version: decoded.version(),
+                encoded_len,
+                page_count: decoded.page_count(),
+                msr_count: decoded.msr_count(),
+                bars: decoded.device_bars(),
+                backing_len_each: decoded.backing_len_each(),
+                canonical_roundtrip: true,
+            };
+            let checkpoint = decoded.materialize(backend.host_msr_indices()).map_err(|error| {
+                page_set_error(
+                    "versioned two virtio-blk checkpoint materialize",
+                    error.to_string(),
+                )
+            })?;
+            Ok((checkpoint, Some(evidence)))
+        }
+    }
 }
 
 fn prepared_device(
