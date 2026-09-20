@@ -75,16 +75,16 @@ const SECOND_DATA: u64 = 0x0001_9400;
 const SECOND_STATUS: u64 = 0x0001_9600;
 
 #[derive(Debug, Clone, Copy)]
-struct QueueLayout {
-    desc: u64,
-    avail: u64,
-    used: u64,
-    header: u64,
-    data: u64,
-    status: u64,
+pub(super) struct QueueLayout {
+    pub(super) desc: u64,
+    pub(super) avail: u64,
+    pub(super) used: u64,
+    pub(super) header: u64,
+    pub(super) data: u64,
+    pub(super) status: u64,
 }
 
-const FIRST_QUEUE: QueueLayout = QueueLayout {
+pub(super) const FIRST_QUEUE: QueueLayout = QueueLayout {
     desc: FIRST_DESC,
     avail: FIRST_AVAIL,
     used: FIRST_USED,
@@ -92,7 +92,7 @@ const FIRST_QUEUE: QueueLayout = QueueLayout {
     data: FIRST_DATA,
     status: FIRST_STATUS,
 };
-const SECOND_QUEUE: QueueLayout = QueueLayout {
+pub(super) const SECOND_QUEUE: QueueLayout = QueueLayout {
     desc: SECOND_DESC,
     avail: SECOND_AVAIL,
     used: SECOND_USED,
@@ -668,7 +668,7 @@ fn require_exact_restore(
     Ok(())
 }
 
-fn require_ready_devices(mmio: &MmioBus) -> Result<(), Error> {
+pub(super) fn require_ready_devices(mmio: &MmioBus) -> Result<(), Error> {
     let expected_status = VIRTIO_STATUS_ACKNOWLEDGE
         | VIRTIO_STATUS_DRIVER
         | VIRTIO_STATUS_FEATURES_OK
@@ -708,7 +708,7 @@ fn require_quiescent_zero_zero(
     Ok(())
 }
 
-fn require_restored_zero_zero(mmio: &MmioBus) -> Result<(), Error> {
+pub(super) fn require_restored_zero_zero(mmio: &MmioBus) -> Result<(), Error> {
     for bar in [
         crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
         crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
@@ -722,7 +722,7 @@ fn require_restored_zero_zero(mmio: &MmioBus) -> Result<(), Error> {
     Ok(())
 }
 
-fn queue_indices(mmio: &MmioBus, bar: u64) -> Result<[u16; 2], Error> {
+pub(super) fn queue_indices(mmio: &MmioBus, bar: u64) -> Result<[u16; 2], Error> {
     let device = mmio
         .capture_virtio_blk_checkpoint_at(bar)?
         .ok_or_else(|| coupled_error(format!("virtio-blk BAR {bar:#x} disappeared")))?;
@@ -737,7 +737,7 @@ fn queue_indices(mmio: &MmioBus, bar: u64) -> Result<[u16; 2], Error> {
     ])
 }
 
-fn ready_device(bar: u64, queue: QueueLayout) -> Result<VirtioBlkDevice, Error> {
+pub(super) fn ready_device(bar: u64, queue: QueueLayout) -> Result<VirtioBlkDevice, Error> {
     let mut device = VirtioBlkDevice::new(bar);
     device_write(&mut device, 0x14, &[VIRTIO_STATUS_ACKNOWLEDGE])?;
     device_write(
@@ -854,7 +854,7 @@ fn write_descriptor(
     )
 }
 
-fn read_data(vm: &crate::kvm::Vm, address: u64) -> Result<Vec<u8>, Error> {
+pub(super) fn read_data(vm: &crate::kvm::Vm, address: u64) -> Result<Vec<u8>, Error> {
     let memory = vm
         .guest_memory()
         .ok_or_else(|| coupled_error("restored VM lost guest memory during readback"))?;
@@ -965,28 +965,28 @@ fn emit_guest_completion_checks(code: &mut Vec<u8>, queue: QueueLayout) {
     emit_equal_or_ud2(code);
 }
 
-fn emit_debug(code: &mut Vec<u8>, byte: u8) {
+pub(super) fn emit_debug(code: &mut Vec<u8>, byte: u8) {
     code.extend_from_slice(&[0xb0, byte, 0xe6, 0xe9]);
 }
 
-fn emit_movabs(code: &mut Vec<u8>, register: u8, value: u64) {
+pub(super) fn emit_movabs(code: &mut Vec<u8>, register: u8, value: u64) {
     debug_assert!(register < 8);
     code.extend_from_slice(&[0x48, 0xb8 + register]);
     code.extend_from_slice(&value.to_le_bytes());
 }
 
-fn emit_cmp_eax(code: &mut Vec<u8>, expected: u32) {
+pub(super) fn emit_cmp_eax(code: &mut Vec<u8>, expected: u32) {
     code.push(0x3d);
     code.extend_from_slice(&expected.to_le_bytes());
     emit_equal_or_ud2(code);
 }
 
-fn emit_cmp_al(code: &mut Vec<u8>, expected: u8) {
+pub(super) fn emit_cmp_al(code: &mut Vec<u8>, expected: u8) {
     code.extend_from_slice(&[0x3c, expected]);
     emit_equal_or_ud2(code);
 }
 
-fn emit_equal_or_ud2(code: &mut Vec<u8>) {
+pub(super) fn emit_equal_or_ud2(code: &mut Vec<u8>) {
     code.extend_from_slice(&[0x74, 0x02, 0x0f, 0x0b]);
 }
 
@@ -1072,7 +1072,7 @@ fn coupled_error(detail: impl Into<String>) -> Error {
     })
 }
 
-mod write_readback {
+pub(super) mod write_readback {
     use super::*;
     use crate::portio::pci::virtio_blk::{VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT};
     use crate::portio::virtio_blk_fixture::deterministic_write_readback_sector;
@@ -1090,7 +1090,7 @@ mod write_readback {
     const WRITE_READBACK_EXIT_BUDGET: u32 = 40;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum RequestKind {
+    pub(super) enum RequestKind {
         Write,
         Read,
     }
@@ -1505,7 +1505,7 @@ mod write_readback {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn service_write_readback_notification(
+    pub(super) fn service_write_readback_notification(
         index: usize,
         kind: RequestKind,
         registrations: &ReconstructedHostRegistrationPair,
@@ -1606,7 +1606,7 @@ mod write_readback {
         Ok(())
     }
 
-    fn initialize_write_queue_memory(
+    pub(super) fn initialize_write_queue_memory(
         memory: &mut GuestMemory,
         queue: QueueLayout,
         payload: &[u8; VIRTIO_BLK_SECTOR_SIZE],
@@ -1678,7 +1678,7 @@ mod write_readback {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn emit_write_then_read(
+    pub(super) fn emit_write_then_read(
         code: &mut Vec<u8>,
         queue: QueueLayout,
         virtual_bar: u64,
@@ -1769,7 +1769,7 @@ mod write_readback {
         emit_equal_or_ud2(code);
     }
 
-    fn second_write_readback_sector() -> [u8; VIRTIO_BLK_SECTOR_SIZE] {
+    pub(super) fn second_write_readback_sector() -> [u8; VIRTIO_BLK_SECTOR_SIZE] {
         let mut bytes = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
         for (index, byte) in bytes.iter_mut().enumerate() {
             *byte = (index as u8).wrapping_mul(37).wrapping_add(19);
