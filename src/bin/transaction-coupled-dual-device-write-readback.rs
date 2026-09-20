@@ -28,10 +28,7 @@ fn main() -> ExitCode {
                 "coupled write/readback doorbells: {:?}",
                 result.doorbell_events()
             );
-            println!(
-                "coupled write/readback irqfd: {:?}",
-                result.irqfd_signals()
-            );
+            println!("coupled write/readback irqfd: {:?}", result.irqfd_signals());
             println!(
                 "coupled write/readback payload exact: [{}, {}]",
                 result.readback()[0] == result.write_payloads()[0]
