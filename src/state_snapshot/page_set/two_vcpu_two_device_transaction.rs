@@ -220,7 +220,21 @@ impl TwoVcpuTwoDeviceCheckpointTransaction {
             };
         }
 
-        let post_reconstruction = self.checkpoint.verify(first, second, vm, mmio)?;
+        let post_reconstruction = match self.checkpoint.verify(first, second, vm, mmio) {
+            Ok(comparison) => comparison,
+            Err(error) => {
+                let cleanup = registrations.deassign(vm);
+                return match cleanup {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(page_set_error(
+                        "two-vCPU two-device post-registration verification cleanup",
+                        format!(
+                            "post-registration verification failed: {error}; cleanup also failed: {cleanup_error}"
+                        ),
+                    )),
+                };
+            }
+        };
         if !post_reconstruction.is_exact_match() {
             let cleanup = registrations.deassign(vm);
             return match cleanup {
@@ -245,7 +259,20 @@ fn require_registration_pair_matches_devices(
     bars: [u64; 2],
 ) -> Result<(), Error> {
     let specs = pair.specs();
-    let expected = [bars[0] + 0x100, bars[1] + 0x100];
+    let expected = [
+        bars[0].checked_add(0x100).ok_or_else(|| {
+            page_set_error(
+                "two-vCPU two-device transaction registration binding",
+                "first device notify address overflowed",
+            )
+        })?,
+        bars[1].checked_add(0x100).ok_or_else(|| {
+            page_set_error(
+                "two-vCPU two-device transaction registration binding",
+                "second device notify address overflowed",
+            )
+        })?,
+    ];
     let observed = [specs[0].doorbell_address(), specs[1].doorbell_address()];
     if observed != expected {
         return Err(page_set_error(
