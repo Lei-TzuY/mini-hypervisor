@@ -63,6 +63,7 @@ impl FullControllerTwoVirtioBlkCheckpointGuestResult {
 enum TwoVirtioBlkCheckpointTransport {
     Direct,
     VersionedV1,
+    VersionedTransactionV1(crate::kvm::sys::HostRegistrationSpecPair),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +75,23 @@ struct VersionedFullControllerTwoVirtioBlkEvidence {
     bars: [u64; 2],
     backing_len_each: usize,
     canonical_roundtrip: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VersionedTwoDeviceCheckpointTransactionEvidence {
+    transaction_version: u16,
+    encoded_len: usize,
+    checkpoint_schema_version: u16,
+    checkpoint_encoded_len: usize,
+    registration_pair_schema_version: u16,
+    registration_pair_encoded_len: usize,
+    registration_versions: [u16; 2],
+    page_count: usize,
+    msr_count: usize,
+    bars: [u64; 2],
+    backing_len_each: usize,
+    canonical_roundtrip: bool,
+    registration_pair: crate::kvm::sys::HostRegistrationSpecPair,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,16 +148,136 @@ impl VersionedFullControllerTwoVirtioBlkCheckpointGuestResult {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionedTwoDeviceCheckpointTransactionGuestResult {
+    checkpoint: FullControllerTwoVirtioBlkCheckpointGuestResult,
+    transaction_version: u16,
+    encoded_len: usize,
+    checkpoint_schema_version: u16,
+    checkpoint_encoded_len: usize,
+    registration_pair_schema_version: u16,
+    registration_pair_encoded_len: usize,
+    registration_versions: [u16; 2],
+    page_count: usize,
+    msr_count: usize,
+    bars: [u64; 2],
+    backing_len_each: usize,
+    canonical_roundtrip: bool,
+    acceleration_doorbells: [u64; 2],
+    acceleration_gsis: [u32; 2],
+    acceleration_vectors: [u8; 2],
+    acceleration_generation_events: [[u64; 2]; 2],
+    acceleration_proof: Vec<u8>,
+    acceleration_completion_rflags: u64,
+}
+
+impl VersionedTwoDeviceCheckpointTransactionGuestResult {
+    #[must_use]
+    pub const fn checkpoint(&self) -> &FullControllerTwoVirtioBlkCheckpointGuestResult {
+        &self.checkpoint
+    }
+
+    #[must_use]
+    pub const fn transaction_version(&self) -> u16 {
+        self.transaction_version
+    }
+
+    #[must_use]
+    pub const fn encoded_len(&self) -> usize {
+        self.encoded_len
+    }
+
+    #[must_use]
+    pub const fn checkpoint_schema_version(&self) -> u16 {
+        self.checkpoint_schema_version
+    }
+
+    #[must_use]
+    pub const fn checkpoint_encoded_len(&self) -> usize {
+        self.checkpoint_encoded_len
+    }
+
+    #[must_use]
+    pub const fn registration_pair_schema_version(&self) -> u16 {
+        self.registration_pair_schema_version
+    }
+
+    #[must_use]
+    pub const fn registration_pair_encoded_len(&self) -> usize {
+        self.registration_pair_encoded_len
+    }
+
+    #[must_use]
+    pub const fn registration_versions(&self) -> [u16; 2] {
+        self.registration_versions
+    }
+
+    #[must_use]
+    pub const fn page_count(&self) -> usize {
+        self.page_count
+    }
+
+    #[must_use]
+    pub const fn msr_count(&self) -> usize {
+        self.msr_count
+    }
+
+    #[must_use]
+    pub const fn bars(&self) -> [u64; 2] {
+        self.bars
+    }
+
+    #[must_use]
+    pub const fn backing_len_each(&self) -> usize {
+        self.backing_len_each
+    }
+
+    #[must_use]
+    pub const fn canonical_roundtrip(&self) -> bool {
+        self.canonical_roundtrip
+    }
+
+    #[must_use]
+    pub const fn acceleration_doorbells(&self) -> [u64; 2] {
+        self.acceleration_doorbells
+    }
+
+    #[must_use]
+    pub const fn acceleration_gsis(&self) -> [u32; 2] {
+        self.acceleration_gsis
+    }
+
+    #[must_use]
+    pub const fn acceleration_vectors(&self) -> [u8; 2] {
+        self.acceleration_vectors
+    }
+
+    #[must_use]
+    pub const fn acceleration_generation_events(&self) -> [[u64; 2]; 2] {
+        self.acceleration_generation_events
+    }
+
+    #[must_use]
+    pub fn acceleration_proof(&self) -> &[u8] {
+        &self.acceleration_proof
+    }
+
+    #[must_use]
+    pub const fn acceleration_completion_rflags(&self) -> u64 {
+        self.acceleration_completion_rflags
+    }
+}
+
 pub fn run_full_controller_two_virtio_blk_checkpoint_guest(
 ) -> Result<FullControllerTwoVirtioBlkCheckpointGuestResult, Error> {
-    let (result, _) =
+    let (result, _, _) =
         run_full_controller_two_virtio_blk_checkpoint_core(TwoVirtioBlkCheckpointTransport::Direct)?;
     Ok(result)
 }
 
 pub fn run_versioned_full_controller_two_virtio_blk_checkpoint_guest(
 ) -> Result<VersionedFullControllerTwoVirtioBlkCheckpointGuestResult, Error> {
-    let (checkpoint, evidence) = run_full_controller_two_virtio_blk_checkpoint_core(
+    let (checkpoint, evidence, _) = run_full_controller_two_virtio_blk_checkpoint_core(
         TwoVirtioBlkCheckpointTransport::VersionedV1,
     )?;
     let evidence = evidence.expect("versioned two-device transport always returns schema evidence");
@@ -155,12 +293,50 @@ pub fn run_versioned_full_controller_two_virtio_blk_checkpoint_guest(
     })
 }
 
+
+pub fn run_versioned_two_device_checkpoint_transaction_guest(
+) -> Result<VersionedTwoDeviceCheckpointTransactionGuestResult, Error> {
+    let pair = crate::kvm::sys::default_two_host_registration_pair()?;
+    let (checkpoint, _, transaction) = run_full_controller_two_virtio_blk_checkpoint_core(
+        TwoVirtioBlkCheckpointTransport::VersionedTransactionV1(pair),
+    )?;
+    let transaction =
+        transaction.expect("versioned two-device transaction transport always returns evidence");
+    let acceleration = crate::kvm::sys::run_two_host_registration_acceleration_guest_with_pair(
+        crate::config::VmConfig::default(),
+        transaction.registration_pair,
+    )?;
+
+    Ok(VersionedTwoDeviceCheckpointTransactionGuestResult {
+        checkpoint,
+        transaction_version: transaction.transaction_version,
+        encoded_len: transaction.encoded_len,
+        checkpoint_schema_version: transaction.checkpoint_schema_version,
+        checkpoint_encoded_len: transaction.checkpoint_encoded_len,
+        registration_pair_schema_version: transaction.registration_pair_schema_version,
+        registration_pair_encoded_len: transaction.registration_pair_encoded_len,
+        registration_versions: transaction.registration_versions,
+        page_count: transaction.page_count,
+        msr_count: transaction.msr_count,
+        bars: transaction.bars,
+        backing_len_each: transaction.backing_len_each,
+        canonical_roundtrip: transaction.canonical_roundtrip,
+        acceleration_doorbells: acceleration.doorbells(),
+        acceleration_gsis: acceleration.gsis(),
+        acceleration_vectors: acceleration.vectors(),
+        acceleration_generation_events: acceleration.generation_doorbell_events(),
+        acceleration_proof: acceleration.proof().to_vec(),
+        acceleration_completion_rflags: acceleration.completion_rflags(),
+    })
+}
+
 fn run_full_controller_two_virtio_blk_checkpoint_core(
     transport: TwoVirtioBlkCheckpointTransport,
 ) -> Result<
     (
         FullControllerTwoVirtioBlkCheckpointGuestResult,
         Option<VersionedFullControllerTwoVirtioBlkEvidence>,
+        Option<VersionedTwoDeviceCheckpointTransactionEvidence>,
     ),
     Error,
 > {
@@ -253,7 +429,7 @@ fn run_full_controller_two_virtio_blk_checkpoint_core(
         &[CONTROLLER_CHECKPOINT_PAGE],
     )?;
     full_controller_require_capture_contract(captured_checkpoint.controller())?;
-    let (checkpoint, versioned) =
+    let (checkpoint, versioned, transaction) =
         prepare_two_virtio_blk_checkpoint_transport(captured_checkpoint, &backend, transport)?;
     full_controller_require_capture_contract(checkpoint.controller())?;
     if checkpoint.device_bars()
@@ -456,6 +632,7 @@ fn run_full_controller_two_virtio_blk_checkpoint_core(
             completion_rflags: completion.rflags,
         },
         versioned,
+        transaction,
     ))
 }
 
@@ -467,11 +644,12 @@ fn prepare_two_virtio_blk_checkpoint_transport(
     (
         BoundedFullControllerTwoVirtioBlkCheckpoint,
         Option<VersionedFullControllerTwoVirtioBlkEvidence>,
+        Option<VersionedTwoDeviceCheckpointTransactionEvidence>,
     ),
     Error,
 > {
     match transport {
-        TwoVirtioBlkCheckpointTransport::Direct => Ok((checkpoint, None)),
+        TwoVirtioBlkCheckpointTransport::Direct => Ok((checkpoint, None, None)),
         TwoVirtioBlkCheckpointTransport::VersionedV1 => {
             let schema =
                 VersionedFullControllerTwoVirtioBlkCheckpointV1::from_checkpoint(&checkpoint)
@@ -530,7 +708,90 @@ fn prepare_two_virtio_blk_checkpoint_transport(
                     error.to_string(),
                 )
             })?;
-            Ok((checkpoint, Some(evidence)))
+            Ok((checkpoint, Some(evidence), None))
+        }
+        TwoVirtioBlkCheckpointTransport::VersionedTransactionV1(registration_pair) => {
+            let schema = VersionedTwoDeviceCheckpointTransactionV1::from_checkpoint_and_pair(
+                &checkpoint,
+                registration_pair,
+            )
+            .map_err(|error| {
+                page_set_error(
+                    "two-device checkpoint transaction capture",
+                    error.to_string(),
+                )
+            })?;
+            let checkpoint_encoded_len = schema.checkpoint_encoded_len().map_err(|error| {
+                page_set_error(
+                    "two-device checkpoint transaction nested checkpoint encode",
+                    error.to_string(),
+                )
+            })?;
+            let registration_pair_encoded_len = schema.registration_pair_encoded_len();
+            let encoded = schema.encode().map_err(|error| {
+                page_set_error(
+                    "two-device checkpoint transaction encode",
+                    error.to_string(),
+                )
+            })?;
+            let encoded_len = encoded.len();
+
+            drop(schema);
+            drop(checkpoint);
+
+            let decoded = VersionedTwoDeviceCheckpointTransactionV1::decode(&encoded).map_err(
+                |error| {
+                    page_set_error(
+                        "two-device checkpoint transaction decode",
+                        error.to_string(),
+                    )
+                },
+            )?;
+            let canonical = decoded.encode().map_err(|error| {
+                page_set_error(
+                    "two-device checkpoint transaction canonical re-encode",
+                    error.to_string(),
+                )
+            })?;
+            if canonical != encoded {
+                return Err(page_set_error(
+                    "two-device checkpoint transaction canonical re-encode",
+                    "decoded transaction did not reproduce the canonical byte stream",
+                ));
+            }
+
+            let transaction_version = decoded.version();
+            let checkpoint_schema_version = decoded.checkpoint_version();
+            let registration_pair_schema_version = decoded.registration_pair_version();
+            let registration_versions = decoded.registration_versions();
+            let page_count = decoded.checkpoint_page_count();
+            let msr_count = decoded.checkpoint_msr_count();
+            let bars = decoded.checkpoint_bars();
+            let backing_len_each = decoded.checkpoint_backing_len_each();
+            let (checkpoint, registration_pair) = decoded
+                .materialize(backend.host_msr_indices())
+                .map_err(|error| {
+                    page_set_error(
+                        "two-device checkpoint transaction materialize",
+                        error.to_string(),
+                    )
+                })?;
+            let evidence = VersionedTwoDeviceCheckpointTransactionEvidence {
+                transaction_version,
+                encoded_len,
+                checkpoint_schema_version,
+                checkpoint_encoded_len,
+                registration_pair_schema_version,
+                registration_pair_encoded_len,
+                registration_versions,
+                page_count,
+                msr_count,
+                bars,
+                backing_len_each,
+                canonical_roundtrip: true,
+                registration_pair,
+            };
+            Ok((checkpoint, None, Some(evidence)))
         }
     }
 }
