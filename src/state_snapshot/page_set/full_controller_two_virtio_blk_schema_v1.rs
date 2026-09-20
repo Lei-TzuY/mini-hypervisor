@@ -385,6 +385,86 @@ mod versioned_full_controller_two_virtio_blk_schema_tests {
         assert!(validate_two_device_bars([FIRST_BAR + 1, SECOND_BAR]).is_err());
     }
 
+
+    #[test]
+    fn outer_header_rejects_core_metadata_overflow_and_truncation() {
+        let base = minimal_envelope();
+
+        let mut bad_magic = base.clone();
+        bad_magic[0] ^= 0xff;
+        assert_eq!(
+            VersionedFullControllerTwoVirtioBlkCheckpointV1::decode(&bad_magic),
+            Err(VersionedFullControllerTwoVirtioBlkCheckpointError::InvalidMagic)
+        );
+
+        let mut bad_version = base.clone();
+        bad_version[8..10].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerTwoVirtioBlkCheckpointV1::decode(&bad_version),
+            Err(VersionedFullControllerTwoVirtioBlkCheckpointError::UnsupportedVersion(2))
+        );
+
+        let mut bad_architecture = base.clone();
+        bad_architecture[10..12].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerTwoVirtioBlkCheckpointV1::decode(&bad_architecture),
+            Err(
+                VersionedFullControllerTwoVirtioBlkCheckpointError::UnsupportedArchitecture(2)
+            )
+        );
+
+        let mut bad_header_len = base.clone();
+        bad_header_len[12..16].copy_from_slice(&0_u32.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerTwoVirtioBlkCheckpointV1::decode(&bad_header_len),
+            Err(VersionedFullControllerTwoVirtioBlkCheckpointError::InvalidHeaderLength(0))
+        );
+
+        let mut bad_total_len = base.clone();
+        bad_total_len[16..24].copy_from_slice(&0_u64.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerTwoVirtioBlkCheckpointV1::decode(&bad_total_len),
+            Err(
+                VersionedFullControllerTwoVirtioBlkCheckpointError::InvalidTotalLength {
+                    declared: 0,
+                    actual: base.len(),
+                }
+            )
+        );
+
+        let mut bad_controller_len = base.clone();
+        bad_controller_len[24..32].copy_from_slice(&0_u64.to_le_bytes());
+        assert_eq!(
+            VersionedFullControllerTwoVirtioBlkCheckpointV1::decode(&bad_controller_len),
+            Err(
+                VersionedFullControllerTwoVirtioBlkCheckpointError::InvalidControllerLength(0)
+            )
+        );
+
+        let mut overflowing_controller_len = base.clone();
+        overflowing_controller_len[24..32].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(matches!(
+            VersionedFullControllerTwoVirtioBlkCheckpointV1::decode(
+                &overflowing_controller_len
+            ),
+            Err(VersionedFullControllerTwoVirtioBlkCheckpointError::LengthOverflow)
+                | Err(
+                    VersionedFullControllerTwoVirtioBlkCheckpointError::InvalidControllerLength(_)
+                )
+        ));
+
+        let truncated = &base[..base.len() - 1];
+        assert_eq!(
+            VersionedFullControllerTwoVirtioBlkCheckpointV1::decode(truncated),
+            Err(
+                VersionedFullControllerTwoVirtioBlkCheckpointError::InvalidTotalLength {
+                    declared: base.len() as u64,
+                    actual: truncated.len(),
+                }
+            )
+        );
+    }
+
     #[test]
     fn outer_header_rejects_wrong_device_shape_before_nested_decode() {
         let base = minimal_envelope();
