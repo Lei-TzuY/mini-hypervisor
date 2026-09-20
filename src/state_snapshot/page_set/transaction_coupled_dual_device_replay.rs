@@ -1020,7 +1020,7 @@ fn run_expected_debug_output(
     Ok(io)
 }
 
-fn is_debug_output(continuation: &VmExitContinuation, expected: u8) -> bool {
+pub(super) fn is_debug_output(continuation: &VmExitContinuation, expected: u8) -> bool {
     matches!(
         continuation,
         VmExitContinuation::PortIo(io)
@@ -1032,7 +1032,7 @@ fn is_debug_output(continuation: &VmExitContinuation, expected: u8) -> bool {
     )
 }
 
-fn single_step_to_quiescence(
+pub(super) fn single_step_to_quiescence(
     vcpu: &mut Vcpu,
     expected_rip: u64,
     stage: &'static str,
