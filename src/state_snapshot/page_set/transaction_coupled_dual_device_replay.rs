@@ -1072,7 +1072,7 @@ fn coupled_error(detail: impl Into<String>) -> Error {
     })
 }
 
-pub(super) mod write_readback {
+pub(in crate::state_snapshot::page_set) mod write_readback {
     use super::*;
     use crate::portio::pci::virtio_blk::{VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT};
     use crate::portio::virtio_blk_fixture::deterministic_write_readback_sector;
@@ -1090,7 +1090,7 @@ pub(super) mod write_readback {
     const WRITE_READBACK_EXIT_BUDGET: u32 = 40;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub(super) enum RequestKind {
+    pub(in crate::state_snapshot::page_set) enum RequestKind {
         Write,
         Read,
     }
@@ -1505,7 +1505,7 @@ pub(super) mod write_readback {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn service_write_readback_notification(
+    pub(in crate::state_snapshot::page_set) fn service_write_readback_notification(
         index: usize,
         kind: RequestKind,
         registrations: &ReconstructedHostRegistrationPair,
@@ -1606,7 +1606,7 @@ pub(super) mod write_readback {
         Ok(())
     }
 
-    pub(super) fn initialize_write_queue_memory(
+    pub(in crate::state_snapshot::page_set) fn initialize_write_queue_memory(
         memory: &mut GuestMemory,
         queue: QueueLayout,
         payload: &[u8; VIRTIO_BLK_SECTOR_SIZE],
@@ -1678,7 +1678,7 @@ pub(super) mod write_readback {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn emit_write_then_read(
+    pub(in crate::state_snapshot::page_set) fn emit_write_then_read(
         code: &mut Vec<u8>,
         queue: QueueLayout,
         virtual_bar: u64,
@@ -1769,7 +1769,7 @@ pub(super) mod write_readback {
         emit_equal_or_ud2(code);
     }
 
-    pub(super) fn second_write_readback_sector() -> [u8; VIRTIO_BLK_SECTOR_SIZE] {
+    pub(in crate::state_snapshot::page_set) fn second_write_readback_sector() -> [u8; VIRTIO_BLK_SECTOR_SIZE] {
         let mut bytes = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
         for (index, byte) in bytes.iter_mut().enumerate() {
             *byte = (index as u8).wrapping_mul(37).wrapping_add(19);
