@@ -1,6 +1,13 @@
+use super::{
+    canonical_two_virtio_blk_bars, capture_required_device, page_set_error,
+    verify_required_device,
+};
+use crate::error::Error;
+use crate::kvm::msr::GuestMsrAccessPolicy;
 use crate::kvm::sys::{
     HostRegistrationPairCheckpoint, HostRegistrationSpecPair, ReconstructedHostRegistrationPair,
 };
+use crate::memory::GuestPhysAddr;
 use crate::mmio::MmioBus;
 use crate::portio::pci::virtio_blk::VirtioBlkDevice;
 use crate::state_snapshot::{
