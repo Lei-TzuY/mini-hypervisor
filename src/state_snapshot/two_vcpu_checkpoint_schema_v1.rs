@@ -402,9 +402,9 @@ impl VersionedTwoVcpuFullControllerCheckpointV1 {
         validate_vcpu_ids(self.vcpu_ids)?;
         validate_mp_states(self.vcpu_ids, self.mp_states)?;
         if self.ioapic.pad() != 0 {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroIoapicPad(
-                self.ioapic.pad(),
-            ));
+            return Err(
+                VersionedTwoVcpuFullControllerCheckpointError::NonZeroIoapicPad(self.ioapic.pad()),
+            );
         }
         let primary = self.primary.materialize(host_msrs)?;
         let secondary = self
