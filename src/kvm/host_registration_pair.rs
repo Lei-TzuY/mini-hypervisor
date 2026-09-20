@@ -236,12 +236,33 @@ impl KvmBackend {
     pub fn run_two_host_registration_acceleration_guest(
         config: crate::config::VmConfig,
     ) -> Result<TwoHostRegistrationAccelerationResult, crate::error::Error> {
-        run_two_host_registration_acceleration_guest(config)
+        run_two_host_registration_acceleration_guest_with_pair(
+            config,
+            default_two_host_registration_pair()?,
+        )
     }
 }
 
-fn run_two_host_registration_acceleration_guest(
+fn default_two_host_registration_pair(
+) -> Result<HostRegistrationSpecPair, crate::error::Error> {
+    let first_spec = HostRegistrationSpec::new(
+        TWO_HOST_REGISTRATION_FIRST_DOORBELL,
+        2,
+        0,
+        TWO_HOST_REGISTRATION_FIRST_GSI,
+    )?;
+    let second_spec = HostRegistrationSpec::new(
+        TWO_HOST_REGISTRATION_SECOND_DOORBELL,
+        2,
+        0,
+        TWO_HOST_REGISTRATION_SECOND_GSI,
+    )?;
+    HostRegistrationSpecPair::new([second_spec, first_spec])
+}
+
+fn run_two_host_registration_acceleration_guest_with_pair(
     config: crate::config::VmConfig,
+    pair: HostRegistrationSpecPair,
 ) -> Result<TwoHostRegistrationAccelerationResult, crate::error::Error> {
     let guest_bytes = build_two_host_registration_guest();
     let guest = crate::loader::FlatGuestImage::new(
@@ -282,27 +303,22 @@ fn run_two_host_registration_acceleration_guest(
         ));
     }
 
-    let first_spec = HostRegistrationSpec::new(
-        TWO_HOST_REGISTRATION_FIRST_DOORBELL,
-        2,
-        0,
-        TWO_HOST_REGISTRATION_FIRST_GSI,
-    )?;
-    let second_spec = HostRegistrationSpec::new(
-        TWO_HOST_REGISTRATION_SECOND_DOORBELL,
-        2,
-        0,
-        TWO_HOST_REGISTRATION_SECOND_GSI,
-    )?;
-    let pair = HostRegistrationSpecPair::new([second_spec, first_spec])?;
-    let pair_checkpoint = HostRegistrationPairCheckpoint::capture(pair);
     let canonical_specs = pair.specs();
-    if canonical_specs != [first_spec, second_spec] {
+    if canonical_specs[0].doorbell_address() != TWO_HOST_REGISTRATION_FIRST_DOORBELL
+        || canonical_specs[0].doorbell_length() != 2
+        || canonical_specs[0].doorbell_datamatch() != 0
+        || canonical_specs[0].gsi() != TWO_HOST_REGISTRATION_FIRST_GSI
+        || canonical_specs[1].doorbell_address() != TWO_HOST_REGISTRATION_SECOND_DOORBELL
+        || canonical_specs[1].doorbell_length() != 2
+        || canonical_specs[1].doorbell_datamatch() != 0
+        || canonical_specs[1].gsi() != TWO_HOST_REGISTRATION_SECOND_GSI
+    {
         return Err(verification_error(
             "two host-registration canonical ownership",
             format!("unexpected canonical registration pair: {canonical_specs:?}"),
         ));
     }
+    let pair_checkpoint = HostRegistrationPairCheckpoint::capture(pair);
 
     let backend = KvmBackend::open()?;
     require_irqfd_capability(&backend)?;
