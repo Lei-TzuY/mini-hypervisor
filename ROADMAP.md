@@ -17,14 +17,14 @@ Implementation continues on `milestone/two-vcpu-full-controller-checkpoint` from
 Acceptance contract:
 
 - preserve Rust 1.74 shipped-target MSRV, ordinary CI, the existing two-vCPU checkpoint proof, all controller/checkpoint regressions, and every applicable hosted-KVM workflow;
-- require both vCPUs to be stopped at deterministic HLT checkpoint boundaries before capture;
-- compose the existing canonical two-vCPU page/register/special-register/MSR ownership with master PIC, slave PIC, IOAPIC, and one LAPIC snapshot for each owned vCPU;
+- require both vCPUs to be promoted to exact RUNNABLE MP state and stopped at deterministic userspace I/O checkpoint barriers before capture;
+- compose the existing canonical two-vCPU page/register/special-register/MSR ownership with each vCPU's MP state, master PIC, slave PIC, IOAPIC, and one LAPIC snapshot for each owned vCPU;
 - canonicalize vCPU/LAPIC ownership by vCPU id and reject binding to a different pair;
 - capture exactly the existing bounded page ownership set `0x30000, 0x1fc000, 0x1fd000`;
-- deliberately corrupt all three owned pages, both vCPU states, master PIC, slave PIC, IOAPIC, primary LAPIC, and secondary LAPIC, and require every component to independently mismatch;
-- restore bounded page/vCPU state first and require it to verify exactly before mutating controller state;
-- then restore master PIC, slave PIC, IOAPIC, primary LAPIC, and secondary LAPIC, followed by exact comparison of the complete ownership set;
-- after exact restore, both vCPUs must resume from their original checkpoint boundaries and independently emit proofs `0` and `1` before reaching the existing deterministic terminal HLT RIPs;
+- deliberately corrupt all three owned pages, both vCPU architectural states, both MP states, master PIC, slave PIC, IOAPIC, primary LAPIC, and secondary LAPIC, and require every component to independently mismatch;
+- restore bounded page/vCPU state first and require it to verify exactly before mutating MP/controller state;
+- then restore both MP states with exact KVM readback, followed by master PIC, slave PIC, IOAPIC, primary LAPIC, and secondary LAPIC, and require exact comparison of the complete ownership set;
+- after exact restore, both RUNNABLE vCPUs must resume from their userspace checkpoint barriers and independently emit proofs `0` and `1` at deterministic completion barriers without relying on INIT/SIPI or HLT wakeups;
 - add a dedicated proof binary, independent KVM integration test, and permanent hosted-KVM workflow.
 
 ## Scope boundary
