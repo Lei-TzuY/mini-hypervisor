@@ -224,6 +224,11 @@ pub struct BoundedTwoVcpuCheckpointComparison {
 
 impl BoundedTwoVcpuCheckpointComparison {
     #[must_use]
+    pub const fn vcpu_ids(&self) -> [VcpuId; 2] {
+        [self.primary_id, self.secondary_id]
+    }
+
+    #[must_use]
     pub fn pages(&self) -> &[BoundedCheckpointPageComparison] {
         self.primary.pages()
     }
