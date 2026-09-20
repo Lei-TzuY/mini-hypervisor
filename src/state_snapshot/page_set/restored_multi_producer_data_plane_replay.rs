@@ -15,6 +15,10 @@ use crate::mmio::long_mode::{
 use crate::mmio::multi_device::MULTI_DEVICE_SECOND_VIRTUAL_PAGE;
 use crate::portio::pci::virtio::{VIRTIO_ISR_OFFSET, VIRTIO_ISR_QUEUE_INTERRUPT};
 use crate::portio::virtio_blk_fixture::deterministic_write_readback_sector;
+use crate::state_snapshot::{
+    TWO_VCPU_CHECKPOINT_FIRST_STACK_PAGE, TWO_VCPU_CHECKPOINT_SECOND_STACK_PAGE,
+    TWO_VCPU_CHECKPOINT_SHARED_PAGE,
+};
 use crate::vmexit::{dispatch_vcpu_exit, VmExitDisposition};
 
 pub const RESTORED_MULTI_PRODUCER_FIRST_GSI: u32 = 16;
