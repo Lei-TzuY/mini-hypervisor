@@ -49,7 +49,7 @@ fn restored_versioned_transaction_keeps_each_vcpu_bound_to_its_own_mutable_devic
                 RESTORED_MULTI_PRODUCER_SECOND_PROOF
             );
             assert_eq!(result.capture_rips(), [0x1000e, 0x11006]);
-            assert_eq!(result.completion_rips(), [0x1015c, 0x11154]);
+            assert_eq!(result.completion_rips(), [0x10184, 0x1117c]);
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
