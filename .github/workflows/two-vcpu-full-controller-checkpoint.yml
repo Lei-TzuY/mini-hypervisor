@@ -9,6 +9,8 @@ on:
       - 'src/kvm/irqchip_snapshot.rs'
       - 'src/kvm/lapic_uapi.rs'
       - 'src/vcpu/lapic_checkpoint.rs'
+      - 'src/vcpu/mp_state.rs'
+      - 'src/vcpu/mp_state.rs'
       - 'src/bin/two-vcpu-full-controller-checkpoint.rs'
       - 'tests/two_vcpu_full_controller_checkpoint_guest.rs'
       - 'ROADMAP.md'
@@ -45,11 +47,11 @@ jobs:
           printf '%s\n' "$output"
 
           grep -F 'two-vCPU full-controller pages: 0x30000,0x1fc000,0x1fd000' <<<"$output"
-          grep -F 'two-vCPU full-controller corruption: shared=Some(false) first-stack=Some(false) second-stack=Some(false) vcpu0=Some(false) vcpu1=Some(false) master=false slave=false ioapic=false lapic0=Some(false) lapic1=Some(false)' <<<"$output"
-          grep -F 'two-vCPU full-controller restore: shared=Some(true) first-stack=Some(true) second-stack=Some(true) vcpu0=Some(true) vcpu1=Some(true) master=true slave=true ioapic=true lapic0=Some(true) lapic1=Some(true)' <<<"$output"
+          grep -F 'two-vCPU full-controller corruption: shared=Some(false) first-stack=Some(false) second-stack=Some(false) vcpu0=Some(false) vcpu1=Some(false) mp0=Some(false) mp1=Some(false) master=false slave=false ioapic=false lapic0=Some(false) lapic1=Some(false)' <<<"$output"
+          grep -F 'two-vCPU full-controller restore: shared=Some(true) first-stack=Some(true) second-stack=Some(true) vcpu0=Some(true) vcpu1=Some(true) mp0=Some(true) mp1=Some(true) master=true slave=true ioapic=true lapic0=Some(true) lapic1=Some(true)' <<<"$output"
           grep -F 'two-vCPU full-controller first proof: [48]' <<<"$output"
           grep -F 'two-vCPU full-controller second proof: [49]' <<<"$output"
-          grep -F 'two-vCPU full-controller first capture: vCPU 0 exit Hlt: rip=0x1000b' <<<"$output"
-          grep -F 'two-vCPU full-controller second capture: vCPU 1 exit Hlt: rip=0x11003' <<<"$output"
-          grep -F 'two-vCPU full-controller first terminal: vCPU 0 exit Hlt: rip=0x10020' <<<"$output"
-          grep -F 'two-vCPU full-controller second terminal: vCPU 1 exit Hlt: rip=0x11018' <<<"$output"
+          grep -F 'two-vCPU full-controller first capture: rip=0x1000e ' <<<"$output"
+          grep -F 'two-vCPU full-controller second capture: rip=0x11006 ' <<<"$output"
+          grep -F 'two-vCPU full-controller first completion: rip=0x10022 ' <<<"$output"
+          grep -F 'two-vCPU full-controller second completion: rip=0x1101a ' <<<"$output"
