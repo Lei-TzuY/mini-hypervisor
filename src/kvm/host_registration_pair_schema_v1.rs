@@ -111,23 +111,6 @@ impl VersionedHostRegistrationPairV1 {
     }
 
     #[must_use]
-    pub(crate) fn doorbells(&self) -> [u64; 2] {
-        let specs = self.pair.specs();
-        [specs[0].doorbell_address(), specs[1].doorbell_address()]
-    }
-
-    #[must_use]
-    pub(crate) fn gsis(&self) -> [u32; 2] {
-        let specs = self.pair.specs();
-        [specs[0].gsi(), specs[1].gsi()]
-    }
-
-    #[must_use]
-    pub(crate) fn encoded_len(&self) -> usize {
-        VERSIONED_HOST_REGISTRATION_PAIR_LEN
-    }
-
-    #[must_use]
     pub(crate) fn encode(&self) -> [u8; VERSIONED_HOST_REGISTRATION_PAIR_LEN] {
         let specs = self.pair.specs();
         let first = VersionedHostRegistrationSpecV1::from_spec(specs[0]).encode();
@@ -345,10 +328,15 @@ mod versioned_host_registration_pair_tests {
         assert_eq!(encoded.len(), VERSIONED_HOST_REGISTRATION_PAIR_LEN);
         let decoded = VersionedHostRegistrationPairV1::decode(&encoded).unwrap();
         assert_eq!(decoded.encode(), encoded);
-        assert_eq!(decoded.doorbells(), [0x1000_0100, 0x1000_1100]);
-        assert_eq!(decoded.gsis(), [0, 1]);
         assert_eq!(decoded.registration_versions(), [1, 1]);
-        assert_eq!(decoded.materialize().unwrap(), fixture_pair());
+        let materialized = decoded.materialize().unwrap();
+        let specs = materialized.specs();
+        assert_eq!(
+            [specs[0].doorbell_address(), specs[1].doorbell_address()],
+            [0x1000_0100, 0x1000_1100]
+        );
+        assert_eq!([specs[0].gsi(), specs[1].gsi()], [0, 1]);
+        assert_eq!(materialized, fixture_pair());
     }
 
     #[test]
