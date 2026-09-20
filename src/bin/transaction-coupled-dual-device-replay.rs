@@ -21,10 +21,7 @@ fn main() -> ExitCode {
                 mutation.device_exact(result.bars()[1])
             );
             println!("coupled restore exact: {}", restored.is_exact_match());
-            println!(
-                "coupled replay queues: {:?}",
-                result.replay_queue_indices()
-            );
+            println!("coupled replay queues: {:?}", result.replay_queue_indices());
             println!("coupled replay doorbells: {:?}", result.doorbell_events());
             println!("coupled replay irqfd: {:?}", result.irqfd_signals());
             println!(
