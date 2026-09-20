@@ -247,16 +247,18 @@ pub fn run_two_vcpu_two_device_transaction_guest(
     }
 
     let transaction_result = TwoVcpuTwoDeviceCheckpointTransaction::capture(
-        &first,
-        &second,
-        &vm,
-        &msr_policy,
-        &mmio,
-        [
-            TWO_HOST_REGISTRATION_SECOND_BAR,
-            TWO_HOST_REGISTRATION_FIRST_BAR,
-        ],
-        &TWO_VCPU_CHECKPOINT_OWNERSHIP_SET,
+        TwoVcpuTwoDeviceCaptureContext {
+            first: &first,
+            second: &second,
+            vm: &vm,
+            msr_policy: &msr_policy,
+            mmio: &mmio,
+            bars: [
+                TWO_HOST_REGISTRATION_SECOND_BAR,
+                TWO_HOST_REGISTRATION_FIRST_BAR,
+            ],
+            page_addresses: &TWO_VCPU_CHECKPOINT_OWNERSHIP_SET,
+        },
         pair,
         &registrations,
     );
