@@ -29,7 +29,7 @@ pub const VIRTIO_BLK_CHECKPOINT_PAGE: GuestPhysAddr = GuestPhysAddr::new(0x0001_
 pub const VIRTIO_BLK_CHECKPOINT_CAPTURE_PROOF: &[u8; 3] = b"BWO";
 pub const VIRTIO_BLK_CHECKPOINT_REPLAY_PROOF: &[u8; 3] = b"NRD";
 
-const VIRTIO_BLK_CHECKPOINT_FIRST_EXIT_BUDGET: u32 = 24;
+const VIRTIO_BLK_CHECKPOINT_FIRST_EXIT_BUDGET: u32 = 25;
 const VIRTIO_BLK_CHECKPOINT_REPLAY_EXIT_BUDGET: u32 = 6;
 const VIRTIO_BLK_CHECKPOINT_QUEUE_SIZE: u16 = 4;
 const VIRTIO_BLK_CHECKPOINT_QUEUE_INDEX: u16 = 0;
@@ -222,7 +222,7 @@ pub fn run_virtio_blk_checkpoint_guest(
     )?;
     if checkpoint.pages().len() != 1
         || checkpoint.pages()[0].address() != VIRTIO_BLK_CHECKPOINT_PAGE
-        || !checkpoint.device().checkpoint_quiescent()
+        || !checkpoint.device().checkpoint_fully_quiescent()
         || checkpoint.device().checkpoint_last_avail_idx() != 1
         || checkpoint.device().checkpoint_last_used_idx() != 1
         || checkpoint.device().sector0() != &write_sector
@@ -547,20 +547,25 @@ fn validate_debug_proof(
 }
 
 fn validate_capture_mmio(exits: &[crate::vcpu::MmioExit]) -> Result<(), Error> {
-    if exits.len() != 20 {
+    if exits.len() != 21 {
         return Err(virtio_blk_checkpoint_guest_error(format!(
-            "capture phase expected 20 MMIO exits, got {}",
+            "capture phase expected 21 MMIO exits, got {}",
             exits.len()
         )));
     }
-    let notify = exits.last().expect("nonempty capture MMIO sequence");
+    let notify = &exits[19];
+    let isr = &exits[20];
     if notify.address() != VIRTIO_BLK_BAR0_GPA + 0x100
         || notify.direction() != MmioDirection::Write
         || notify.length() != 2
         || notify.write_data() != 0_u16.to_le_bytes()
+        || isr.address() != VIRTIO_BLK_BAR0_GPA + VIRTIO_ISR_OFFSET
+        || isr.direction() != MmioDirection::Read
+        || isr.length() != 1
+        || !isr.write_data().is_empty()
     {
         return Err(virtio_blk_checkpoint_guest_error(format!(
-            "capture phase notify MMIO exit mismatch: {notify:?}"
+            "capture phase notify/ISR retirement sequence mismatch: {exits:?}"
         )));
     }
     Ok(())
@@ -649,6 +654,8 @@ fn build_virtio_blk_checkpoint_guest() -> VirtioBlkCheckpointProgram {
     code.extend_from_slice(&[0x66, 0xc7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
     checkpoint_emit_debug(&mut code, VIRTIO_BLK_CHECKPOINT_WRITE_BARRIER);
     checkpoint_emit_first_completion_checks(&mut code);
+    code.extend_from_slice(&[0x8a, 0x83, VIRTIO_ISR_OFFSET as u8, 0x02, 0x00, 0x00]);
+    checkpoint_emit_cmp_al(&mut code, 1);
     checkpoint_emit_debug(&mut code, b'O');
     code.push(0xf4);
     let checkpoint_rip = LONG_MODE_MMIO_GUEST_ENTRY.get()
@@ -881,7 +888,7 @@ mod virtio_blk_checkpoint_guest_tests {
 
     #[test]
     fn phase_exit_budgets_match_mmio_debug_and_hlt_contracts() {
-        assert_eq!(VIRTIO_BLK_CHECKPOINT_FIRST_EXIT_BUDGET, 20 + 3 + 1);
+        assert_eq!(VIRTIO_BLK_CHECKPOINT_FIRST_EXIT_BUDGET, 21 + 3 + 1);
         assert_eq!(VIRTIO_BLK_CHECKPOINT_REPLAY_EXIT_BUDGET, 2 + 3 + 1);
     }
 }
