@@ -5,8 +5,7 @@ use mini_hypervisor::state_snapshot::{
     run_versioned_full_controller_two_virtio_blk_checkpoint_guest, CONTROLLER_CHECKPOINT_PAGE,
     TWO_VIRTIO_BLK_CHECKPOINT_FIRST_BAR, TWO_VIRTIO_BLK_CHECKPOINT_FIRST_STATUS,
     TWO_VIRTIO_BLK_CHECKPOINT_PROOF, TWO_VIRTIO_BLK_CHECKPOINT_SECOND_BAR,
-    TWO_VIRTIO_BLK_CHECKPOINT_SECOND_STATUS,
-    VERSIONED_FULL_CONTROLLER_TWO_VIRTIO_BLK_VERSION,
+    TWO_VIRTIO_BLK_CHECKPOINT_SECOND_STATUS, VERSIONED_FULL_CONTROLLER_TWO_VIRTIO_BLK_VERSION,
 };
 
 #[test]
@@ -81,7 +80,10 @@ fn versioned_two_device_checkpoint_crosses_bytes_then_restores_exactly_on_kvm() 
                 Some(true)
             );
             assert!(restored.is_exact_match());
-            assert_eq!(checkpoint.restored_statuses(), checkpoint.captured_statuses());
+            assert_eq!(
+                checkpoint.restored_statuses(),
+                checkpoint.captured_statuses()
+            );
             assert_eq!(checkpoint.proof(), TWO_VIRTIO_BLK_CHECKPOINT_PROOF);
             assert_eq!(checkpoint.completion_rflags() & 0x2, 0x2);
             assert_eq!(
@@ -95,8 +97,8 @@ fn versioned_two_device_checkpoint_crosses_bytes_then_restores_exactly_on_kvm() 
                 "skipping versioned two-virtio-blk checkpoint assertion: /dev/kvm is unavailable"
             );
         }
-        Err(error) => panic!(
-            "versioned two-virtio-blk checkpoint execution failed unexpectedly: {error}"
-        ),
+        Err(error) => {
+            panic!("versioned two-virtio-blk checkpoint execution failed unexpectedly: {error}")
+        }
     }
 }
