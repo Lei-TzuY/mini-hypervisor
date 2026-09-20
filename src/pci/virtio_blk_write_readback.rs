@@ -30,9 +30,7 @@ impl VirtioBlkDevice {
 
     #[must_use]
     pub const fn checkpoint_notification_pending(&self) -> bool {
-        self.notify_pending
-            && self.isr_status == 0
-            && self.last_avail_idx == self.last_used_idx
+        self.notify_pending && self.isr_status == 0 && self.last_avail_idx == self.last_used_idx
     }
 
     #[must_use]
