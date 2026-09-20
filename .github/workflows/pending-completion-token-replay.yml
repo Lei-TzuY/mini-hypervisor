@@ -1,0 +1,62 @@
+name: Strict KVM pending-completion token replay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/restored_multi_producer_data_plane_replay.rs'
+      - 'src/state_snapshot/page_set/pending_completion_token_replay.rs'
+      - 'src/bin/pending-completion-token-replay.rs'
+      - 'tests/pending_completion_token_replay_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/pending-completion-token-replay.yml'
+  pull_request:
+    paths:
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/restored_multi_producer_data_plane_replay.rs'
+      - 'src/state_snapshot/page_set/pending_completion_token_replay.rs'
+      - 'src/bin/pending-completion-token-replay.rs'
+      - 'tests/pending_completion_token_replay_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/pending-completion-token-replay.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-pending-completion-token-replay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build pending-completion token proof
+        run: cargo build --quiet --bin pending-completion-token-replay
+      - name: Execute pending-completion token proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/pending-completion-token-replay)"
+          printf '%s\n' "$output"
+
+          grep -F 'pending completion transaction: version=2 ' <<<"$output"
+          grep -F 'pages=5' <<<"$output"
+          grep -F 'pending completion bars: [268435456, 268439552]' <<<"$output"
+          grep -F 'pending completion token: bar=0x10000000 queue=0 indices=[1, 1]' <<<"$output"
+          grep -F 'pending completion ordinary capture rejected: true' <<<"$output"
+          grep -F 'pending completion acceleration: capture=[false, false] reconstructed=[false, false]' <<<"$output"
+          grep -F 'pending completion queues: token=[[1, 1], [0, 0]] restored=[[1, 1], [0, 0]] final=[[2, 2], [0, 0]]' <<<"$output"
+          grep -F 'pending completion counts: doorbells=[2, 0] irqfd=[2, 0]' <<<"$output"
+          grep -F 'pending completion restore exact: true' <<<"$output"
+          grep -F 'pending completion proof: [87, 48, 97, 77, 82, 48, 97, 88, 68]' <<<"$output"
