@@ -1,0 +1,77 @@
+name: Strict KVM transaction-coupled dual-device write/readback
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/two_device_checkpoint_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/transaction_coupled_dual_device_replay.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/kvm/host_registration_pair_schema_v1.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/bin/transaction-coupled-dual-device-write-readback.rs'
+      - 'tests/transaction_coupled_dual_device_write_readback_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/transaction-coupled-dual-device-write-readback.yml'
+  pull_request:
+    paths:
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/two_device_checkpoint_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/transaction_coupled_dual_device_replay.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/kvm/host_registration_pair_schema_v1.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/bin/transaction-coupled-dual-device-write-readback.rs'
+      - 'tests/transaction_coupled_dual_device_write_readback_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/transaction-coupled-dual-device-write-readback.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-transaction-coupled-dual-device-write-readback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build coupled dual-device write/readback proof
+        run: cargo build --quiet --bin transaction-coupled-dual-device-write-readback
+      - name: Execute coupled dual-device write/readback proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/transaction-coupled-dual-device-write-readback)"
+          printf '%s\n' "$output"
+
+          grep -F 'coupled write/readback transaction: version=1 ' <<<"$output"
+          grep -F 'coupled write/readback bars: [268435456, 268439552]' <<<"$output"
+          grep -F 'coupled write/readback mutation: exact=false first-device=Some(false) second-device=Some(false)' <<<"$output"
+          grep -F 'coupled write/readback restore exact: true' <<<"$output"
+          grep -F 'coupled write/readback queues: [[2, 2], [2, 2]]' <<<"$output"
+          grep -F 'coupled write/readback doorbells: [2, 2]' <<<"$output"
+          grep -F 'coupled write/readback irqfd: [2, 2]' <<<"$output"
+          grep -F 'coupled write/readback payload exact: [true, true]' <<<"$output"
+          grep -F 'coupled write/readback backing distinct: true' <<<"$output"
+          grep -F 'coupled write/readback proof: [87, 48, 97, 77, 82, 48, 97, 88, 89, 49, 98, 78, 90, 49, 98, 81, 68]' <<<"$output"
+
+          completion="$(grep -F 'coupled write/readback completion rflags:' <<<"$output")"
+          rflags_hex="${completion##*: }"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
+          (( (rflags & 0x200) == 0x200 ))
