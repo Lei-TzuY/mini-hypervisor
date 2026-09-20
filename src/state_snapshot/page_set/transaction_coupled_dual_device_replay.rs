@@ -1946,7 +1946,8 @@ mod acceleration_checkpoint_quiescence {
         require_ready_devices(&mmio)?;
 
         let pair = default_two_host_registration_pair()?;
-        let registrations = HostRegistrationPairCheckpoint::capture(pair).reconstruct(&backend, &vm)?;
+        let registrations =
+            HostRegistrationPairCheckpoint::capture(pair).reconstruct(&backend, &vm)?;
         let execution = run_quiescence_scenario(
             &mut vcpu,
             &mut vm,
@@ -2045,9 +2046,9 @@ mod acceleration_checkpoint_quiescence {
                 "first virtio-blk BAR disappeared while servicing preserved doorbell",
             ));
         }
-        let memory = vm
-            .guest_memory_mut()
-            .ok_or_else(|| coupled_error("checkpoint-quiescence VM lost registered guest memory"))?;
+        let memory = vm.guest_memory_mut().ok_or_else(|| {
+            coupled_error("checkpoint-quiescence VM lost registered guest memory")
+        })?;
         let completion = mmio
             .process_virtio_blk_notification_atomic(bar, memory)
             .map_err(|error| {
@@ -2055,7 +2056,9 @@ mod acceleration_checkpoint_quiescence {
                     "preserved checkpoint-quiescence request failed: {error}"
                 ))
             })?
-            .ok_or_else(|| coupled_error("first virtio-blk BAR disappeared during queue service"))?;
+            .ok_or_else(|| {
+                coupled_error("first virtio-blk BAR disappeared during queue service")
+            })?;
         validate_completion(Some(completion), "checkpoint-quiescence first")?;
         registrations.signal_irq(0)?;
 
@@ -2071,21 +2074,22 @@ mod acceleration_checkpoint_quiescence {
             )));
         }
 
-        let captured = BoundedFullControllerTwoVirtioBlkCheckpoint::capture_with_acceleration_quiescence(
-            vcpu,
-            vm,
-            msr_policy,
-            mmio,
-            [
-                crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
-                crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
-            ],
-            &[
-                TRANSACTION_COUPLED_SECOND_PAGE,
-                TRANSACTION_COUPLED_FIRST_PAGE,
-            ],
-            registrations,
-        )?;
+        let captured =
+            BoundedFullControllerTwoVirtioBlkCheckpoint::capture_with_acceleration_quiescence(
+                vcpu,
+                vm,
+                msr_policy,
+                mmio,
+                [
+                    crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
+                    crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
+                ],
+                &[
+                    TRANSACTION_COUPLED_SECOND_PAGE,
+                    TRANSACTION_COUPLED_FIRST_PAGE,
+                ],
+                registrations,
+            )?;
         let captured_queue_indices = captured_queue_indices(&captured)?;
         if captured_queue_indices != [[1, 1], [0, 0]] {
             return Err(coupled_error(format!(
