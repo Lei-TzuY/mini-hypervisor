@@ -46,20 +46,6 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
         })
     }
 
-    pub(crate) fn capture_with_acceleration_quiescence(
-        first: &Vcpu,
-        second: &Vcpu,
-        vm: &crate::kvm::Vm,
-        msr_policy: &GuestMsrAccessPolicy,
-        mmio: &MmioBus,
-        bars: [u64; 2],
-        page_addresses: &[GuestPhysAddr],
-        registrations: &ReconstructedHostRegistrationPair,
-    ) -> Result<Self, Error> {
-        registrations.require_checkpoint_quiescent()?;
-        Self::capture(first, second, vm, msr_policy, mmio, bars, page_addresses)
-    }
-
     #[must_use]
     pub const fn controller(&self) -> &BoundedTwoVcpuFullControllerCheckpoint {
         &self.controller
@@ -153,6 +139,16 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpointComparison {
     }
 }
 
+struct TwoVcpuTwoDeviceCaptureContext<'a> {
+    first: &'a Vcpu,
+    second: &'a Vcpu,
+    vm: &'a crate::kvm::Vm,
+    msr_policy: &'a GuestMsrAccessPolicy,
+    mmio: &'a MmioBus,
+    bars: [u64; 2],
+    page_addresses: &'a [GuestPhysAddr],
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TwoVcpuTwoDeviceCheckpointTransaction {
     checkpoint: BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint,
@@ -160,31 +156,23 @@ pub(crate) struct TwoVcpuTwoDeviceCheckpointTransaction {
 }
 
 impl TwoVcpuTwoDeviceCheckpointTransaction {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn capture(
-        first: &Vcpu,
-        second: &Vcpu,
-        vm: &crate::kvm::Vm,
-        msr_policy: &GuestMsrAccessPolicy,
-        mmio: &MmioBus,
-        bars: [u64; 2],
-        page_addresses: &[GuestPhysAddr],
+        context: TwoVcpuTwoDeviceCaptureContext<'_>,
         pair: HostRegistrationSpecPair,
         registrations: &ReconstructedHostRegistrationPair,
     ) -> Result<Self, Error> {
-        let bars = canonical_two_virtio_blk_bars(bars)?;
+        let bars = canonical_two_virtio_blk_bars(context.bars)?;
         require_registration_pair_matches_devices(pair, bars)?;
-        let checkpoint =
-            BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint::capture_with_acceleration_quiescence(
-                first,
-                second,
-                vm,
-                msr_policy,
-                mmio,
-                bars,
-                page_addresses,
-                registrations,
-            )?;
+        registrations.require_checkpoint_quiescent()?;
+        let checkpoint = BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint::capture(
+            context.first,
+            context.second,
+            context.vm,
+            context.msr_policy,
+            context.mmio,
+            bars,
+            context.page_addresses,
+        )?;
         Ok(Self {
             checkpoint,
             registrations: HostRegistrationPairCheckpoint::capture(pair),
