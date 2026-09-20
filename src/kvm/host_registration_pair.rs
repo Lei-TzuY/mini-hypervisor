@@ -368,6 +368,7 @@ fn run_two_host_registration_acceleration_guest(
 
     let first_generation = pair_checkpoint.reconstruct(&backend, &vm)?;
     let first_events = run_registration_generation(
+        &vm,
         &mut vcpu,
         &mut port_io,
         &first_generation,
@@ -393,6 +394,7 @@ fn run_two_host_registration_acceleration_guest(
 
     let second_generation = pair_checkpoint.reconstruct(&backend, &vm)?;
     let second_events = run_registration_generation(
+        &vm,
         &mut vcpu,
         &mut port_io,
         &second_generation,
@@ -455,6 +457,7 @@ fn run_two_host_registration_acceleration_guest(
 }
 
 fn run_registration_generation(
+    vm: &Vm,
     vcpu: &mut crate::vcpu::Vcpu,
     port_io: &mut crate::portio::PortIoBus,
     registrations: &ReconstructedHostRegistrationPair,
@@ -484,10 +487,12 @@ fn run_registration_generation(
         ));
     }
     registrations.signal_irq(0)?;
-    let _first_handler = run_expected_debug_output(
+    run_two_host_registration_irq_handoff(
+        vm,
         vcpu,
         port_io,
         TWO_HOST_REGISTRATION_FIRST_HANDLER,
+        TWO_HOST_REGISTRATION_FIRST_GSI,
         "two host-registration first IRQ handler",
     )?;
     let _first_resumed = run_expected_debug_output(
@@ -517,10 +522,12 @@ fn run_registration_generation(
         ));
     }
     registrations.signal_irq(1)?;
-    let _second_handler = run_expected_debug_output(
+    run_two_host_registration_irq_handoff(
+        vm,
         vcpu,
         port_io,
         TWO_HOST_REGISTRATION_SECOND_HANDLER_BYTE,
+        TWO_HOST_REGISTRATION_SECOND_GSI,
         "two host-registration second IRQ handler",
     )?;
     let _second_resumed = run_expected_debug_output(
@@ -531,6 +538,55 @@ fn run_registration_generation(
     )?;
 
     Ok([first_count, second_count])
+}
+
+fn run_two_host_registration_irq_handoff(
+    vm: &Vm,
+    vcpu: &mut crate::vcpu::Vcpu,
+    port_io: &mut crate::portio::PortIoBus,
+    expected_handler: u8,
+    gsi: u32,
+    stage: &'static str,
+) -> Result<(), crate::error::Error> {
+    let watchdog_irq = vm.duplicate_irq_line_handle().map_err(|source| {
+        host_registration_error_with_source(
+            "duplicate two-registration watchdog IRQ-line handle",
+            source,
+        )
+    })?;
+    watchdog_irq.set_gsi_level(gsi, false).map_err(|source| {
+        host_registration_error_with_source(
+            "preflight two-registration watchdog IRQ-line handle",
+            source,
+        )
+    })?;
+    let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
+    let watchdog = std::thread::spawn(move || -> std::io::Result<bool> {
+        match cancel_rx.recv_timeout(std::time::Duration::from_secs(
+            ASYNC_TIMER_WATCHDOG_SECONDS,
+        )) {
+            Ok(()) => Ok(false),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                watchdog_irq.pulse_gsi_edge(gsi)?;
+                Ok(true)
+            }
+        }
+    });
+
+    let handler = run_expected_debug_output(vcpu, port_io, expected_handler, stage);
+    let _ = cancel_tx.send(());
+    let watchdog_fired = join_async_timer_watchdog(watchdog)?;
+    if watchdog_fired {
+        return Err(verification_error(
+            "two host-registration acceleration watchdog",
+            format!(
+                "{stage}: fallback GSI {gsi} fired; irqfd acceleration was not independently proven"
+            ),
+        ));
+    }
+    handler?;
+    Ok(())
 }
 
 fn build_two_host_registration_guest() -> Vec<u8> {
@@ -555,13 +611,13 @@ fn build_two_host_registration_guest() -> Vec<u8> {
 
     emit_two_host_registration_doorbell(&mut code, 0x83);
     emit_two_host_registration_debug(&mut code, TWO_HOST_REGISTRATION_FIRST_ARMED_GEN1);
-    code.extend_from_slice(&[0xfb, 0x90]);
+    code.extend_from_slice(&[0xfb, 0xf4]);
     emit_two_host_registration_debug(&mut code, TWO_HOST_REGISTRATION_FIRST_RESUMED_GEN1);
 
     code.push(0xfa);
     emit_two_host_registration_doorbell(&mut code, 0x81);
     emit_two_host_registration_debug(&mut code, TWO_HOST_REGISTRATION_SECOND_ARMED_GEN1);
-    code.extend_from_slice(&[0xfb, 0x90]);
+    code.extend_from_slice(&[0xfb, 0xf4]);
     emit_two_host_registration_debug(&mut code, TWO_HOST_REGISTRATION_SECOND_RESUMED_GEN1);
 
     code.push(0xfa);
@@ -569,13 +625,13 @@ fn build_two_host_registration_guest() -> Vec<u8> {
 
     emit_two_host_registration_doorbell(&mut code, 0x83);
     emit_two_host_registration_debug(&mut code, TWO_HOST_REGISTRATION_FIRST_ARMED_GEN2);
-    code.extend_from_slice(&[0xfb, 0x90]);
+    code.extend_from_slice(&[0xfb, 0xf4]);
     emit_two_host_registration_debug(&mut code, TWO_HOST_REGISTRATION_FIRST_RESUMED_GEN2);
 
     code.push(0xfa);
     emit_two_host_registration_doorbell(&mut code, 0x81);
     emit_two_host_registration_debug(&mut code, TWO_HOST_REGISTRATION_SECOND_ARMED_GEN2);
-    code.extend_from_slice(&[0xfb, 0x90]);
+    code.extend_from_slice(&[0xfb, 0xf4]);
     emit_two_host_registration_debug(&mut code, TWO_HOST_REGISTRATION_SECOND_RESUMED_GEN2);
 
     emit_two_host_registration_debug(&mut code, TWO_HOST_REGISTRATION_DONE);
