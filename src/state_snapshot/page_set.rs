@@ -256,6 +256,7 @@ include!("page_set/full_controller.rs");
 include!("page_set/virtio_blk.rs");
 include!("page_set/full_controller_virtio_blk.rs");
 include!("page_set/full_controller_two_virtio_blk.rs");
+include!("page_set/two_vcpu_two_device_transaction.rs");
 include!("page_set/full_controller_virtio_blk_schema_v1.rs");
 include!("page_set/full_controller_two_virtio_blk_schema_v1.rs");
 include!("page_set/checkpoint_transaction_schema_v1.rs");
