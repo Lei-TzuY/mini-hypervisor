@@ -38,7 +38,7 @@ fn main() -> ExitCode {
                 result.corruption().lapic_exact(TWO_VCPU_CHECKPOINT_SECOND_ID)
             );
             println!(
-                "two-vCPU full-controller restore: shared={:?} first-stack={:?} second-stack={:?} vcpu0={:?} vcpu1={:?} master={} slave={} ioapic={} lapic0={:?} lapic1={:?}",
+                "two-vCPU full-controller restore: shared={:?} first-stack={:?} second-stack={:?} vcpu0={:?} vcpu1={:?} mp0={:?} mp1={:?} master={} slave={} ioapic={} lapic0={:?} lapic1={:?}",
                 result.restored().page_exact(TWO_VCPU_CHECKPOINT_SHARED_PAGE),
                 result
                     .restored()
