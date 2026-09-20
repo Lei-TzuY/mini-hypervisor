@@ -121,6 +121,15 @@ impl VirtioBlkDevice {
         preflight_guest_output(memory, used_element, 8)?;
         preflight_guest_output(memory, used_idx_address, 2)?;
 
+        if let Some(bytes) = outgoing_data.as_ref() {
+            // File-backed writes become durable before the guest can observe completion. The
+            // output ranges were preflighted above against stable registered RAM, so after this
+            // sync succeeds the remaining guest writes do not introduce a new fallible address
+            // validation boundary.
+            self.persist_backing_range(backing_range.clone(), bytes)
+                .map_err(VirtioBlkProcessError::Backing)?;
+        }
+
         let written = if request_type == VIRTIO_BLK_T_IN {
             memory.write(
                 GuestPhysAddr::new(data.address),
