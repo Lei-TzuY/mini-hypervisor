@@ -130,15 +130,19 @@ impl VersionedTwoVcpuFullControllerCheckpointV1 {
             || checkpoint.mp_states[0].0 != ids[0]
             || checkpoint.mp_states[1].0 != ids[1]
         {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::NonCanonicalVcpuIds {
-                primary: ids[0].get(),
-                secondary: ids[1].get(),
-            });
+            return Err(
+                VersionedTwoVcpuFullControllerCheckpointError::NonCanonicalVcpuIds {
+                    primary: ids[0].get(),
+                    secondary: ids[1].get(),
+                },
+            );
         }
         if checkpoint.ioapic.pad() != 0 {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroIoapicPad(
-                checkpoint.ioapic.pad(),
-            ));
+            return Err(
+                VersionedTwoVcpuFullControllerCheckpointError::NonZeroIoapicPad(
+                    checkpoint.ioapic.pad(),
+                ),
+            );
         }
         Ok(Self {
             primary: VersionedPageVcpuCheckpointV1::from_checkpoint(&checkpoint.base.primary)?,
@@ -149,7 +153,10 @@ impl VersionedTwoVcpuFullControllerCheckpointV1 {
             master_pic: checkpoint.master_pic.clone(),
             slave_pic: checkpoint.slave_pic.clone(),
             ioapic: checkpoint.ioapic.clone(),
-            lapics: [checkpoint.lapics[0].1.clone(), checkpoint.lapics[1].1.clone()],
+            lapics: [
+                checkpoint.lapics[0].1.clone(),
+                checkpoint.lapics[1].1.clone(),
+            ],
         })
     }
 
@@ -182,9 +189,9 @@ impl VersionedTwoVcpuFullControllerCheckpointV1 {
         validate_vcpu_ids(self.vcpu_ids)?;
         validate_mp_states(self.vcpu_ids, self.mp_states)?;
         if self.ioapic.pad() != 0 {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroIoapicPad(
-                self.ioapic.pad(),
-            ));
+            return Err(
+                VersionedTwoVcpuFullControllerCheckpointError::NonZeroIoapicPad(self.ioapic.pad()),
+            );
         }
         let primary = self.primary.encode()?;
         let secondary = self
@@ -223,14 +230,14 @@ impl VersionedTwoVcpuFullControllerCheckpointV1 {
         Ok(bytes)
     }
 
-    pub fn decode(
-        bytes: &[u8],
-    ) -> Result<Self, VersionedTwoVcpuFullControllerCheckpointError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, VersionedTwoVcpuFullControllerCheckpointError> {
         if bytes.len() < TWO_VCPU_FULL_CONTROLLER_HEADER_LEN {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidTotalLength {
-                declared: 0,
-                actual: bytes.len(),
-            });
+            return Err(
+                VersionedTwoVcpuFullControllerCheckpointError::InvalidTotalLength {
+                    declared: 0,
+                    actual: bytes.len(),
+                },
+            );
         }
         if bytes[0..8] != VERSIONED_TWO_VCPU_FULL_CONTROLLER_MAGIC {
             return Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidMagic);
@@ -251,22 +258,30 @@ impl VersionedTwoVcpuFullControllerCheckpointV1 {
         let header_len =
             u32::from_le_bytes(bytes[12..16].try_into().expect("fixed header length field"));
         if header_len != TWO_VCPU_FULL_CONTROLLER_HEADER_LEN as u32 {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidHeaderLength(
-                header_len,
-            ));
+            return Err(
+                VersionedTwoVcpuFullControllerCheckpointError::InvalidHeaderLength(header_len),
+            );
         }
         let declared_total =
             u64::from_le_bytes(bytes[16..24].try_into().expect("fixed total length field"));
         if usize::try_from(declared_total).ok() != Some(bytes.len()) {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidTotalLength {
-                declared: declared_total,
-                actual: bytes.len(),
-            });
+            return Err(
+                VersionedTwoVcpuFullControllerCheckpointError::InvalidTotalLength {
+                    declared: declared_total,
+                    actual: bytes.len(),
+                },
+            );
         }
-        let primary_len =
-            u64::from_le_bytes(bytes[24..32].try_into().expect("fixed primary length field"));
-        let secondary_len =
-            u64::from_le_bytes(bytes[32..40].try_into().expect("fixed secondary length field"));
+        let primary_len = u64::from_le_bytes(
+            bytes[24..32]
+                .try_into()
+                .expect("fixed primary length field"),
+        );
+        let secondary_len = u64::from_le_bytes(
+            bytes[32..40]
+                .try_into()
+                .expect("fixed secondary length field"),
+        );
         let ids = [
             VcpuId::new(u16::from_le_bytes(
                 bytes[40..42].try_into().expect("fixed primary vCPU id"),
@@ -283,14 +298,13 @@ impl VersionedTwoVcpuFullControllerCheckpointV1 {
         validate_mp_states(ids, mp_states)?;
         let flags = u32::from_le_bytes(bytes[52..56].try_into().expect("fixed flags field"));
         if flags != 0 {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroFlags(flags));
-        }
-        let reserved =
-            u64::from_le_bytes(bytes[56..64].try_into().expect("fixed reserved field"));
-        if reserved != 0 {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroReserved(
-                reserved,
+            return Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroFlags(
+                flags,
             ));
+        }
+        let reserved = u64::from_le_bytes(bytes[56..64].try_into().expect("fixed reserved field"));
+        if reserved != 0 {
+            return Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroReserved(reserved));
         }
 
         let primary_len = usize::try_from(primary_len).map_err(|_| {
@@ -311,10 +325,12 @@ impl VersionedTwoVcpuFullControllerCheckpointV1 {
             .and_then(|length| length.checked_add(TWO_VCPU_FULL_CONTROLLER_STATE_LEN))
             .ok_or(VersionedTwoVcpuFullControllerCheckpointError::LengthOverflow)?;
         if expected_len != bytes.len() {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidTotalLength {
-                declared: declared_total,
-                actual: expected_len,
-            });
+            return Err(
+                VersionedTwoVcpuFullControllerCheckpointError::InvalidTotalLength {
+                    declared: declared_total,
+                    actual: expected_len,
+                },
+            );
         }
 
         let primary_start = TWO_VCPU_FULL_CONTROLLER_HEADER_LEN;
@@ -346,9 +362,9 @@ impl VersionedTwoVcpuFullControllerCheckpointV1 {
                 .expect("validated IOAPIC semantic length"),
         );
         if ioapic.pad() != 0 {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::NonZeroIoapicPad(
-                ioapic.pad(),
-            ));
+            return Err(
+                VersionedTwoVcpuFullControllerCheckpointError::NonZeroIoapicPad(ioapic.pad()),
+            );
         }
         offset = ioapic_end;
         let first_lapic_end = offset + KVM_APIC_REG_SIZE;
@@ -422,10 +438,12 @@ fn validate_vcpu_ids(
     ids: [VcpuId; 2],
 ) -> Result<(), VersionedTwoVcpuFullControllerCheckpointError> {
     if ids[0].get() >= ids[1].get() {
-        return Err(VersionedTwoVcpuFullControllerCheckpointError::NonCanonicalVcpuIds {
-            primary: ids[0].get(),
-            secondary: ids[1].get(),
-        });
+        return Err(
+            VersionedTwoVcpuFullControllerCheckpointError::NonCanonicalVcpuIds {
+                primary: ids[0].get(),
+                secondary: ids[1].get(),
+            },
+        );
     }
     Ok(())
 }
@@ -436,10 +454,12 @@ fn validate_mp_states(
 ) -> Result<(), VersionedTwoVcpuFullControllerCheckpointError> {
     for (id, state) in ids.into_iter().zip(states) {
         if state > X86_MP_STATE_MAX {
-            return Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidMpState {
-                vcpu: id.get(),
-                state,
-            });
+            return Err(
+                VersionedTwoVcpuFullControllerCheckpointError::InvalidMpState {
+                    vcpu: id.get(),
+                    state,
+                },
+            );
         }
     }
     Ok(())
@@ -467,10 +487,9 @@ mod two_vcpu_full_controller_schema_tests {
         assert!(validate_mp_states([VcpuId::new(0), VcpuId::new(1)], [0, 4]).is_ok());
         assert_eq!(
             validate_mp_states([VcpuId::new(0), VcpuId::new(1)], [0, 5]),
-            Err(VersionedTwoVcpuFullControllerCheckpointError::InvalidMpState {
-                vcpu: 1,
-                state: 5,
-            })
+            Err(
+                VersionedTwoVcpuFullControllerCheckpointError::InvalidMpState { vcpu: 1, state: 5 }
+            )
         );
     }
 }
