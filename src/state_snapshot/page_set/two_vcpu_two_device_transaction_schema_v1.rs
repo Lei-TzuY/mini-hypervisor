@@ -7,8 +7,7 @@ use crate::kvm::sys::{
     VERSIONED_HOST_REGISTRATION_PAIR_LEN,
 };
 use crate::portio::pci::virtio_blk::{
-    VirtioBlkCheckpointState, VirtioBlkCheckpointStateError, VirtioBlkPendingCompletionToken,
-    VIRTIO_BLK_BACKING_SIZE,
+    VirtioBlkCheckpointState, VirtioBlkCheckpointStateError, VIRTIO_BLK_BACKING_SIZE,
 };
 use crate::state_snapshot::{
     VersionedTwoVcpuFullControllerCheckpointError,
