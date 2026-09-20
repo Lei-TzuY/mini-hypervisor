@@ -1,0 +1,55 @@
+name: Strict KVM two-vCPU full-controller checkpoint restore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint.rs'
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/kvm/lapic_uapi.rs'
+      - 'src/vcpu/lapic_checkpoint.rs'
+      - 'src/bin/two-vcpu-full-controller-checkpoint.rs'
+      - 'tests/two_vcpu_full_controller_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/two-vcpu-full-controller-checkpoint.yml'
+  pull_request:
+    paths:
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint.rs'
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/kvm/lapic_uapi.rs'
+      - 'src/vcpu/lapic_checkpoint.rs'
+      - 'src/bin/two-vcpu-full-controller-checkpoint.rs'
+      - 'tests/two_vcpu_full_controller_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/two-vcpu-full-controller-checkpoint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-two-vcpu-full-controller-checkpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build two-vCPU full-controller checkpoint proof
+        run: cargo build --quiet --bin two-vcpu-full-controller-checkpoint
+      - name: Execute two-vCPU full-controller checkpoint proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/two-vcpu-full-controller-checkpoint)"
+          printf '%s\n' "$output"
+
+          grep -F 'two-vCPU full-controller pages: 0x30000,0x1fc000,0x1fd000' <<<"$output"
+          grep -F 'two-vCPU full-controller corruption: shared=Some(false) first-stack=Some(false) second-stack=Some(false) vcpu0=Some(false) vcpu1=Some(false) master=false slave=false ioapic=false lapic0=Some(false) lapic1=Some(false)' <<<"$output"
+          grep -F 'two-vCPU full-controller restore: shared=Some(true) first-stack=Some(true) second-stack=Some(true) vcpu0=Some(true) vcpu1=Some(true) master=true slave=true ioapic=true lapic0=Some(true) lapic1=Some(true)' <<<"$output"
+          grep -F 'two-vCPU full-controller first proof: [48]' <<<"$output"
+          grep -F 'two-vCPU full-controller second proof: [49]' <<<"$output"
+          grep -F 'two-vCPU full-controller first capture: vCPU 0 exit Hlt: rip=0x1000b' <<<"$output"
+          grep -F 'two-vCPU full-controller second capture: vCPU 1 exit Hlt: rip=0x11003' <<<"$output"
+          grep -F 'two-vCPU full-controller first terminal: vCPU 0 exit Hlt: rip=0x10020' <<<"$output"
+          grep -F 'two-vCPU full-controller second terminal: vCPU 1 exit Hlt: rip=0x11018' <<<"$output"
