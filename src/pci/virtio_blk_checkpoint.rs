@@ -4,19 +4,51 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VirtioBlkCheckpointStateError {
     NotQuiescent,
-    MisalignedBar { bar0: u64 },
-    UnsupportedDriverFeatures { features: u64 },
-    InvalidStatus { status: u8 },
-    InvalidQueueSize { size: u16 },
+    PendingCompletionWithoutToken {
+        isr_status: u8,
+    },
+    InvalidPendingCompletionToken {
+        bar0: u64,
+        queue: u16,
+        last_avail_idx: u16,
+        last_used_idx: u16,
+    },
+    MisalignedBar {
+        bar0: u64,
+    },
+    UnsupportedDriverFeatures {
+        features: u64,
+    },
+    InvalidStatus {
+        status: u8,
+    },
+    InvalidQueueSize {
+        size: u16,
+    },
     QueueEnabledWithoutAddresses,
     DriverOkWithoutReadyQueue,
-    InvalidIsrStatus { status: u8 },
+    InvalidIsrStatus {
+        status: u8,
+    },
 }
 
 impl fmt::Display for VirtioBlkCheckpointStateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotQuiescent => write!(f, "virtio-blk checkpoint state is not quiescent"),
+            Self::PendingCompletionWithoutToken { isr_status } => write!(
+                f,
+                "virtio-blk checkpoint has pending ISR status {isr_status:#x} without a completion-delivery token"
+            ),
+            Self::InvalidPendingCompletionToken {
+                bar0,
+                queue,
+                last_avail_idx,
+                last_used_idx,
+            } => write!(
+                f,
+                "virtio-blk pending-completion token is invalid: bar={bar0:#x} queue={queue} avail={last_avail_idx} used={last_used_idx}"
+            ),
             Self::MisalignedBar { bar0 } => {
                 write!(f, "virtio-blk BAR {bar0:#x} is not {:#x}-aligned", VIRTIO_BLK_BAR_SIZE)
             }
@@ -49,6 +81,107 @@ impl fmt::Display for VirtioBlkCheckpointStateError {
 
 impl std::error::Error for VirtioBlkCheckpointStateError {}
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct VirtioBlkPendingCompletionToken {
+    bar0: u64,
+    queue: u16,
+    last_avail_idx: u16,
+    last_used_idx: u16,
+}
+
+impl VirtioBlkPendingCompletionToken {
+    pub(crate) fn capture(device: &VirtioBlkDevice) -> Result<Self, VirtioBlkCheckpointStateError> {
+        Self::from_parts(
+            device.bar0,
+            VIRTIO_BLK_QUEUE_INDEX,
+            device.last_avail_idx,
+            device.last_used_idx,
+        )
+        .and_then(|token| {
+            token.validate_device(device)?;
+            Ok(token)
+        })
+    }
+
+    pub(crate) fn from_parts(
+        bar0: u64,
+        queue: u16,
+        last_avail_idx: u16,
+        last_used_idx: u16,
+    ) -> Result<Self, VirtioBlkCheckpointStateError> {
+        let token = Self {
+            bar0,
+            queue,
+            last_avail_idx,
+            last_used_idx,
+        };
+        if queue != VIRTIO_BLK_QUEUE_INDEX || last_avail_idx == 0 || last_avail_idx != last_used_idx
+        {
+            return Err(token.invalid());
+        }
+        Ok(token)
+    }
+
+    pub(crate) fn validate_device(
+        &self,
+        device: &VirtioBlkDevice,
+    ) -> Result<(), VirtioBlkCheckpointStateError> {
+        if self.bar0 != device.bar0
+            || self.queue != VIRTIO_BLK_QUEUE_INDEX
+            || self.last_avail_idx != device.last_avail_idx
+            || self.last_used_idx != device.last_used_idx
+            || !device.checkpoint_completion_pending()
+        {
+            return Err(self.invalid());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_state(
+        &self,
+        state: &VirtioBlkCheckpointState,
+    ) -> Result<(), VirtioBlkCheckpointStateError> {
+        if self.bar0 != state.bar0
+            || self.queue != VIRTIO_BLK_QUEUE_INDEX
+            || self.last_avail_idx != state.last_avail_idx
+            || self.last_used_idx != state.last_used_idx
+            || state.isr_status != VIRTIO_ISR_QUEUE_INTERRUPT
+        {
+            return Err(self.invalid());
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub(crate) const fn bar0(&self) -> u64 {
+        self.bar0
+    }
+
+    #[must_use]
+    pub(crate) const fn queue(&self) -> u16 {
+        self.queue
+    }
+
+    #[must_use]
+    pub(crate) const fn last_avail_idx(&self) -> u16 {
+        self.last_avail_idx
+    }
+
+    #[must_use]
+    pub(crate) const fn last_used_idx(&self) -> u16 {
+        self.last_used_idx
+    }
+
+    fn invalid(&self) -> VirtioBlkCheckpointStateError {
+        VirtioBlkCheckpointStateError::InvalidPendingCompletionToken {
+            bar0: self.bar0,
+            queue: self.queue,
+            last_avail_idx: self.last_avail_idx,
+            last_used_idx: self.last_used_idx,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VirtioBlkCheckpointState {
     pub(crate) bar0: u64,
@@ -70,6 +203,29 @@ pub(crate) struct VirtioBlkCheckpointState {
 
 impl VirtioBlkCheckpointState {
     pub(crate) fn capture(device: &VirtioBlkDevice) -> Result<Self, VirtioBlkCheckpointStateError> {
+        if !device.checkpoint_quiescent() {
+            return Err(VirtioBlkCheckpointStateError::NotQuiescent);
+        }
+        if !device.checkpoint_fully_quiescent() {
+            return Err(
+                VirtioBlkCheckpointStateError::PendingCompletionWithoutToken {
+                    isr_status: device.isr_status,
+                },
+            );
+        }
+        Self::capture_semantic(device)
+    }
+
+    pub(crate) fn capture_with_pending_completion(
+        device: &VirtioBlkDevice,
+    ) -> Result<(Self, VirtioBlkPendingCompletionToken), VirtioBlkCheckpointStateError> {
+        let token = VirtioBlkPendingCompletionToken::capture(device)?;
+        let state = Self::capture_semantic(device)?;
+        token.validate_state(&state)?;
+        Ok((state, token))
+    }
+
+    fn capture_semantic(device: &VirtioBlkDevice) -> Result<Self, VirtioBlkCheckpointStateError> {
         if !device.checkpoint_quiescent() {
             return Err(VirtioBlkCheckpointStateError::NotQuiescent);
         }
@@ -186,7 +342,7 @@ mod tests {
         device.queue_device = 0x18_200;
         device.last_avail_idx = 7;
         device.last_used_idx = 7;
-        device.isr_status = VIRTIO_ISR_QUEUE_INTERRUPT;
+        device.isr_status = 0;
         device.backing[700] = 0x5a;
         device
     }
@@ -199,6 +355,29 @@ mod tests {
         assert_eq!(restored, device);
         assert!(restored.checkpoint_quiescent());
         assert_eq!(restored.backing_bytes()[700], 0x5a);
+    }
+
+    #[test]
+    fn pending_completion_requires_explicit_linear_token() {
+        let mut device = ready_device();
+        device.isr_status = VIRTIO_ISR_QUEUE_INTERRUPT;
+        assert_eq!(
+            VirtioBlkCheckpointState::capture(&device),
+            Err(
+                VirtioBlkCheckpointStateError::PendingCompletionWithoutToken {
+                    isr_status: VIRTIO_ISR_QUEUE_INTERRUPT
+                }
+            )
+        );
+
+        let (state, token) =
+            VirtioBlkCheckpointState::capture_with_pending_completion(&device).unwrap();
+        token.validate_state(&state).unwrap();
+        assert_eq!(token.bar0(), BAR);
+        assert_eq!(token.queue(), VIRTIO_BLK_QUEUE_INDEX);
+        assert_eq!(token.last_avail_idx(), 7);
+        assert_eq!(token.last_used_idx(), 7);
+        assert_eq!(state.isr_status, VIRTIO_ISR_QUEUE_INTERRUPT);
     }
 
     #[test]

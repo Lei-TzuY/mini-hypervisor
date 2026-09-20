@@ -16,6 +16,19 @@ impl VirtioBlkDevice {
     }
 
     #[must_use]
+    pub const fn checkpoint_fully_quiescent(&self) -> bool {
+        !self.notify_pending && self.isr_status == 0
+    }
+
+    #[must_use]
+    pub const fn checkpoint_completion_pending(&self) -> bool {
+        !self.notify_pending
+            && self.isr_status == VIRTIO_ISR_QUEUE_INTERRUPT
+            && self.last_avail_idx != 0
+            && self.last_avail_idx == self.last_used_idx
+    }
+
+    #[must_use]
     pub const fn checkpoint_last_avail_idx(&self) -> u16 {
         self.last_avail_idx
     }
