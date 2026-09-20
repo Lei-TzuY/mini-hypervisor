@@ -187,7 +187,9 @@ pub fn run_file_backed_reopen_proof() -> Result<VirtioBlkFileBackedProof, Error>
     let raw = fs::read(&path)
         .map_err(|source| backing_io_error("read synced virtio-blk proof backing", source))?;
     if raw.len() != VIRTIO_BLK_BACKING_SIZE || raw[..VIRTIO_BLK_SECTOR_SIZE] != payload {
-        return Err(proof_error("synced host file did not contain the completed T_OUT payload"));
+        return Err(proof_error(
+            "synced host file did not contain the completed T_OUT payload",
+        ));
     }
     let mut persisted_sector = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
     persisted_sector.copy_from_slice(&raw[..VIRTIO_BLK_SECTOR_SIZE]);
