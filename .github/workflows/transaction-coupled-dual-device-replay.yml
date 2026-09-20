@@ -1,0 +1,76 @@
+name: Strict KVM transaction-coupled dual-device replay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/two_device_checkpoint_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/transaction_coupled_dual_device_replay.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/kvm/host_registration_pair_schema_v1.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/bin/transaction-coupled-dual-device-replay.rs'
+      - 'tests/transaction_coupled_dual_device_replay_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/transaction-coupled-dual-device-replay.yml'
+  pull_request:
+    paths:
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/two_device_checkpoint_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/transaction_coupled_dual_device_replay.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/kvm/host_registration_pair_schema_v1.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/bin/transaction-coupled-dual-device-replay.rs'
+      - 'tests/transaction_coupled_dual_device_replay_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/transaction-coupled-dual-device-replay.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-transaction-coupled-dual-device-replay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build coupled dual-device replay proof
+        run: cargo build --quiet --bin transaction-coupled-dual-device-replay
+      - name: Execute coupled dual-device replay proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/transaction-coupled-dual-device-replay)"
+          printf '%s\n' "$output"
+
+          grep -F 'coupled transaction: version=1 ' <<<"$output"
+          grep -F 'coupled bars: [268435456, 268439552]' <<<"$output"
+          grep -F 'coupled mutation: exact=false first-device=Some(false) second-device=Some(false)' <<<"$output"
+          grep -F 'coupled restore exact: true' <<<"$output"
+          grep -F 'coupled replay queues: [[1, 1], [1, 1]]' <<<"$output"
+          grep -F 'coupled replay doorbells: [1, 1]' <<<"$output"
+          grep -F 'coupled replay irqfd: [1, 1]' <<<"$output"
+          grep -F 'coupled replay data exact: [true, true]' <<<"$output"
+          grep -F 'coupled replay proof: [65, 48, 97, 77, 66, 49, 98, 78, 68]' <<<"$output"
+
+          completion="$(grep -F 'coupled replay completion rflags:' <<<"$output")"
+          rflags_hex="${completion##*: }"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
+          (( (rflags & 0x200) == 0x200 ))
