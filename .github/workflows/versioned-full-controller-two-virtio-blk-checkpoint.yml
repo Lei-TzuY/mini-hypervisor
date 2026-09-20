@@ -1,0 +1,99 @@
+name: Strict KVM versioned two virtio-blk full-controller checkpoint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/kvm/lapic_uapi.rs'
+      - 'src/vcpu/lapic_checkpoint.rs'
+      - 'src/vcpu/mp_state.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/controller.rs'
+      - 'src/state_snapshot/page_set/full_controller.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk_guest.rs'
+      - 'src/bin/versioned-full-controller-two-virtio-blk-checkpoint.rs'
+      - 'tests/versioned_full_controller_two_virtio_blk_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-full-controller-two-virtio-blk-checkpoint.yml'
+  pull_request:
+    paths:
+      - 'src/kvm/irqchip_snapshot.rs'
+      - 'src/kvm/lapic_uapi.rs'
+      - 'src/vcpu/lapic_checkpoint.rs'
+      - 'src/vcpu/mp_state.rs'
+      - 'src/mmio.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/controller.rs'
+      - 'src/state_snapshot/page_set/full_controller.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk_guest.rs'
+      - 'src/bin/versioned-full-controller-two-virtio-blk-checkpoint.rs'
+      - 'tests/versioned_full_controller_two_virtio_blk_checkpoint_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-full-controller-two-virtio-blk-checkpoint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-versioned-two-virtio-blk-controller-checkpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build versioned two-device checkpoint proof
+        run: cargo build --quiet --bin versioned-full-controller-two-virtio-blk-checkpoint
+      - name: Execute versioned two-device checkpoint proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/versioned-full-controller-two-virtio-blk-checkpoint)"
+          printf '%s\n' "$output"
+
+          schema="$(grep -F 'versioned two-virtio schema: version=1 encoded_bytes=' <<<"$output")"
+          encoded_and_pages="${schema##*encoded_bytes=}"
+          encoded_bytes="${encoded_and_pages%% *}"
+          pages="${schema##*pages=}"
+          pages="${pages%% *}"
+          msrs="${schema##*msrs=}"
+          msrs="${msrs%% *}"
+          backing_each="${schema##*backing_each=}"
+          backing_each="${backing_each%% *}"
+          [[ "$encoded_bytes" =~ ^[0-9]+$ ]]
+          [[ "$pages" =~ ^[0-9]+$ ]]
+          [[ "$msrs" =~ ^[0-9]+$ ]]
+          [[ "$backing_each" =~ ^[0-9]+$ ]]
+          (( encoded_bytes > 2 * backing_each ))
+          (( pages == 1 ))
+          (( msrs <= 256 ))
+          (( backing_each > 0 ))
+          grep -F 'bars=[268435456, 268439552]' <<<"$schema"
+          grep -F 'canonical=true' <<<"$schema"
+
+          grep -F 'versioned two-virtio checkpoint page: 0x30000' <<<"$output"
+          grep -F 'versioned two-virtio captured statuses: [1, 3]' <<<"$output"
+          grep -F 'versioned two-virtio mutation exact: page=false vcpu=false master-pic=false slave-pic=false ioapic=false lapic=false first=false second=false' <<<"$output"
+          grep -F 'versioned two-virtio restore exact: page=true vcpu=true master-pic=true slave-pic=true ioapic=true lapic=true first=true second=true' <<<"$output"
+          grep -F 'versioned two-virtio restored statuses: [1, 3]' <<<"$output"
+          grep -F 'versioned two-virtio proof: [65, 83, 66, 74, 77, 68]' <<<"$output"
+
+          completion="$(grep -F 'versioned two-virtio completion rflags:' <<<"$output")"
+          rflags_hex="${completion##*: }"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
+          (( (rflags & 0x200) == 0x200 ))
