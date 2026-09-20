@@ -1981,7 +1981,7 @@ mod acceleration_checkpoint_quiescence {
             PENDING_MARKER,
             "accelerated checkpoint pending-doorbell barrier",
         )?;
-        let _ = single_step_to_quiescence(
+        let _ = single_step_to_interrupt_disabled_quiescence(
             vcpu,
             program.pending_rip,
             "accelerated checkpoint pending-doorbell quiescence",
@@ -2174,6 +2174,37 @@ mod acceleration_checkpoint_quiescence {
         ))
     }
 
+    fn single_step_to_interrupt_disabled_quiescence(
+        vcpu: &mut Vcpu,
+        expected_rip: u64,
+        stage: &'static str,
+    ) -> Result<(u64, u64), Error> {
+        vcpu.set_guest_single_step(true)?;
+        let exit_result = vcpu.run_once();
+        let disable_result = vcpu.set_guest_single_step(false);
+        let exit = match (exit_result, disable_result) {
+            (Ok(exit), Ok(())) => exit,
+            (Err(error), _) | (Ok(_), Err(error)) => return Err(error),
+        };
+        if exit != VcpuExit::Debug {
+            return Err(coupled_error(format!(
+                "{stage}: expected debug exit, got reason {}",
+                exit.reason()
+            )));
+        }
+        let registers = vcpu.registers()?;
+        if registers.rip != expected_rip
+            || registers.rflags & X86_RFLAGS_RESERVED_BIT != X86_RFLAGS_RESERVED_BIT
+            || registers.rflags & X86_RFLAGS_INTERRUPT_ENABLE != 0
+        {
+            return Err(coupled_error(format!(
+                "{stage}: expected IF-cleared quiescent rip={expected_rip:#x}, got rip={:#x} rflags={:#x}",
+                registers.rip, registers.rflags
+            )));
+        }
+        Ok((registers.rip, registers.rflags))
+    }
+
     fn build_quiescence_program() -> QuiescenceGuestProgram {
         let mut code = Vec::new();
         emit_pic_setup(&mut code);
@@ -2182,6 +2213,7 @@ mod acceleration_checkpoint_quiescence {
         let capture_rip = ENTRY.get() + code.len() as u64;
         code.push(0x90);
 
+        code.push(0xfa);
         emit_movabs(&mut code, 7, FIRST_AVAIL);
         code.extend_from_slice(&[0x66, 0xc7, 0x47, 0x02, 0x01, 0x00]);
         emit_movabs(&mut code, 3, LONG_MODE_MMIO_VIRTUAL_PAGE);
