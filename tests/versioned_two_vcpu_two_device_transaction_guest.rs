@@ -22,7 +22,10 @@ fn versioned_two_vcpu_two_device_transaction_roundtrips_only_through_bytes_then_
             assert!(result.canonical_roundtrip());
             assert!(result.encoded_len() > result.checkpoint_encoded_len());
             assert!(result.checkpoint_encoded_len() > result.registration_pair_encoded_len());
-            assert_eq!(result.vcpu_ids(), [TWO_VCPU_CHECKPOINT_FIRST_ID, TWO_VCPU_CHECKPOINT_SECOND_ID]);
+            assert_eq!(
+                result.vcpu_ids(),
+                [TWO_VCPU_CHECKPOINT_FIRST_ID, TWO_VCPU_CHECKPOINT_SECOND_ID]
+            );
             assert_eq!(result.mp_states(), [0, 0]);
             assert_eq!(result.page_count(), 3);
             assert_eq!(result.msr_counts(), [0, 0]);
