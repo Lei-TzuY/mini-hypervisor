@@ -323,6 +323,9 @@ pub(crate) struct VirtioBlkCheckpointState {
 
 impl VirtioBlkCheckpointState {
     pub(crate) fn capture(device: &VirtioBlkDevice) -> Result<Self, VirtioBlkCheckpointStateError> {
+        if !device.checkpoint_backing_portable() {
+            return Err(VirtioBlkCheckpointStateError::ExternalBackingUnsupported);
+        }
         if !device.checkpoint_quiescent() {
             return Err(VirtioBlkCheckpointStateError::NotQuiescent);
         }
@@ -339,6 +342,9 @@ impl VirtioBlkCheckpointState {
     pub(crate) fn capture_with_pending_completion(
         device: &VirtioBlkDevice,
     ) -> Result<(Self, VirtioBlkPendingCompletionToken), VirtioBlkCheckpointStateError> {
+        if !device.checkpoint_backing_portable() {
+            return Err(VirtioBlkCheckpointStateError::ExternalBackingUnsupported);
+        }
         let token = VirtioBlkPendingCompletionToken::capture(device)?;
         let state = Self::capture_semantic(device)?;
         token.validate_state(&state)?;
@@ -348,6 +354,9 @@ impl VirtioBlkCheckpointState {
     pub(crate) fn capture_with_pending_notification(
         device: &VirtioBlkDevice,
     ) -> Result<(Self, VirtioBlkPendingNotificationToken), VirtioBlkCheckpointStateError> {
+        if !device.checkpoint_backing_portable() {
+            return Err(VirtioBlkCheckpointStateError::ExternalBackingUnsupported);
+        }
         let token = VirtioBlkPendingNotificationToken::capture(device)?;
         let state = Self::capture_semantic(device)?;
         token.validate_state(&state)?;
