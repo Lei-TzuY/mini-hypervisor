@@ -270,11 +270,14 @@ impl KvmBackend {
     pub fn run_versioned_two_host_registration_acceleration_guest(
         config: crate::config::VmConfig,
     ) -> Result<VersionedTwoHostRegistrationAccelerationResult, crate::error::Error> {
-        let pair = default_two_host_registration_pair()?;
-        let schema = VersionedHostRegistrationPairV1::from_pair(pair);
-        let encoded = schema.encode();
+        let encoded = {
+            let pair = default_two_host_registration_pair()?;
+            VersionedHostRegistrationPairV1::from_pair(pair).encode()
+        };
         let encoded_len = encoded.len();
 
+        // The encoder-side semantic pair is out of scope here. Everything below this boundary is
+        // reconstructed only from the canonical byte stream.
         let decoded = VersionedHostRegistrationPairV1::decode(&encoded).map_err(|error| {
             host_registration_error(
                 "decode versioned host-registration pair",
