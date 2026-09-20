@@ -388,7 +388,9 @@ mod tests {
         .unwrap();
 
         fs::remove_file(&path).unwrap();
-        let error = device.process_notified_queue_atomic(&mut memory).unwrap_err();
+        let error = device
+            .process_notified_queue_atomic(&mut memory)
+            .unwrap_err();
         assert!(matches!(error, VirtioBlkProcessError::Backing(_)));
         assert_eq!(device.last_avail_idx, 0);
         assert_eq!(device.last_used_idx, 0);
