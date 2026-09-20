@@ -178,8 +178,7 @@ impl super::MmioBus {
             before_second[first_index] = first_snapshot.clone();
             second_and_after[0] = second_snapshot.clone();
         } else {
-            let (before_first, first_and_after) =
-                self.virtio_blk_devices.split_at_mut(first_index);
+            let (before_first, first_and_after) = self.virtio_blk_devices.split_at_mut(first_index);
             before_first[second_index] = second_snapshot.clone();
             first_and_after[0] = first_snapshot.clone();
         }
