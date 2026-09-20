@@ -10,9 +10,7 @@ use crate::interrupt::{
 use crate::kvm::msr::GuestMsrAccessPolicy;
 use crate::kvm::sys::{
     default_two_host_registration_pair, HostRegistrationPairCheckpoint,
-    ReconstructedHostRegistrationPair, TWO_HOST_REGISTRATION_FIRST_DOORBELL,
-    TWO_HOST_REGISTRATION_FIRST_GSI, TWO_HOST_REGISTRATION_FIRST_VECTOR,
-    TWO_HOST_REGISTRATION_SECOND_DOORBELL, TWO_HOST_REGISTRATION_SECOND_GSI,
+    ReconstructedHostRegistrationPair, TWO_HOST_REGISTRATION_FIRST_VECTOR,
     TWO_HOST_REGISTRATION_SECOND_VECTOR,
 };
 use crate::kvm::KvmBackend;
@@ -26,9 +24,8 @@ use crate::mmio::long_mode::{
 use crate::mmio::multi_device::MULTI_DEVICE_SECOND_VIRTUAL_PAGE;
 use crate::mmio::MmioBus;
 use crate::portio::pci::virtio::{
-    VIRTIO_F_VERSION_1, VIRTIO_ISR_OFFSET, VIRTIO_ISR_QUEUE_INTERRUPT,
-    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
-    VIRTIO_STATUS_FEATURES_OK,
+    VIRTIO_F_VERSION_1, VIRTIO_ISR_OFFSET, VIRTIO_ISR_QUEUE_INTERRUPT, VIRTIO_STATUS_ACKNOWLEDGE,
+    VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
 use crate::portio::pci::virtio_blk::{
     deterministic_sector, VirtioBlkDevice, VirtioBlkQueueCompletion, VIRTIO_BLK_SECTOR_SIZE,
@@ -198,16 +195,20 @@ pub fn run_transaction_coupled_dual_device_replay_guest(
 ) -> Result<TransactionCoupledDualDeviceReplayResult, Error> {
     let program = build_guest_program();
     let guest = FlatGuestImage::new(ENTRY, ENTRY, &program.bytes)?;
-    let first_handler = FlatGuestImage::new(FIRST_HANDLER, FIRST_HANDLER, &build_handler(
+    let first_handler_bytes = build_handler(
         LONG_MODE_MMIO_VIRTUAL_PAGE,
         FIRST_HANDLER_MARKER,
         FIRST_ACK_MARKER,
-    ))?;
-    let second_handler = FlatGuestImage::new(SECOND_HANDLER, SECOND_HANDLER, &build_handler(
+    );
+    let first_handler =
+        FlatGuestImage::new(FIRST_HANDLER, FIRST_HANDLER, &first_handler_bytes)?;
+    let second_handler_bytes = build_handler(
         MULTI_DEVICE_SECOND_VIRTUAL_PAGE,
         SECOND_HANDLER_MARKER,
         SECOND_ACK_MARKER,
-    ))?;
+    );
+    let second_handler =
+        FlatGuestImage::new(SECOND_HANDLER, SECOND_HANDLER, &second_handler_bytes)?;
 
     let backend = KvmBackend::open()?;
     let mut vm = backend.create_vm_with_irqchip()?;
@@ -234,10 +235,7 @@ pub fn run_transaction_coupled_dual_device_replay_guest(
         LONG_MODE_MMIO_STACK_POINTER,
         vec![
             LongModeInterruptGate::new(TWO_HOST_REGISTRATION_FIRST_VECTOR, first_handler.entry()),
-            LongModeInterruptGate::new(
-                TWO_HOST_REGISTRATION_SECOND_VECTOR,
-                second_handler.entry(),
-            ),
+            LongModeInterruptGate::new(TWO_HOST_REGISTRATION_SECOND_VECTOR, second_handler.entry()),
         ],
     )
     .expect("fixed coupled replay interrupt gates remain valid");
@@ -295,7 +293,10 @@ pub fn run_transaction_coupled_dual_device_replay_guest(
             crate::kvm::sys::TWO_HOST_REGISTRATION_SECOND_BAR,
             crate::kvm::sys::TWO_HOST_REGISTRATION_FIRST_BAR,
         ],
-        &[TRANSACTION_COUPLED_SECOND_PAGE, TRANSACTION_COUPLED_FIRST_PAGE],
+        &[
+            TRANSACTION_COUPLED_SECOND_PAGE,
+            TRANSACTION_COUPLED_FIRST_PAGE,
+        ],
     )?;
     require_quiescent_zero_zero(&captured)?;
 
@@ -311,7 +312,11 @@ pub fn run_transaction_coupled_dual_device_replay_guest(
         let encoded = transaction
             .encode()
             .map_err(|error| coupled_error(error.to_string()))?;
-        (encoded, checkpoint_encoded_len, registration_pair_encoded_len)
+        (
+            encoded,
+            checkpoint_encoded_len,
+            registration_pair_encoded_len,
+        )
     };
     drop(captured);
 
@@ -424,7 +429,9 @@ fn run_to_capture(vcpu: &mut Vcpu, capture_rip: u64) -> Result<(), Error> {
     let mut port_io = PortIoBus::with_debug_port();
     let io = run_expected_debug_output(vcpu, &mut port_io, CAPTURE_MARKER, "coupled capture")?;
     if io.output_data() != TRANSACTION_COUPLED_CAPTURE_PROOF {
-        return Err(coupled_error("unexpected transaction-coupled capture proof"));
+        return Err(coupled_error(
+            "unexpected transaction-coupled capture proof",
+        ));
     }
     let _ = single_step_to_quiescence(vcpu, capture_rip, "coupled capture quiescence")?;
     Ok(())
@@ -565,7 +572,8 @@ fn validate_completion(
     completion: Option<VirtioBlkQueueCompletion>,
     role: &'static str,
 ) -> Result<(), Error> {
-    let completion = completion.ok_or_else(|| coupled_error(format!("{role} request never completed")))?;
+    let completion =
+        completion.ok_or_else(|| coupled_error(format!("{role} request never completed")))?;
     if completion.descriptor_id() != 0
         || completion.length() != (VIRTIO_BLK_SECTOR_SIZE + 1) as u32
         || completion.sector() != 0
@@ -743,30 +751,36 @@ fn ready_device(bar: u64, queue: QueueLayout) -> Result<VirtioBlkDevice, Error> 
     device_write(
         &mut device,
         0x14,
-        &[
-            VIRTIO_STATUS_ACKNOWLEDGE
-                | VIRTIO_STATUS_DRIVER
-                | VIRTIO_STATUS_FEATURES_OK,
-        ],
+        &[VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK],
     )?;
     device_write(&mut device, 0x16, &0_u16.to_le_bytes())?;
     device_write(&mut device, 0x18, &QUEUE_SIZE.to_le_bytes())?;
     device_write(&mut device, 0x20, &(queue.desc as u32).to_le_bytes())?;
-    device_write(&mut device, 0x24, &((queue.desc >> 32) as u32).to_le_bytes())?;
+    device_write(
+        &mut device,
+        0x24,
+        &((queue.desc >> 32) as u32).to_le_bytes(),
+    )?;
     device_write(&mut device, 0x28, &(queue.avail as u32).to_le_bytes())?;
-    device_write(&mut device, 0x2c, &((queue.avail >> 32) as u32).to_le_bytes())?;
+    device_write(
+        &mut device,
+        0x2c,
+        &((queue.avail >> 32) as u32).to_le_bytes(),
+    )?;
     device_write(&mut device, 0x30, &(queue.used as u32).to_le_bytes())?;
-    device_write(&mut device, 0x34, &((queue.used >> 32) as u32).to_le_bytes())?;
+    device_write(
+        &mut device,
+        0x34,
+        &((queue.used >> 32) as u32).to_le_bytes(),
+    )?;
     device_write(&mut device, 0x1c, &1_u16.to_le_bytes())?;
     device_write(
         &mut device,
         0x14,
-        &[
-            VIRTIO_STATUS_ACKNOWLEDGE
-                | VIRTIO_STATUS_DRIVER
-                | VIRTIO_STATUS_FEATURES_OK
-                | VIRTIO_STATUS_DRIVER_OK,
-        ],
+        &[VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK],
     )?;
     if !device.queue_enabled()
         || !device.checkpoint_quiescent()
@@ -1078,8 +1092,9 @@ mod tests {
         assert!(program.capture_rip < program.completion_rip);
         assert_eq!(TRANSACTION_COUPLED_CAPTURE_PROOF, b"C");
         assert_eq!(TRANSACTION_COUPLED_REPLAY_PROOF, b"A0aMB1bND");
-        assert!(program.bytes.windows(9).any(|window| {
-            window == [0x66, 0xc7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]
-        }));
+        assert!(program
+            .bytes
+            .windows(9)
+            .any(|window| { window == [0x66, 0xc7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00] }));
     }
 }
