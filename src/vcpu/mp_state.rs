@@ -127,6 +127,30 @@ impl Vcpu {
         Ok(observed.raw())
     }
 
+    pub(crate) fn restore_multiprocessing_state_raw(
+        &mut self,
+        raw: u32,
+    ) -> Result<u32, Error> {
+        let requested = VcpuMpState(raw);
+        self.set_multiprocessing_state(requested)?;
+        let observed = self.multiprocessing_state()?;
+        if observed != requested {
+            return Err(vcpu_operation(
+                self.id,
+                "verify KVM_SET_MP_STATE checkpoint readback",
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "expected vCPU MP state {} after checkpoint restore, got {}",
+                        requested.raw(),
+                        observed.raw()
+                    ),
+                ),
+            ));
+        }
+        Ok(observed.raw())
+    }
+
     pub(crate) fn ensure_runnable_mp_state(&mut self) -> Result<u32, Error> {
         let initial = self.multiprocessing_state()?;
         if initial != VcpuMpState::RUNNABLE && initial != VcpuMpState::UNINITIALIZED {
