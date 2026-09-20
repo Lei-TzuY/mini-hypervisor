@@ -3,7 +3,7 @@ use super::{
     VIRTIO_BLK_STATE_LEN,
 };
 use crate::kvm::sys::{
-    HostRegistrationSpecPair, VersionedHostRegistrationPairError, VersionedHostRegistrationPairV1,
+    VersionedHostRegistrationPairError, VersionedHostRegistrationPairV1,
     VERSIONED_HOST_REGISTRATION_PAIR_LEN,
 };
 use crate::portio::pci::virtio_blk::{
