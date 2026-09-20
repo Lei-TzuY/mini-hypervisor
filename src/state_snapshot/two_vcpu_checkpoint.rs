@@ -1347,6 +1347,10 @@ fn two_vcpu_checkpoint_error(
     })
 }
 
+#[path = "two_vcpu_checkpoint_schema_v1.rs"]
+mod two_vcpu_checkpoint_schema_v1;
+pub use two_vcpu_checkpoint_schema_v1::*;
+
 #[cfg(test)]
 mod tests {
     use super::*;

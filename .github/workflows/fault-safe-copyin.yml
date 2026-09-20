@@ -29,12 +29,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build fault-safe copyin proof
+        run: cargo build --quiet --bin fault-safe-copyin
       - name: Strict KVM fault-safe copyin proof
         shell: bash
         run: |
+          set -euo pipefail
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
-          output="$(timeout 30s cargo run --quiet --bin fault-safe-copyin)"
+          output="$(timeout 30s target/debug/fault-safe-copyin)"
           printf '%s\n' "$output"
 
           grep -F 'copyin proof: [71, 70, 68]' <<<"$output"

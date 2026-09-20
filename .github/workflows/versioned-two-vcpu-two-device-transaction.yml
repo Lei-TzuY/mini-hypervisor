@@ -1,0 +1,68 @@
+name: Strict KVM versioned two-vCPU two-device transaction
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/schema_v1.rs'
+      - 'src/state_snapshot/page_set/schema_v1/vcpu_state.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint_schema_v1.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_guest.rs'
+      - 'src/kvm/host_registration_pair_schema_v1.rs'
+      - 'src/bin/versioned-two-vcpu-two-device-transaction.rs'
+      - 'tests/versioned_two_vcpu_two_device_transaction_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-two-vcpu-two-device-transaction.yml'
+  pull_request:
+    paths:
+      - 'src/state_snapshot.rs'
+      - 'src/state_snapshot/page_set.rs'
+      - 'src/state_snapshot/page_set/schema_v1.rs'
+      - 'src/state_snapshot/page_set/schema_v1/vcpu_state.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint.rs'
+      - 'src/state_snapshot/two_vcpu_checkpoint_schema_v1.rs'
+      - 'src/state_snapshot/page_set/full_controller_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/full_controller_two_virtio_blk_schema_v1.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_schema_v1.rs'
+      - 'src/state_snapshot/page_set/two_vcpu_two_device_transaction_guest.rs'
+      - 'src/kvm/host_registration_pair_schema_v1.rs'
+      - 'src/bin/versioned-two-vcpu-two-device-transaction.rs'
+      - 'tests/versioned_two_vcpu_two_device_transaction_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/versioned-two-vcpu-two-device-transaction.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-versioned-two-vcpu-two-device-transaction:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build versioned two-vCPU two-device proof
+        run: cargo build --quiet --bin versioned-two-vcpu-two-device-transaction
+      - name: Execute versioned two-vCPU two-device proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/versioned-two-vcpu-two-device-transaction)"
+          printf '%s\n' "$output"
+
+          grep -F 'versioned two-vCPU two-device schema: transaction=1 checkpoint=1 controller=1 registration-pair=1 registrations=[1, 1]' <<<"$output"
+          grep -E 'versioned two-vCPU two-device bytes: total=[1-9][0-9]* checkpoint=[1-9][0-9]* registration-pair=[1-9][0-9]* canonical=true' <<<"$output"
+          grep -F 'versioned two-vCPU two-device ownership: vcpus=[0,1] mp=[0, 0] pages=3 msrs=[0, 0] bars=0x10000000,0x10001000 backing-each=2048' <<<"$output"
+          grep -F 'versioned two-vCPU two-device statuses: captured=[1, 3] restored=[1, 3]' <<<"$output"
+          grep -F 'versioned two-vCPU two-device quiescence: capture=[false, false] reconstructed=[false, false]' <<<"$output"
+          grep -F 'versioned two-vCPU two-device exact: mutation=false restored=true vcpu0=true vcpu1=true' <<<"$output"
+          grep -F 'versioned two-vCPU two-device rips: capture=0x1000e,0x11006 completion=0x10023,0x1101b' <<<"$output"
+          grep -F 'versioned two-vCPU two-device proofs: [48],[49]' <<<"$output"

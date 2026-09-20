@@ -305,6 +305,8 @@ fn require_two_vcpu_controller_exact_before_devices(exact: bool) -> Result<(), E
     Ok(())
 }
 
+include!("two_vcpu_two_device_transaction_schema_v1.rs");
+
 #[cfg(test)]
 mod two_vcpu_two_device_transaction_tests {
     use super::*;
