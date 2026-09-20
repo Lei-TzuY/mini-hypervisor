@@ -38,7 +38,9 @@ fn decoded_transaction_preserves_independent_dual_device_write_readback_on_the_r
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
-            eprintln!("skipping coupled dual-device write/readback assertion: /dev/kvm unavailable");
+            eprintln!(
+                "skipping coupled dual-device write/readback assertion: /dev/kvm unavailable"
+            );
         }
         Err(error) => panic!("coupled dual-device write/readback failed unexpectedly: {error}"),
     }
