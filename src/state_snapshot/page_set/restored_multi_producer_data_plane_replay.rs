@@ -1,5 +1,5 @@
 use super::super::transaction_coupled_dual_device_replay::{
-    emit_cmp_al, emit_debug, emit_equal_or_ud2, emit_movabs, is_debug_output, queue_indices,
+    emit_cmp_al, emit_debug, emit_movabs, is_debug_output, queue_indices,
     read_data, ready_device, require_ready_devices, require_restored_zero_zero,
     single_step_to_quiescence, QueueLayout, FIRST_QUEUE, SECOND_QUEUE,
     TRANSACTION_COUPLED_FIRST_PAGE, TRANSACTION_COUPLED_SECOND_PAGE,
