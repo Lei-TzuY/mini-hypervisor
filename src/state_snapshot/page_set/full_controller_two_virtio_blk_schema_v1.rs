@@ -337,8 +337,8 @@ fn validate_two_device_bars(
     bars: [u64; 2],
 ) -> Result<(), VersionedFullControllerTwoVirtioBlkCheckpointError> {
     if bars[0] >= bars[1]
-        || bars[0] % u64::from(VIRTIO_BLK_BAR_SIZE) != 0
-        || bars[1] % u64::from(VIRTIO_BLK_BAR_SIZE) != 0
+        || bars[0] % u64::from(crate::portio::pci::virtio_blk::VIRTIO_BLK_BAR_SIZE) != 0
+        || bars[1] % u64::from(crate::portio::pci::virtio_blk::VIRTIO_BLK_BAR_SIZE) != 0
     {
         return Err(
             VersionedFullControllerTwoVirtioBlkCheckpointError::NonCanonicalBars {
@@ -355,7 +355,7 @@ mod versioned_full_controller_two_virtio_blk_schema_tests {
     use super::*;
 
     const FIRST_BAR: u64 = 0x1000_0000;
-    const SECOND_BAR: u64 = FIRST_BAR + VIRTIO_BLK_BAR_SIZE as u64;
+    const SECOND_BAR: u64 = FIRST_BAR + crate::portio::pci::virtio_blk::VIRTIO_BLK_BAR_SIZE as u64;
 
     fn minimal_envelope() -> Vec<u8> {
         let controller_len = 1_usize;
