@@ -75,10 +75,7 @@ impl super::MmioBus {
             return Ok(None);
         };
         let token = VirtioBlkPendingCompletionToken::capture(device).map_err(|error| {
-            virtio_blk_checkpoint_error(
-                "capture virtio-blk pending completion",
-                error.to_string(),
-            )
+            virtio_blk_checkpoint_error("capture virtio-blk pending completion", error.to_string())
         })?;
         Ok(Some((device.clone(), token)))
     }
@@ -221,7 +218,10 @@ impl super::MmioBus {
         if token.bar0() != first_address && token.bar0() != second_address {
             return Err(virtio_blk_checkpoint_error(
                 "restore two virtio-blk checkpoint states with pending completion",
-                format!("pending-completion BAR {:#x} is outside checkpoint BARs", token.bar0()),
+                format!(
+                    "pending-completion BAR {:#x} is outside checkpoint BARs",
+                    token.bar0()
+                ),
             ));
         }
 
@@ -232,7 +232,10 @@ impl super::MmioBus {
             if snapshot.bar0() != address {
                 return Err(virtio_blk_checkpoint_error(
                     "restore two virtio-blk checkpoint states with pending completion",
-                    format!("snapshot BAR {:#x} does not match {address:#x}", snapshot.bar0()),
+                    format!(
+                        "snapshot BAR {:#x} does not match {address:#x}",
+                        snapshot.bar0()
+                    ),
                 ));
             }
             if address == token.bar0() {
