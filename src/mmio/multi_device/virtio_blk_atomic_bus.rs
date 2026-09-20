@@ -1,7 +1,8 @@
 use crate::error::{Error, HostEnvironmentError};
 use crate::memory::GuestMemory;
 use crate::portio::pci::virtio_blk::{
-    VirtioBlkDevice, VirtioBlkProcessError, VirtioBlkQueueCompletion, VIRTIO_BLK_SECTOR_SIZE,
+    VirtioBlkDevice, VirtioBlkPendingCompletionToken, VirtioBlkProcessError,
+    VirtioBlkQueueCompletion, VIRTIO_BLK_SECTOR_SIZE,
 };
 use std::io;
 
@@ -53,13 +54,33 @@ impl super::MmioBus {
         else {
             return Ok(None);
         };
-        if !device.checkpoint_quiescent() {
+        if !device.checkpoint_fully_quiescent() {
             return Err(virtio_blk_checkpoint_error(
                 "capture virtio-blk checkpoint state",
-                "queue notification is still in flight",
+                "device is not fully quiescent; pending completion requires an explicit delivery token",
             ));
         }
         Ok(Some(device.clone()))
+    }
+
+    pub(crate) fn capture_virtio_blk_checkpoint_with_pending_completion_at(
+        &self,
+        address: u64,
+    ) -> Result<Option<(VirtioBlkDevice, VirtioBlkPendingCompletionToken)>, Error> {
+        let Some(device) = self
+            .virtio_blk_devices
+            .iter()
+            .find(|device| device.bar0() == address)
+        else {
+            return Ok(None);
+        };
+        let token = VirtioBlkPendingCompletionToken::capture(device).map_err(|error| {
+            virtio_blk_checkpoint_error(
+                "capture virtio-blk pending completion",
+                error.to_string(),
+            )
+        })?;
+        Ok(Some((device.clone(), token)))
     }
 
     pub fn verify_virtio_blk_checkpoint_at(
@@ -88,7 +109,7 @@ impl super::MmioBus {
         address: u64,
         snapshot: &VirtioBlkDevice,
     ) -> Result<Option<()>, Error> {
-        if snapshot.bar0() != address || !snapshot.checkpoint_quiescent() {
+        if snapshot.bar0() != address || !snapshot.checkpoint_fully_quiescent() {
             return Err(virtio_blk_checkpoint_error(
                 "restore virtio-blk checkpoint state",
                 "snapshot BAR identity or quiescence contract is invalid",
@@ -101,10 +122,10 @@ impl super::MmioBus {
         else {
             return Ok(None);
         };
-        if !device.checkpoint_quiescent() {
+        if !device.checkpoint_fully_quiescent() {
             return Err(virtio_blk_checkpoint_error(
                 "restore virtio-blk checkpoint state",
-                "live device has an in-flight queue notification",
+                "live device is not fully quiescent",
             ));
         }
         *device = snapshot.clone();
@@ -127,7 +148,7 @@ impl super::MmioBus {
             (first_address, first_snapshot),
             (second_address, second_snapshot),
         ] {
-            if snapshot.bar0() != address || !snapshot.checkpoint_quiescent() {
+            if snapshot.bar0() != address || !snapshot.checkpoint_fully_quiescent() {
                 return Err(virtio_blk_checkpoint_error(
                     "restore two virtio-blk checkpoint states",
                     format!(
@@ -163,12 +184,104 @@ impl super::MmioBus {
                 "two checkpoint BARs resolved to the same live device",
             ));
         }
-        if !self.virtio_blk_devices[first_index].checkpoint_quiescent()
-            || !self.virtio_blk_devices[second_index].checkpoint_quiescent()
+        if !self.virtio_blk_devices[first_index].checkpoint_fully_quiescent()
+            || !self.virtio_blk_devices[second_index].checkpoint_fully_quiescent()
         {
             return Err(virtio_blk_checkpoint_error(
                 "restore two virtio-blk checkpoint states",
                 "all live devices must be quiescent before either device is restored",
+            ));
+        }
+
+        if first_index < second_index {
+            let (before_second, second_and_after) =
+                self.virtio_blk_devices.split_at_mut(second_index);
+            before_second[first_index] = first_snapshot.clone();
+            second_and_after[0] = second_snapshot.clone();
+        } else {
+            let (before_first, first_and_after) = self.virtio_blk_devices.split_at_mut(first_index);
+            before_first[second_index] = second_snapshot.clone();
+            first_and_after[0] = first_snapshot.clone();
+        }
+        Ok(())
+    }
+
+    pub(crate) fn restore_two_virtio_blk_checkpoints_atomic_with_pending_completion(
+        &mut self,
+        checkpoints: [(u64, &VirtioBlkDevice); 2],
+        token: &VirtioBlkPendingCompletionToken,
+    ) -> Result<(), Error> {
+        let [(first_address, first_snapshot), (second_address, second_snapshot)] = checkpoints;
+        if first_address >= second_address {
+            return Err(virtio_blk_checkpoint_error(
+                "restore two virtio-blk checkpoint states with pending completion",
+                "two-device checkpoint BARs must be distinct and strictly increasing",
+            ));
+        }
+        if token.bar0() != first_address && token.bar0() != second_address {
+            return Err(virtio_blk_checkpoint_error(
+                "restore two virtio-blk checkpoint states with pending completion",
+                format!("pending-completion BAR {:#x} is outside checkpoint BARs", token.bar0()),
+            ));
+        }
+
+        for (address, snapshot) in [
+            (first_address, first_snapshot),
+            (second_address, second_snapshot),
+        ] {
+            if snapshot.bar0() != address {
+                return Err(virtio_blk_checkpoint_error(
+                    "restore two virtio-blk checkpoint states with pending completion",
+                    format!("snapshot BAR {:#x} does not match {address:#x}", snapshot.bar0()),
+                ));
+            }
+            if address == token.bar0() {
+                token.validate_device(snapshot).map_err(|error| {
+                    virtio_blk_checkpoint_error(
+                        "restore pending virtio-blk completion",
+                        error.to_string(),
+                    )
+                })?;
+            } else if !snapshot.checkpoint_fully_quiescent() {
+                return Err(virtio_blk_checkpoint_error(
+                    "restore two virtio-blk checkpoint states with pending completion",
+                    format!("non-token device at BAR {address:#x} is not fully quiescent"),
+                ));
+            }
+        }
+
+        let first_index = self
+            .virtio_blk_devices
+            .iter()
+            .position(|device| device.bar0() == first_address)
+            .ok_or_else(|| {
+                virtio_blk_checkpoint_error(
+                    "restore two virtio-blk checkpoint states with pending completion",
+                    format!("live virtio-blk device at BAR {first_address:#x} is missing"),
+                )
+            })?;
+        let second_index = self
+            .virtio_blk_devices
+            .iter()
+            .position(|device| device.bar0() == second_address)
+            .ok_or_else(|| {
+                virtio_blk_checkpoint_error(
+                    "restore two virtio-blk checkpoint states with pending completion",
+                    format!("live virtio-blk device at BAR {second_address:#x} is missing"),
+                )
+            })?;
+        if first_index == second_index {
+            return Err(virtio_blk_checkpoint_error(
+                "restore two virtio-blk checkpoint states with pending completion",
+                "two checkpoint BARs resolved to the same live device",
+            ));
+        }
+        if !self.virtio_blk_devices[first_index].checkpoint_fully_quiescent()
+            || !self.virtio_blk_devices[second_index].checkpoint_fully_quiescent()
+        {
+            return Err(virtio_blk_checkpoint_error(
+                "restore two virtio-blk checkpoint states with pending completion",
+                "all live devices must be fully quiescent before token-aware restore",
             ));
         }
 
