@@ -212,6 +212,107 @@ impl VersionedTwoVcpuTwoDeviceCheckpointV1 {
         token.validate_state(state).map_err(Self::map_device_state_error)
     }
 
+    pub(crate) fn from_checkpoint_with_pending_notification(
+        checkpoint: &BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint,
+        token: &VirtioBlkPendingNotificationToken,
+    ) -> Result<Self, VersionedTwoVcpuTwoDeviceCheckpointError> {
+        let controller =
+            VersionedTwoVcpuFullControllerCheckpointV1::from_checkpoint(checkpoint.controller())?;
+        let bars = checkpoint.device_bars();
+        validate_versioned_two_device_bars(bars)?;
+        if token.bar0() != bars[0] && token.bar0() != bars[1] {
+            return Err(VersionedTwoVcpuTwoDeviceCheckpointError::Device(
+                VersionedFullControllerVirtioBlkCheckpointError::Device(
+                    VirtioBlkCheckpointStateError::InvalidPendingNotificationToken {
+                        bar0: token.bar0(),
+                        queue: token.queue(),
+                        last_avail_idx: token.last_avail_idx(),
+                        last_used_idx: token.last_used_idx(),
+                    },
+                ),
+            ));
+        }
+
+        let mut captured_token_matches = false;
+        let first = if token.bar0() == bars[0] {
+            let (state, captured) = VirtioBlkCheckpointState::capture_with_pending_notification(
+                checkpoint
+                    .device(bars[0])
+                    .expect("canonical checkpoint owns first device"),
+            )
+            .map_err(Self::map_device_state_error)?;
+            captured_token_matches = &captured == token;
+            state
+        } else {
+            VirtioBlkCheckpointState::capture(
+                checkpoint
+                    .device(bars[0])
+                    .expect("canonical checkpoint owns first device"),
+            )
+            .map_err(Self::map_device_state_error)?
+        };
+        let second = if token.bar0() == bars[1] {
+            let (state, captured) = VirtioBlkCheckpointState::capture_with_pending_notification(
+                checkpoint
+                    .device(bars[1])
+                    .expect("canonical checkpoint owns second device"),
+            )
+            .map_err(Self::map_device_state_error)?;
+            captured_token_matches = &captured == token;
+            state
+        } else {
+            VirtioBlkCheckpointState::capture(
+                checkpoint
+                    .device(bars[1])
+                    .expect("canonical checkpoint owns second device"),
+            )
+            .map_err(Self::map_device_state_error)?
+        };
+        if !captured_token_matches {
+            return Err(VersionedTwoVcpuTwoDeviceCheckpointError::Device(
+                VersionedFullControllerVirtioBlkCheckpointError::Device(
+                    VirtioBlkCheckpointStateError::InvalidPendingNotificationToken {
+                        bar0: token.bar0(),
+                        queue: token.queue(),
+                        last_avail_idx: token.last_avail_idx(),
+                        last_used_idx: token.last_used_idx(),
+                    },
+                ),
+            ));
+        }
+        token
+            .validate_state(if token.bar0() == bars[0] { &first } else { &second })
+            .map_err(Self::map_device_state_error)?;
+        Ok(Self {
+            controller,
+            devices: [first, second],
+        })
+    }
+
+    pub(crate) fn validate_pending_notification_token(
+        &self,
+        token: &VirtioBlkPendingNotificationToken,
+    ) -> Result<(), VersionedTwoVcpuTwoDeviceCheckpointError> {
+        let bars = self.device_bars();
+        let state = if token.bar0() == bars[0] {
+            &self.devices[0]
+        } else if token.bar0() == bars[1] {
+            &self.devices[1]
+        } else {
+            return Err(VersionedTwoVcpuTwoDeviceCheckpointError::Device(
+                VersionedFullControllerVirtioBlkCheckpointError::Device(
+                    VirtioBlkCheckpointStateError::InvalidPendingNotificationToken {
+                        bar0: token.bar0(),
+                        queue: token.queue(),
+                        last_avail_idx: token.last_avail_idx(),
+                        last_used_idx: token.last_used_idx(),
+                    },
+                ),
+            ));
+        };
+        token.validate_state(state).map_err(Self::map_device_state_error)
+    }
+
     fn map_device_state_error(
         error: VirtioBlkCheckpointStateError,
     ) -> VersionedTwoVcpuTwoDeviceCheckpointError {
@@ -413,6 +514,43 @@ impl VersionedTwoVcpuTwoDeviceCheckpointV1 {
             ],
         })
     }
+    pub(crate) fn materialize_with_pending_notification(
+        &self,
+        host_msrs: &crate::kvm::msr::HostMsrIndexList,
+        token: &VirtioBlkPendingNotificationToken,
+    ) -> Result<
+        BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint,
+        VersionedTwoVcpuTwoDeviceCheckpointError,
+    > {
+        validate_versioned_two_device_bars(self.device_bars())?;
+        self.validate_pending_notification_token(token)?;
+        let controller = self.controller.materialize(host_msrs)?;
+        let first = if token.bar0() == self.devices[0].bar0 {
+            self.devices[0]
+                .materialize_with_pending_notification(token)
+                .map_err(Self::map_device_state_error)?
+        } else {
+            self.devices[0]
+                .materialize()
+                .map_err(Self::map_device_state_error)?
+        };
+        let second = if token.bar0() == self.devices[1].bar0 {
+            self.devices[1]
+                .materialize_with_pending_notification(token)
+                .map_err(Self::map_device_state_error)?
+        } else {
+            self.devices[1]
+                .materialize()
+                .map_err(Self::map_device_state_error)?
+        };
+        Ok(BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
+            controller,
+            devices: [
+                (self.devices[0].bar0, first),
+                (self.devices[1].bar0, second),
+            ],
+        })
+    }
 }
 
 fn validate_versioned_two_device_bars(
@@ -443,7 +581,9 @@ pub(crate) enum VersionedTwoVcpuTwoDeviceTransactionError {
     InvalidCheckpointLength(u64),
     InvalidRegistrationPairLength(u64),
     InvalidPendingCompletionTokenLength(u64),
+    InvalidPendingNotificationTokenLength(u64),
     PendingCompletion(String),
+    PendingNotification(String),
     NonZeroFlags(u32),
     NonZeroReserved(u32),
     RegistrationBinding(String),
@@ -463,7 +603,9 @@ impl std::fmt::Display for VersionedTwoVcpuTwoDeviceTransactionError {
             Self::InvalidCheckpointLength(length) => write!(f, "two-vCPU two-device transaction checkpoint length {length} is invalid"),
             Self::InvalidRegistrationPairLength(length) => write!(f, "two-vCPU two-device transaction registration-pair length {length} is not {VERSIONED_HOST_REGISTRATION_PAIR_LEN}"),
             Self::InvalidPendingCompletionTokenLength(length) => write!(f, "two-vCPU two-device transaction pending-completion token length {length} is not {PENDING_COMPLETION_TOKEN_LEN}"),
+            Self::InvalidPendingNotificationTokenLength(length) => write!(f, "two-vCPU two-device transaction pending-notification token length {length} is not {PENDING_NOTIFICATION_TOKEN_LEN}"),
             Self::PendingCompletion(detail) => write!(f, "two-vCPU two-device pending-completion token is invalid: {detail}"),
+            Self::PendingNotification(detail) => write!(f, "two-vCPU two-device pending-notification token is invalid: {detail}"),
             Self::NonZeroFlags(flags) => write!(f, "two-vCPU two-device transaction v1 flags must be zero, got {flags:#x}"),
             Self::NonZeroReserved(value) => write!(f, "two-vCPU two-device transaction reserved field must be zero, got {value:#x}"),
             Self::RegistrationBinding(detail) => write!(f, "two-vCPU two-device transaction registration binding is invalid: {detail}"),
@@ -956,6 +1098,274 @@ impl VersionedTwoVcpuTwoDeviceTransactionV2 {
     }
 }
 
+const VERSIONED_TWO_VCPU_TWO_DEVICE_TRANSACTION_V3: u16 = 3;
+const TWO_VCPU_TWO_DEVICE_TRANSACTION_V3_HEADER_LEN: usize = 56;
+const PENDING_NOTIFICATION_TOKEN_LEN: usize = 16;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct VersionedTwoVcpuTwoDeviceTransactionV3 {
+    checkpoint: VersionedTwoVcpuTwoDeviceCheckpointV1,
+    registrations: VersionedHostRegistrationPairV1,
+    pending_notification: VirtioBlkPendingNotificationToken,
+}
+
+impl VersionedTwoVcpuTwoDeviceTransactionV3 {
+    pub(crate) fn from_checkpoint_pair_and_pending_notification(
+        checkpoint: &BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint,
+        pair: HostRegistrationSpecPair,
+        pending_notification: VirtioBlkPendingNotificationToken,
+    ) -> Result<Self, VersionedTwoVcpuTwoDeviceTransactionError> {
+        validate_transaction_registration_binding(checkpoint.device_bars(), pair)?;
+        let versioned_checkpoint =
+            VersionedTwoVcpuTwoDeviceCheckpointV1::from_checkpoint_with_pending_notification(
+                checkpoint,
+                &pending_notification,
+            )?;
+        versioned_checkpoint.validate_pending_notification_token(&pending_notification)?;
+        Ok(Self {
+            checkpoint: versioned_checkpoint,
+            registrations: VersionedHostRegistrationPairV1::from_pair(pair),
+            pending_notification,
+        })
+    }
+
+    #[must_use]
+    pub(crate) const fn version(&self) -> u16 {
+        VERSIONED_TWO_VCPU_TWO_DEVICE_TRANSACTION_V3
+    }
+
+    #[must_use]
+    pub(crate) const fn bars(&self) -> [u64; 2] {
+        self.checkpoint.device_bars()
+    }
+
+    #[must_use]
+    pub(crate) fn page_count(&self) -> usize {
+        self.checkpoint.page_count()
+    }
+
+    #[must_use]
+    pub(crate) fn pending_notification(&self) -> &VirtioBlkPendingNotificationToken {
+        &self.pending_notification
+    }
+
+    pub(crate) fn encode(&self) -> Result<Vec<u8>, VersionedTwoVcpuTwoDeviceTransactionError> {
+        let pair = self.registrations.materialize()?;
+        validate_transaction_registration_binding(self.checkpoint.device_bars(), pair)?;
+        self.checkpoint
+            .validate_pending_notification_token(&self.pending_notification)?;
+        let checkpoint = self.checkpoint.encode()?;
+        let registrations = self.registrations.encode();
+        let token = encode_pending_notification_token(&self.pending_notification);
+        let total_len = TWO_VCPU_TWO_DEVICE_TRANSACTION_V3_HEADER_LEN
+            .checked_add(checkpoint.len())
+            .and_then(|length| length.checked_add(registrations.len()))
+            .and_then(|length| length.checked_add(token.len()))
+            .ok_or(VersionedTwoVcpuTwoDeviceTransactionError::LengthOverflow)?;
+
+        let mut bytes = Vec::with_capacity(total_len);
+        bytes.extend_from_slice(&VERSIONED_TWO_VCPU_TWO_DEVICE_TRANSACTION_MAGIC);
+        bytes.extend_from_slice(&VERSIONED_TWO_VCPU_TWO_DEVICE_TRANSACTION_V3.to_le_bytes());
+        bytes.extend_from_slice(
+            &VERSIONED_TWO_VCPU_TWO_DEVICE_TRANSACTION_ARCH_X86_64.to_le_bytes(),
+        );
+        bytes.extend_from_slice(
+            &(TWO_VCPU_TWO_DEVICE_TRANSACTION_V3_HEADER_LEN as u32).to_le_bytes(),
+        );
+        bytes.extend_from_slice(&(total_len as u64).to_le_bytes());
+        bytes.extend_from_slice(&(checkpoint.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&(registrations.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&(token.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&checkpoint);
+        bytes.extend_from_slice(&registrations);
+        bytes.extend_from_slice(&token);
+        debug_assert_eq!(bytes.len(), total_len);
+        Ok(bytes)
+    }
+
+    pub(crate) fn decode(
+        bytes: &[u8],
+    ) -> Result<Self, VersionedTwoVcpuTwoDeviceTransactionError> {
+        if bytes.len() < TWO_VCPU_TWO_DEVICE_TRANSACTION_V3_HEADER_LEN {
+            return Err(VersionedTwoVcpuTwoDeviceTransactionError::InvalidTotalLength {
+                declared: 0,
+                actual: bytes.len(),
+            });
+        }
+        if bytes[0..8] != VERSIONED_TWO_VCPU_TWO_DEVICE_TRANSACTION_MAGIC {
+            return Err(VersionedTwoVcpuTwoDeviceTransactionError::InvalidMagic);
+        }
+        let version = u16::from_le_bytes(bytes[8..10].try_into().expect("fixed version field"));
+        if version != VERSIONED_TWO_VCPU_TWO_DEVICE_TRANSACTION_V3 {
+            return Err(VersionedTwoVcpuTwoDeviceTransactionError::UnsupportedVersion(version));
+        }
+        let architecture =
+            u16::from_le_bytes(bytes[10..12].try_into().expect("fixed architecture field"));
+        if architecture != VERSIONED_TWO_VCPU_TWO_DEVICE_TRANSACTION_ARCH_X86_64 {
+            return Err(VersionedTwoVcpuTwoDeviceTransactionError::UnsupportedArchitecture(
+                architecture,
+            ));
+        }
+        let header_len =
+            u32::from_le_bytes(bytes[12..16].try_into().expect("fixed header length field"));
+        if header_len != TWO_VCPU_TWO_DEVICE_TRANSACTION_V3_HEADER_LEN as u32 {
+            return Err(VersionedTwoVcpuTwoDeviceTransactionError::InvalidHeaderLength(
+                header_len,
+            ));
+        }
+        let declared_total =
+            u64::from_le_bytes(bytes[16..24].try_into().expect("fixed total length field"));
+        if usize::try_from(declared_total).ok() != Some(bytes.len()) {
+            return Err(VersionedTwoVcpuTwoDeviceTransactionError::InvalidTotalLength {
+                declared: declared_total,
+                actual: bytes.len(),
+            });
+        }
+        let checkpoint_len =
+            u64::from_le_bytes(bytes[24..32].try_into().expect("fixed checkpoint length field"));
+        let registration_len = u64::from_le_bytes(
+            bytes[32..40]
+                .try_into()
+                .expect("fixed registration-pair length field"),
+        );
+        let token_len =
+            u64::from_le_bytes(bytes[40..48].try_into().expect("fixed token length field"));
+        if token_len != PENDING_NOTIFICATION_TOKEN_LEN as u64 {
+            return Err(
+                VersionedTwoVcpuTwoDeviceTransactionError::InvalidPendingNotificationTokenLength(
+                    token_len,
+                ),
+            );
+        }
+        let flags = u32::from_le_bytes(bytes[48..52].try_into().expect("fixed flags field"));
+        if flags != 0 {
+            return Err(VersionedTwoVcpuTwoDeviceTransactionError::NonZeroFlags(flags));
+        }
+        let reserved =
+            u32::from_le_bytes(bytes[52..56].try_into().expect("fixed reserved field"));
+        if reserved != 0 {
+            return Err(VersionedTwoVcpuTwoDeviceTransactionError::NonZeroReserved(reserved));
+        }
+
+        let checkpoint_len = usize::try_from(checkpoint_len).map_err(|_| {
+            VersionedTwoVcpuTwoDeviceTransactionError::InvalidCheckpointLength(checkpoint_len)
+        })?;
+        if checkpoint_len == 0 {
+            return Err(VersionedTwoVcpuTwoDeviceTransactionError::InvalidCheckpointLength(0));
+        }
+        if registration_len != VERSIONED_HOST_REGISTRATION_PAIR_LEN as u64 {
+            return Err(
+                VersionedTwoVcpuTwoDeviceTransactionError::InvalidRegistrationPairLength(
+                    registration_len,
+                ),
+            );
+        }
+        let registration_len = VERSIONED_HOST_REGISTRATION_PAIR_LEN;
+        let expected_len = TWO_VCPU_TWO_DEVICE_TRANSACTION_V3_HEADER_LEN
+            .checked_add(checkpoint_len)
+            .and_then(|length| length.checked_add(registration_len))
+            .and_then(|length| length.checked_add(PENDING_NOTIFICATION_TOKEN_LEN))
+            .ok_or(VersionedTwoVcpuTwoDeviceTransactionError::LengthOverflow)?;
+        if expected_len != bytes.len() {
+            return Err(VersionedTwoVcpuTwoDeviceTransactionError::InvalidTotalLength {
+                declared: declared_total,
+                actual: expected_len,
+            });
+        }
+
+        let checkpoint_start = TWO_VCPU_TWO_DEVICE_TRANSACTION_V3_HEADER_LEN;
+        let checkpoint_end = checkpoint_start + checkpoint_len;
+        let registrations_end = checkpoint_end + registration_len;
+        let checkpoint =
+            VersionedTwoVcpuTwoDeviceCheckpointV1::decode(&bytes[checkpoint_start..checkpoint_end])?;
+        let registrations =
+            VersionedHostRegistrationPairV1::decode(&bytes[checkpoint_end..registrations_end])?;
+        let pending_notification =
+            decode_pending_notification_token(&bytes[registrations_end..])?;
+        let pair = registrations.materialize()?;
+        validate_transaction_registration_binding(checkpoint.device_bars(), pair)?;
+        checkpoint.validate_pending_notification_token(&pending_notification)?;
+        Ok(Self {
+            checkpoint,
+            registrations,
+            pending_notification,
+        })
+    }
+
+    pub(crate) fn materialize(
+        self,
+        host_msrs: &crate::kvm::msr::HostMsrIndexList,
+    ) -> Result<
+        (
+            BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint,
+            HostRegistrationSpecPair,
+            VirtioBlkPendingNotificationToken,
+        ),
+        VersionedTwoVcpuTwoDeviceTransactionError,
+    > {
+        let checkpoint = self
+            .checkpoint
+            .materialize_with_pending_notification(host_msrs, &self.pending_notification)?;
+        let pair = self.registrations.materialize()?;
+        validate_transaction_registration_binding(checkpoint.device_bars(), pair)?;
+        self.pending_notification
+            .validate_device(
+                checkpoint
+                    .device(self.pending_notification.bar0())
+                    .ok_or_else(|| {
+                        VersionedTwoVcpuTwoDeviceTransactionError::PendingNotification(format!(
+                            "BAR {:#x} disappeared during materialization",
+                            self.pending_notification.bar0()
+                        ))
+                    })?,
+            )
+            .map_err(|error| {
+                VersionedTwoVcpuTwoDeviceTransactionError::PendingNotification(error.to_string())
+            })?;
+        Ok((checkpoint, pair, self.pending_notification))
+    }
+}
+
+fn encode_pending_notification_token(
+    token: &VirtioBlkPendingNotificationToken,
+) -> [u8; PENDING_NOTIFICATION_TOKEN_LEN] {
+    let mut bytes = [0_u8; PENDING_NOTIFICATION_TOKEN_LEN];
+    bytes[0..8].copy_from_slice(&token.bar0().to_le_bytes());
+    bytes[8..10].copy_from_slice(&token.queue().to_le_bytes());
+    bytes[10..12].copy_from_slice(&token.last_avail_idx().to_le_bytes());
+    bytes[12..14].copy_from_slice(&token.last_used_idx().to_le_bytes());
+    bytes
+}
+
+fn decode_pending_notification_token(
+    bytes: &[u8],
+) -> Result<VirtioBlkPendingNotificationToken, VersionedTwoVcpuTwoDeviceTransactionError> {
+    if bytes.len() != PENDING_NOTIFICATION_TOKEN_LEN {
+        return Err(
+            VersionedTwoVcpuTwoDeviceTransactionError::InvalidPendingNotificationTokenLength(
+                bytes.len() as u64,
+            ),
+        );
+    }
+    let reserved = u16::from_le_bytes(bytes[14..16].try_into().expect("fixed reserved field"));
+    if reserved != 0 {
+        return Err(VersionedTwoVcpuTwoDeviceTransactionError::PendingNotification(
+            format!("token reserved field must be zero, got {reserved:#x}"),
+        ));
+    }
+    VirtioBlkPendingNotificationToken::from_parts(
+        u64::from_le_bytes(bytes[0..8].try_into().expect("fixed token BAR")),
+        u16::from_le_bytes(bytes[8..10].try_into().expect("fixed token queue")),
+        u16::from_le_bytes(bytes[10..12].try_into().expect("fixed token avail index")),
+        u16::from_le_bytes(bytes[12..14].try_into().expect("fixed token used index")),
+    )
+    .map_err(|error| {
+        VersionedTwoVcpuTwoDeviceTransactionError::PendingNotification(error.to_string())
+    })
+}
+
 fn encode_pending_completion_token(token: &VirtioBlkPendingCompletionToken) -> [u8; PENDING_COMPLETION_TOKEN_LEN] {
     let mut bytes = [0_u8; PENDING_COMPLETION_TOKEN_LEN];
     bytes[0..8].copy_from_slice(&token.bar0().to_le_bytes());
@@ -1164,6 +1574,35 @@ mod versioned_two_vcpu_two_device_transaction_schema_tests {
             0,
             1,
             2,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn pending_notification_token_wire_is_fixed_and_fails_closed() {
+        let token = VirtioBlkPendingNotificationToken::from_parts(
+            TWO_HOST_REGISTRATION_FIRST_BAR,
+            0,
+            0,
+            0,
+        )
+        .unwrap();
+        let bytes = encode_pending_notification_token(&token);
+        assert_eq!(bytes.len(), PENDING_NOTIFICATION_TOKEN_LEN);
+        assert_eq!(decode_pending_notification_token(&bytes).unwrap(), token);
+
+        let mut bad_reserved = bytes;
+        bad_reserved[14..16].copy_from_slice(&1_u16.to_le_bytes());
+        assert!(matches!(
+            decode_pending_notification_token(&bad_reserved),
+            Err(VersionedTwoVcpuTwoDeviceTransactionError::PendingNotification(_))
+        ));
+        assert!(decode_pending_notification_token(&bytes[..15]).is_err());
+        assert!(VirtioBlkPendingNotificationToken::from_parts(
+            TWO_HOST_REGISTRATION_FIRST_BAR,
+            0,
+            1,
+            0,
         )
         .is_err());
     }

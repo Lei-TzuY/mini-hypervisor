@@ -13,6 +13,12 @@ pub enum VirtioBlkCheckpointStateError {
         last_avail_idx: u16,
         last_used_idx: u16,
     },
+    InvalidPendingNotificationToken {
+        bar0: u64,
+        queue: u16,
+        last_avail_idx: u16,
+        last_used_idx: u16,
+    },
     MisalignedBar {
         bar0: u64,
     },
@@ -48,6 +54,15 @@ impl fmt::Display for VirtioBlkCheckpointStateError {
             } => write!(
                 f,
                 "virtio-blk pending-completion token is invalid: bar={bar0:#x} queue={queue} avail={last_avail_idx} used={last_used_idx}"
+            ),
+            Self::InvalidPendingNotificationToken {
+                bar0,
+                queue,
+                last_avail_idx,
+                last_used_idx,
+            } => write!(
+                f,
+                "virtio-blk pending-notification token is invalid: bar={bar0:#x} queue={queue} avail={last_avail_idx} used={last_used_idx}"
             ),
             Self::MisalignedBar { bar0 } => {
                 write!(f, "virtio-blk BAR {bar0:#x} is not {:#x}-aligned", VIRTIO_BLK_BAR_SIZE)
@@ -182,6 +197,106 @@ impl VirtioBlkPendingCompletionToken {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct VirtioBlkPendingNotificationToken {
+    bar0: u64,
+    queue: u16,
+    last_avail_idx: u16,
+    last_used_idx: u16,
+}
+
+impl VirtioBlkPendingNotificationToken {
+    pub(crate) fn capture(device: &VirtioBlkDevice) -> Result<Self, VirtioBlkCheckpointStateError> {
+        Self::from_parts(
+            device.bar0,
+            VIRTIO_BLK_QUEUE_INDEX,
+            device.last_avail_idx,
+            device.last_used_idx,
+        )
+        .and_then(|token| {
+            token.validate_device(device)?;
+            Ok(token)
+        })
+    }
+
+    pub(crate) fn from_parts(
+        bar0: u64,
+        queue: u16,
+        last_avail_idx: u16,
+        last_used_idx: u16,
+    ) -> Result<Self, VirtioBlkCheckpointStateError> {
+        let token = Self {
+            bar0,
+            queue,
+            last_avail_idx,
+            last_used_idx,
+        };
+        if queue != VIRTIO_BLK_QUEUE_INDEX || last_avail_idx != last_used_idx {
+            return Err(token.invalid());
+        }
+        Ok(token)
+    }
+
+    pub(crate) fn validate_device(
+        &self,
+        device: &VirtioBlkDevice,
+    ) -> Result<(), VirtioBlkCheckpointStateError> {
+        if self.bar0 != device.bar0
+            || self.queue != VIRTIO_BLK_QUEUE_INDEX
+            || self.last_avail_idx != device.last_avail_idx
+            || self.last_used_idx != device.last_used_idx
+            || !device.checkpoint_notification_pending()
+        {
+            return Err(self.invalid());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_state(
+        &self,
+        state: &VirtioBlkCheckpointState,
+    ) -> Result<(), VirtioBlkCheckpointStateError> {
+        if self.bar0 != state.bar0
+            || self.queue != VIRTIO_BLK_QUEUE_INDEX
+            || self.last_avail_idx != state.last_avail_idx
+            || self.last_used_idx != state.last_used_idx
+            || state.isr_status != 0
+        {
+            return Err(self.invalid());
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub(crate) const fn bar0(&self) -> u64 {
+        self.bar0
+    }
+
+    #[must_use]
+    pub(crate) const fn queue(&self) -> u16 {
+        self.queue
+    }
+
+    #[must_use]
+    pub(crate) const fn last_avail_idx(&self) -> u16 {
+        self.last_avail_idx
+    }
+
+    #[must_use]
+    pub(crate) const fn last_used_idx(&self) -> u16 {
+        self.last_used_idx
+    }
+
+    fn invalid(&self) -> VirtioBlkCheckpointStateError {
+        VirtioBlkCheckpointStateError::InvalidPendingNotificationToken {
+            bar0: self.bar0,
+            queue: self.queue,
+            last_avail_idx: self.last_avail_idx,
+            last_used_idx: self.last_used_idx,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VirtioBlkCheckpointState {
     pub(crate) bar0: u64,
@@ -225,10 +340,16 @@ impl VirtioBlkCheckpointState {
         Ok((state, token))
     }
 
+    pub(crate) fn capture_with_pending_notification(
+        device: &VirtioBlkDevice,
+    ) -> Result<(Self, VirtioBlkPendingNotificationToken), VirtioBlkCheckpointStateError> {
+        let token = VirtioBlkPendingNotificationToken::capture(device)?;
+        let state = Self::capture_semantic(device)?;
+        token.validate_state(&state)?;
+        Ok((state, token))
+    }
+
     fn capture_semantic(device: &VirtioBlkDevice) -> Result<Self, VirtioBlkCheckpointStateError> {
-        if !device.checkpoint_quiescent() {
-            return Err(VirtioBlkCheckpointStateError::NotQuiescent);
-        }
         let state = Self {
             bar0: device.bar0,
             device_feature_select: device.device_feature_select,
@@ -248,6 +369,17 @@ impl VirtioBlkCheckpointState {
         };
         state.validate()?;
         Ok(state)
+    }
+
+    pub(crate) fn materialize_with_pending_notification(
+        &self,
+        token: &VirtioBlkPendingNotificationToken,
+    ) -> Result<VirtioBlkDevice, VirtioBlkCheckpointStateError> {
+        token.validate_state(self)?;
+        let mut device = self.materialize()?;
+        device.notify_pending = true;
+        token.validate_device(&device)?;
+        Ok(device)
     }
 
     pub(crate) fn materialize(&self) -> Result<VirtioBlkDevice, VirtioBlkCheckpointStateError> {
@@ -381,13 +513,27 @@ mod tests {
     }
 
     #[test]
-    fn pending_notification_is_not_checkpointable() {
+    fn pending_notification_requires_explicit_linear_token() {
         let mut device = ready_device();
         device.notify_pending = true;
         assert_eq!(
             VirtioBlkCheckpointState::capture(&device),
             Err(VirtioBlkCheckpointStateError::NotQuiescent)
         );
+
+        let (state, token) =
+            VirtioBlkCheckpointState::capture_with_pending_notification(&device).unwrap();
+        token.validate_state(&state).unwrap();
+        assert_eq!(token.bar0(), BAR);
+        assert_eq!(token.queue(), VIRTIO_BLK_QUEUE_INDEX);
+        assert_eq!(token.last_avail_idx(), 7);
+        assert_eq!(token.last_used_idx(), 7);
+        assert_eq!(state.isr_status, 0);
+
+        let restored = state.materialize_with_pending_notification(&token).unwrap();
+        assert!(restored.checkpoint_notification_pending());
+        assert_eq!(restored.last_avail_idx, 7);
+        assert_eq!(restored.last_used_idx, 7);
     }
 
     #[test]
