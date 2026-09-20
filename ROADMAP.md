@@ -4,35 +4,34 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `76b1940a531ff663b1a03c2df14168d5cc803ab6` through PR #153 (`Checkpoint two vCPUs with complete controller ownership`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe usercopy; isolated ring3 address spaces; dirty-page tracking; bounded guest scheduling/wait ownership; bounded page/VCPU/controller/device checkpoints; canonical versioned checkpoint schemas through exactly two quiescent virtio-blk devices; fixed two-registration acceleration ownership; canonical versioned registration-pair ownership; one canonical two-device outer transaction; transaction-coupled restored acceleration; independent two-device mutable write/readback continuity; acceleration-aware checkpoint quiescence; and exact two-vCPU controller ownership including both MP states and both LAPICs.
+`main` is `db36f87df370120b2b732e6e5a764fe70591dcb4` through PR #154 (`Bind two vCPUs and two devices into one runtime checkpoint transaction`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; bounded SYSCALL/SYSRET and usercopy; isolated ring3 address spaces; dirty-page tracking; bounded scheduling/wait ownership; versioned single-vCPU/controller/device checkpoints; two-device acceleration reconstruction; transaction-coupled dual-device read and mutable write/readback replay; acceleration-aware checkpoint quiescence; exact two-vCPU controller ownership including MP states/LAPICs; and one runtime transaction that owns both vCPUs, both devices and the fd-free registration pair.
 
-PR #153 sealed the two-vCPU controller layer. Both RUNNABLE vCPUs stop only after their synchronization I/O has been retired through a post-I/O single-step debug boundary; capture owns the bounded page set, both architectural vCPU states, both MP states, master/slave PIC, IOAPIC, and one LAPIC per canonical vCPU id. The proof corrupts every owned component independently, restores exact state, and resumes both producers without INIT/SIPI or HLT wakeup dependence. Exact merged-main commit `76b1940a531ff663b1a03c2df14168d5cc803ab6` completed all 53 push-triggered workflows successfully. Do not farm more two-vCPU controller-only variants.
+PR #154 sealed the multi-vCPU runtime ownership boundary. Both RUNNABLE producers stop at fully retired post-I/O debug boundaries; capture binds both architectural vCPU states, MP states, PIC/IOAPIC, both LAPICs, exactly two quiescent virtio-blk devices, and a matching fd-free registration pair. The proof deassigns capture-time acceleration, corrupts every checkpoint-owned layer, restores the dual-vCPU controller before atomically restoring devices, reconstructs fresh ioeventfd/irqfd registrations only after exact restore, re-verifies that reconstruction did not mutate semantic state, then resumes both producers. Exact merged-main commit `db36f87df370120b2b732e6e5a764fe70591dcb4` completed all 54 push-triggered workflows successfully. Do not farm additional unversioned two-vCPU/two-device variants.
 
-## Selected milestone — two-vCPU two-device runtime checkpoint transaction
+## Selected milestone — versioned two-vCPU two-device checkpoint transaction
 
-The next architectural gap is the split between #153's dual-producer ownership and the existing two-device/host-acceleration transaction. The existing two-device checkpoint still owns only one vCPU, so the repository does not yet have one runtime boundary that simultaneously owns both producers, both LAPIC/MP states, both virtio-blk devices, and the fd-free semantics needed to reconstruct both ioeventfd/irqfd registrations.
+The next executable boundary is canonical byte ownership for the exact runtime model proven by #154. No encoder-side checkpoint object, device state or host-registration descriptor may survive across the wire boundary used by the proof.
 
-Implementation continues on `milestone/two-vcpu-two-device-transaction` from exact green `main=76b1940a531ff663b1a03c2df14168d5cc803ab6`.
+Implementation continues on `milestone/versioned-two-vcpu-two-device-transaction` from exact green `main=db36f87df370120b2b732e6e5a764fe70591dcb4`.
 
 Acceptance contract:
 
-- preserve Rust 1.74 shipped-target MSRV, ordinary CI, PR #153's two-vCPU full-controller proof, the existing two-device transaction/replay/write-readback proofs, acceleration-quiescence proof, and every applicable hosted-KVM workflow;
-- add one runtime checkpoint that composes `BoundedTwoVcpuFullControllerCheckpoint` with exactly two canonical quiescent virtio-blk devices;
-- bind the fd-free host-registration pair to those same device BAR notify addresses and reject a mismatched registration pair before capture;
-- require both vCPUs to be RUNNABLE and stopped at fully retired post-I/O debug boundaries before capture;
-- require reconstructed ioeventfd doorbells to be non-readable `[false,false]` before the runtime transaction can capture;
-- capture exactly pages `0x30000,0x1fc000,0x1fd000`, both vCPU architectural states, both MP states, PIC/IOAPIC, both LAPICs, and two distinct device states;
-- deassign the capture-time host registrations, then deliberately corrupt every checkpoint-owned layer: all pages, both vCPU states, both MP states, PIC/IOAPIC, both LAPICs, and both virtio-blk devices; require independent mismatch evidence for each;
-- restore the dual-vCPU/controller layer exactly before atomically restoring either device;
-- reconstruct the registration pair only after exact checkpoint restore, require it to remain quiescent, and re-verify that reconstruction itself did not mutate restored semantic checkpoint state;
-- resume both restored vCPUs from the same transaction boundary and independently emit proofs `0` and `1`;
-- every error path after host-registration reconstruction must deassign both ioeventfd/irqfd registrations rather than leak process-local acceleration state;
-- add a dedicated proof binary, independent KVM integration test, and permanent hosted-KVM workflow.
+- preserve Rust 1.74 shipped-target MSRV, ordinary CI, #153/#154 regressions, existing versioned single-vCPU/two-device schemas, acceleration-quiescence proof, and every applicable hosted-KVM workflow;
+- version the standalone secondary vCPU register/special-register/MSR snapshot with explicit magic/version/architecture/length/count/flags/reserved fields, canonical MSR ordering, host-MSR compatibility validation, and fail-closed decode;
+- version the two-vCPU full-controller checkpoint including canonical vCPU ids, both MP states, master/slave PIC, IOAPIC, and both LAPICs;
+- version exactly two quiescent virtio-blk states around that controller checkpoint with canonical distinct aligned BAR ownership;
+- add one outer transaction envelope binding the versioned two-vCPU/two-device checkpoint to the existing versioned host-registration pair;
+- revalidate at encode, decode and materialize time that each registration doorbell matches its device BAR notify address and fixed queue-notify semantics;
+- reject unsupported version/architecture, bad lengths/counts, non-zero reserved/flags, invalid MP state, noncanonical vCPU ids/BAR order/MSR order, incompatible host MSRs, invalid device state, and registration/device binding mismatches;
+- runtime proof must capture through #154's exact quiescent transaction, encode it, discard encoder-side semantic ownership, decode and re-encode byte-for-byte canonically, materialize only from decoded bytes, then run the same deliberate full corruption → exact restore → registration reconstruction → dual-producer completion path;
+- executable evidence must report transaction/checkpoint/controller/registration schema versions, canonical roundtrip, canonical vCPU ids `[0,1]`, MP states `[0,0]`, exactly three owned pages, per-vCPU MSR counts, BARs `0x10000000/0x10001000`, and 2048-byte backing ownership per device;
+- after materialization the same runtime proof must still show capture/reconstructed doorbells `[false,false]`, mutation mismatch, exact restore, statuses `[1,3]`, capture RIPs `0x1000e/0x11006`, completion RIPs `0x10023/0x1101b`, and producer proofs `0` / `1`;
+- add focused corruption tests for each new envelope layer, a dedicated proof binary, independent KVM integration test, and permanent hosted-KVM workflow.
 
 ## Scope boundary
 
-This milestone is runtime ownership composition, not a new wire format. It does not introduce a versioned two-vCPU transaction schema, serialize raw file descriptors/eventfd counters, capture concurrently running vCPUs, replay in-flight interrupts, add a third device, or claim live migration/external-storage durability.
+This milestone creates a canonical v1 byte format for the already proven bounded runtime ownership model. It does not serialize raw file descriptors or eventfd counters, capture concurrently running vCPUs, migrate in-flight interrupts/queues, add a third device, claim cross-host live migration, or make external-storage durability/performance claims.
 
 ## Promotion rule
 
-After this runtime transaction is integrated and exact merged-`main` CI is green, seal the multi-vCPU runtime ownership boundary. The next executable frontier is a versioned two-vCPU two-device transaction schema that preserves this proven ownership model across bytes; only after that schema round-trips canonically should the project extend restored data-plane replay so each restored producer independently drives its bound device through reconstructed acceleration.
+After the versioned transaction is integrated and exact merged-`main` CI is green, seal the multi-vCPU wire-format boundary. The next architectural frontier is restored multi-producer data-plane replay: each restored vCPU must independently drive its bound restored virtio-blk device through reconstructed acceleration while preserving device/backing isolation. Only after that cross-layer proof should the project consider bounded in-flight queue tokens or external-storage durability.
