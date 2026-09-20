@@ -1,0 +1,66 @@
+name: Strict KVM two host-registration acceleration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/kvm/sys.rs'
+      - 'src/kvm/irqchip.rs'
+      - 'src/kvm/irqfd_timer.rs'
+      - 'src/kvm/ioeventfd_roundtrip.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/mmio/long_mode.rs'
+      - 'src/mmio/multi_device.rs'
+      - 'src/mmio/routing.rs'
+      - 'src/bin/two-host-registration-acceleration.rs'
+      - 'tests/two_host_registration_acceleration_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/two-host-registration-acceleration.yml'
+  pull_request:
+    paths:
+      - 'src/kvm/sys.rs'
+      - 'src/kvm/irqchip.rs'
+      - 'src/kvm/irqfd_timer.rs'
+      - 'src/kvm/ioeventfd_roundtrip.rs'
+      - 'src/kvm/host_registration.rs'
+      - 'src/kvm/host_registration_pair.rs'
+      - 'src/mmio/long_mode.rs'
+      - 'src/mmio/multi_device.rs'
+      - 'src/mmio/routing.rs'
+      - 'src/bin/two-host-registration-acceleration.rs'
+      - 'tests/two_host_registration_acceleration_guest.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/two-host-registration-acceleration.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-kvm-two-host-registration-acceleration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build two-registration acceleration proof
+        run: cargo build --quiet --bin two-host-registration-acceleration
+      - name: Execute two-registration acceleration proof on KVM
+        shell: bash
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          output="$(timeout 30s target/debug/two-host-registration-acceleration)"
+          printf '%s\n' "$output"
+
+          grep -F 'two-registration doorbells: [268435712, 268439808]' <<<"$output"
+          grep -F 'two-registration gsis: [0, 1]' <<<"$output"
+          grep -F 'two-registration vectors: [64, 65]' <<<"$output"
+          grep -F 'two-registration generation events: [[1, 1], [1, 1]]' <<<"$output"
+          grep -F 'two-registration proof: [82, 65, 48, 77, 66, 49, 78, 67, 69, 48, 80, 70, 49, 81, 68]' <<<"$output"
+
+          completion="$(grep -F 'two-registration completion rflags:' <<<"$output")"
+          rflags_hex="${completion##*: }"
+          [[ "$rflags_hex" =~ ^0x[0-9a-fA-F]+$ ]]
+          rflags=$((rflags_hex))
+          (( (rflags & 0x2) == 0x2 ))
+          (( (rflags & 0x200) == 0x200 ))

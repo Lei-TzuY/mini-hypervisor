@@ -4,40 +4,40 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `8cc11e19b1225b4d74af02866e2bc55f0b21bde7` through PR #145 (`Checkpoint two virtio-blk devices with full controller state`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe usercopy; isolated ring3 address spaces; dirty-page tracking; bounded guest scheduling/wait ownership; bounded page/VCPU/controller/device checkpoints; fd-free ioeventfd/irqfd reconstruction around restore; canonical versioned byte schemas for page+VCPU, full-controller, full-controller+one-quiescent-virtio-blk, and host-registration reconstruction; one canonical one-device outer checkpoint transaction; and one full-controller checkpoint that owns exactly two independent quiescent virtio-blk devices with atomic validation-before-mutation restore semantics.
+`main` is `a51e72e40ac7913e83a1237107e7b13403989d64` through PR #146 (`Version two-device full-controller checkpoints`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; a bounded SYSCALL/SYSRET ABI and syscall dispatcher; fault-safe usercopy; isolated ring3 address spaces; dirty-page tracking; bounded guest scheduling/wait ownership; bounded page/VCPU/controller/device checkpoints; fd-free ioeventfd/irqfd reconstruction around restore; canonical versioned byte schemas for page+VCPU, full-controller, full-controller+one-quiescent-virtio-blk, host-registration reconstruction and full-controller+exactly-two-quiescent-virtio-blk; and one canonical one-device outer checkpoint transaction.
 
-PR #145 sealed the fixed two-device runtime ownership prerequisite. Exact merged-main commit `8cc11e19b1225b4d74af02866e2bc55f0b21bde7` completed all 45 push-triggered workflows successfully, including ordinary `CI` and the strict two-virtio-blk full-controller KVM proof. Do not farm a third identical device, status variants, BAR permutations or additional restore-order corner cases merely to extend this phase.
+PR #146 sealed the fixed-two-device byte compatibility boundary. Exact merged-main commit `a51e72e40ac7913e83a1237107e7b13403989d64` completed all 46 push-triggered workflows successfully, including ordinary `CI`, MSRV validation, the strict two-device runtime checkpoint proof and the strict versioned two-device checkpoint proof. Do not farm additional device counts, alternate framing, BAR permutations or corruption offsets merely to extend this phase.
 
-## Selected milestone — versioned two-device full-controller checkpoint
+## Selected milestone — two-device reconstructed acceleration
 
-The next compatibility boundary is the already-integrated two-device runtime checkpoint. Before defining a multi-registration outer transaction, the process-local `BoundedFullControllerTwoVirtioBlkCheckpoint` must cross one canonical byte boundary and materialize back into the same two-device ownership contract. This is the serialization prerequisite for a later bounded two-registration transaction; it does not pretend that dual accelerated request replay already exists.
+The next executable boundary is host acceleration ownership for the already-sealed two-device checkpoint. The codebase can reconstruct one fd-free ioeventfd/irqfd tuple and can route two independent legacy-PIC MMIO interrupt sources, but it has not yet proven that exactly two semantic registration descriptors can be owned, reconstructed, used and cleaned up as one bounded pair across two independent GSI/vector paths.
 
-Implementation continues on `milestone/versioned-two-virtio-blk-checkpoint` through PR #146 from exact green `main=8cc11e19b1225b4d74af02866e2bc55f0b21bde7`.
+Implementation continues on `milestone/two-host-registration-acceleration` from exact green `main=a51e72e40ac7913e83a1237107e7b13403989d64`.
 
 Acceptance contract:
 
 - preserve Rust 1.74 shipped-target MSRV, ordinary CI and every applicable permanent hosted-KVM workflow green on the exact base;
-- define a canonical little-endian v1 full-controller + exactly-two-virtio-blk envelope with explicit magic, version, x86-64 architecture identifier, fixed header length, total length, nested-controller length, fixed device-state length, exact device count, zero flags and zero reserved state;
-- reuse the sealed `VersionedFullControllerCheckpointV1` payload and the existing semantic virtio-blk checkpoint encoding rather than duplicate page/VCPU/PIC/IOAPIC/LAPIC or device-model semantics;
-- own exactly two device payloads in strictly increasing canonical BAR order; duplicate, reversed or misaligned BAR ownership must fail closed;
-- preserve both model-bound deterministic backing stores and every semantic queue/device field accepted by the existing virtio-blk checkpoint validator;
-- reject bad magic/version/architecture/header/total/controller/device lengths, wrong device count, non-zero flags/reserved state, arithmetic overflow, truncation, malformed nested controller state and malformed device state;
-- materialization must re-run current-host MSR compatibility through the nested controller schema and re-run both virtio-blk semantic validators before reconstructing the process-local checkpoint;
-- executable transport must capture the real two-device checkpoint, encode it, drop both the encoder-side schema and original process-local checkpoint, decode only from bytes, require byte-for-byte canonical decode→re-encode identity, materialize on the current host, and only then continue;
-- the materialized checkpoint must preserve BARs `0x10000000` and `0x10001000` and distinct statuses `0x01` and `0x03`;
-- the existing deterministic real-KVM proof must still deliberately mismatch page/VCPU/master-PIC/slave-PIC/IOAPIC/LAPIC and both devices, restore every owned component exactly, preserve per-BAR exactness, and resume through proof `ASBJMD` with architectural RFLAGS bit 1 and IF set;
-- deterministic unit coverage must prove fixed envelope shape and canonical BAR ownership failures; KVM integration must prove schema metadata plus the complete existing corruption/restore/resume contract;
-- add a dedicated permanent hosted-KVM workflow covering schema/runtime/proof/test/roadmap surfaces, with proof binary build outside the 30-second KVM execution timeout;
-- schema, compatibility, device semantics, restore ordering, exactness or KVM proof failures remain hard failures and must not be swallowed, retried into success or hidden by changed expectations.
+- define one fixed pair ownership type over exactly two existing fd-free `HostRegistrationSpec` descriptors without serializing or retaining raw file descriptors;
+- canonicalize the pair by ascending doorbell address and reject overlapping doorbell ranges or duplicate GSI ownership before any kernel registration is created;
+- use deterministic virtio notification doorbells `0x10000100` and `0x10001100`, both two bytes wide with datamatch zero, routed independently to GSI 0/vector `0x40` and GSI 1/vector `0x41`;
+- reconstruct the first tuple and then the second; if second reconstruction fails, the first tuple must be deassigned before returning failure;
+- pair deassignment must attempt both members in reverse registration order even when one cleanup operation fails, so a cleanup error cannot silently strand the other registration;
+- prove the accelerated doorbell writes are consumed by KVM_IOEVENTFD rather than a userspace MMIO fallback: after each guest doorbell write the next expected exit is a debug-port barrier, and an unexpected KVM MMIO exit remains a hard failure;
+- prove one ioeventfd event and one irqfd signal for each device independently, with two distinct interrupt handlers and legacy-PIC EOIs;
+- prove deterministic cleanup and fresh reconstruction by executing both device paths in one first registration generation, deassigning the entire pair, reconstructing the same semantic pair into fresh process-local kernel resources, then executing both device paths again;
+- the real-KVM proof must retain exact ordered output `RA0MB1NCE0PF1QD`, doorbell event counts `[[1, 1], [1, 1]]`, canonical doorbell/GSI/vector identities, and completion RFLAGS bit 1 plus IF;
+- deterministic unit coverage must prove canonical pair ordering, non-overlapping ownership, duplicate-GSI rejection and fd-free checkpoint ownership;
+- add an independent KVM integration test, proof binary and permanent hosted-KVM workflow with the binary build outside the 30-second execution timeout;
+- registration, rollback, cleanup, routing, ioeventfd, irqfd, interrupt ordering or proof failures remain hard failures and must not be swallowed, retried into success or hidden by changed expectations.
 
 ## Scope boundary
 
-This milestone deliberately does **not** expand fd-free host registration from one descriptor to a collection, change the existing one-device outer transaction, add a second accelerated request lifecycle, checkpoint an in-flight request, serialize raw file descriptors or Linux/KVM padding, claim cross-host/live migration compatibility, add external-storage durability semantics, add a second VCPU, or make performance/downtime claims.
+This milestone deliberately does **not** define a multi-registration byte schema, widen the existing outer checkpoint transaction, serialize raw eventfd/ioeventfd/irqfd descriptors, process actual virtio-blk queue contents, add more than two registration descriptors, add another vCPU, claim cross-host/live migration compatibility, add external-storage durability semantics, or make performance/downtime claims.
 
-The two backing arrays remain the repository's bounded deterministic in-memory virtio-blk model. Their serialization is not a claim that arbitrary host files or block devices can be snapshotted crash-consistently.
+The two doorbells intentionally correspond to the two sealed virtio-blk BARs, but this slice proves host-acceleration ownership and interrupt delivery rather than a second full block-request data path.
 
 ## Promotion rule
 
-After the versioned two-device checkpoint is integrated and exact merged-`main` ordinary CI plus every applicable permanent hosted-KVM workflow are green, seal this fixed-two-device byte schema rather than adding another device count or alternate framing.
+After two-device reconstructed acceleration is integrated and exact merged-`main` ordinary CI plus every applicable permanent hosted-KVM workflow are green, seal this pair lifecycle rather than farming more GSI values, generations or doorbell aliases.
 
-The next architecture frontier is **two-device reconstructed acceleration**: prove a bounded canonical pair of fd-free host-registration descriptors, fresh ioeventfd/irqfd reconstruction and independent device/request ownership with deterministic cleanup. Only after that executable registration/replay lifecycle is sealed should the outer transaction be widened to bind the versioned two-device checkpoint and the two-registration set into one canonical transaction. Coordinated multi-vCPU ownership, cross-host/live migration, external-storage crash consistency and performance/downtime remain separate later frontiers.
+The next architecture frontier is a **canonical two-registration specification and outer transaction**: serialize the sealed semantic registration pair, bind it with the already-versioned two-device checkpoint, discard the process-local semantic objects, decode/materialize only from one canonical byte stream, reconstruct fresh acceleration and prove exact checkpoint restore plus accelerated replay. Coordinated multi-vCPU ownership, cross-host/live migration, external-storage crash consistency and performance/downtime remain separate later frontiers.
