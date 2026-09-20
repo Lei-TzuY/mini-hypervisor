@@ -345,7 +345,10 @@ pub fn run_pending_completion_token_replay_guest(
             )
         }
         Err(error) => {
-            if !error.to_string().contains("pending") {
+            if !error_chain_contains(
+                &error,
+                "pending completion requires an explicit delivery token",
+            ) {
                 return two_vcpu_two_device_cleanup_error(
                     capture_registrations,
                     &vm,
@@ -445,12 +448,15 @@ pub fn run_pending_completion_token_replay_guest(
     first.restore_multiprocessing_state_raw(MP_STATE_HALTED)?;
     second.restore_multiprocessing_state_raw(MP_STATE_UNINITIALIZED)?;
     two_vcpu_two_device_corrupt_controller(&first, &second, &vm)?;
-    let first_corrupt = VirtioBlkDevice::new(TWO_HOST_REGISTRATION_FIRST_BAR);
-    let second_corrupt = VirtioBlkDevice::new(TWO_HOST_REGISTRATION_SECOND_BAR);
-    mmio.restore_two_virtio_blk_checkpoints_atomic([
-        (TWO_HOST_REGISTRATION_FIRST_BAR, &first_corrupt),
-        (TWO_HOST_REGISTRATION_SECOND_BAR, &second_corrupt),
-    ])?;
+    // The V2 byte stream now owns the serviced completion. Replace the entire live MMIO
+    // device set rather than asking the ordinary restore path to overwrite an ISR-pending device.
+    // This deliberately destroys the live ISR/backing/queue state and proves token-aware restore
+    // reconstructs it from decoded ownership rather than inheriting it from the pre-checkpoint bus.
+    mmio = MmioBus::empty();
+    mmio.register_virtio_blk_device_at(TWO_HOST_REGISTRATION_FIRST_BAR)
+        .expect("fixed first pending-completion corruption BAR remains available");
+    mmio.register_virtio_blk_device_at(TWO_HOST_REGISTRATION_SECOND_BAR)
+        .expect("fixed second pending-completion corruption BAR remains available");
 
     let mutation = transaction.checkpoint().verify(&first, &second, &vm, &mmio)?;
     require_multi_producer_mutation(&mutation)?;
@@ -582,6 +588,17 @@ pub fn run_pending_completion_token_replay_guest(
         pending_rip,
         completion_rip: first_program.completion_rip,
     })
+}
+
+fn error_chain_contains(error: &Error, needle: &str) -> bool {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(source) = current {
+        if source.to_string().contains(needle) {
+            return true;
+        }
+        current = source.source();
+    }
+    false
 }
 
 fn pending_capture_context<'a>(
