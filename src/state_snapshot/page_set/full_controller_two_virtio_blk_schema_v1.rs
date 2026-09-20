@@ -1,6 +1,3 @@
-use crate::portio::pci::virtio_blk::{VirtioBlkCheckpointState, VIRTIO_BLK_BAR_SIZE};
-use std::fmt;
-
 pub const VERSIONED_FULL_CONTROLLER_TWO_VIRTIO_BLK_MAGIC: [u8; 8] = *b"MHVFC2B\0";
 pub const VERSIONED_FULL_CONTROLLER_TWO_VIRTIO_BLK_VERSION: u16 = 1;
 pub const VERSIONED_FULL_CONTROLLER_TWO_VIRTIO_BLK_ARCH_X86_64: u16 = 1;
@@ -26,8 +23,8 @@ pub enum VersionedFullControllerTwoVirtioBlkCheckpointError {
     Device(VersionedFullControllerVirtioBlkCheckpointError),
 }
 
-impl fmt::Display for VersionedFullControllerTwoVirtioBlkCheckpointError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for VersionedFullControllerTwoVirtioBlkCheckpointError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidMagic => write!(f, "two-device checkpoint magic does not match MHVFC2B"),
             Self::UnsupportedVersion(version) => {
