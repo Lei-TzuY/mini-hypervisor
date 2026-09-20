@@ -150,13 +150,13 @@ struct TwoVcpuTwoDeviceCaptureContext<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TwoVcpuTwoDeviceCheckpointTransaction {
+struct TwoVcpuTwoDeviceCheckpointTransaction {
     checkpoint: BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint,
     registrations: HostRegistrationPairCheckpoint,
 }
 
 impl TwoVcpuTwoDeviceCheckpointTransaction {
-    pub(crate) fn capture(
+    fn capture(
         context: TwoVcpuTwoDeviceCaptureContext<'_>,
         pair: HostRegistrationSpecPair,
         registrations: &ReconstructedHostRegistrationPair,
@@ -180,11 +180,11 @@ impl TwoVcpuTwoDeviceCheckpointTransaction {
     }
 
     #[must_use]
-    pub(crate) const fn checkpoint(&self) -> &BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
+    const fn checkpoint(&self) -> &BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
         &self.checkpoint
     }
 
-    pub(crate) fn restore_and_reconstruct(
+    fn restore_and_reconstruct(
         &self,
         backend: &crate::kvm::KvmBackend,
         first: &mut Vcpu,
