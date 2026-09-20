@@ -1769,7 +1769,8 @@ pub(in crate::state_snapshot::page_set) mod write_readback {
         emit_equal_or_ud2(code);
     }
 
-    pub(in crate::state_snapshot::page_set) fn second_write_readback_sector() -> [u8; VIRTIO_BLK_SECTOR_SIZE] {
+    pub(in crate::state_snapshot::page_set) fn second_write_readback_sector(
+    ) -> [u8; VIRTIO_BLK_SECTOR_SIZE] {
         let mut bytes = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
         for (index, byte) in bytes.iter_mut().enumerate() {
             *byte = (index as u8).wrapping_mul(37).wrapping_add(19);
