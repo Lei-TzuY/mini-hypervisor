@@ -304,8 +304,8 @@ pub fn run_pending_completion_token_replay_guest(
         pending_rip,
     )?;
     let queue_indices_at_token = [
-        queue_indices(&mmio, TWO_HOST_REGISTRATION_FIRST_BAR)?,
-        queue_indices(&mmio, TWO_HOST_REGISTRATION_SECOND_BAR)?,
+        pending_queue_indices(&mmio, TWO_HOST_REGISTRATION_FIRST_BAR)?,
+        pending_queue_indices(&mmio, TWO_HOST_REGISTRATION_SECOND_BAR)?,
     ];
     if queue_indices_at_token != [[1, 1], [0, 0]] {
         return two_vcpu_two_device_cleanup_error(
@@ -491,8 +491,8 @@ pub fn run_pending_completion_token_replay_guest(
         );
     }
     let queue_indices_after_restore = [
-        queue_indices(&mmio, TWO_HOST_REGISTRATION_FIRST_BAR)?,
-        queue_indices(&mmio, TWO_HOST_REGISTRATION_SECOND_BAR)?,
+        pending_queue_indices(&mmio, TWO_HOST_REGISTRATION_FIRST_BAR)?,
+        pending_queue_indices(&mmio, TWO_HOST_REGISTRATION_SECOND_BAR)?,
     ];
     if queue_indices_after_restore != [[1, 1], [0, 0]] {
         return two_vcpu_two_device_cleanup_error(
@@ -540,8 +540,8 @@ pub fn run_pending_completion_token_replay_guest(
     };
 
     let final_queue_indices = [
-        queue_indices(&mmio, TWO_HOST_REGISTRATION_FIRST_BAR)?,
-        queue_indices(&mmio, TWO_HOST_REGISTRATION_SECOND_BAR)?,
+        pending_queue_indices(&mmio, TWO_HOST_REGISTRATION_FIRST_BAR)?,
+        pending_queue_indices(&mmio, TWO_HOST_REGISTRATION_SECOND_BAR)?,
     ];
     if final_queue_indices != [[2, 2], [0, 0]]
         || doorbell_events != [2, 0]
@@ -587,6 +587,15 @@ pub fn run_pending_completion_token_replay_guest(
         capture_rips: [first_capture_rip, second_capture_rip],
         pending_rip,
         completion_rip: first_program.completion_rip,
+    })
+}
+
+fn pending_queue_indices(mmio: &MmioBus, bar: u64) -> Result<[u16; 2], Error> {
+    mmio.virtio_blk_queue_indices_at(bar).ok_or_else(|| {
+        page_set_error(
+            "pending-completion queue observation",
+            format!("virtio-blk BAR {bar:#x} disappeared"),
+        )
     })
 }
 
