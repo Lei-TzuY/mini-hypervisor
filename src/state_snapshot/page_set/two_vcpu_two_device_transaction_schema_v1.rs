@@ -639,6 +639,115 @@ mod versioned_two_vcpu_two_device_transaction_schema_tests {
         TWO_HOST_REGISTRATION_FIRST_BAR, TWO_HOST_REGISTRATION_SECOND_BAR,
     };
 
+    fn two_device_checkpoint_header_fixture() -> Vec<u8> {
+        let controller_len = 1_usize;
+        let total_len = TWO_VCPU_TWO_DEVICE_CHECKPOINT_HEADER_LEN
+            + controller_len
+            + 2 * VIRTIO_BLK_STATE_LEN;
+        let mut bytes = vec![0_u8; total_len];
+        bytes[0..8].copy_from_slice(&VERSIONED_TWO_VCPU_TWO_DEVICE_CHECKPOINT_MAGIC);
+        bytes[8..10]
+            .copy_from_slice(&VERSIONED_TWO_VCPU_TWO_DEVICE_CHECKPOINT_VERSION.to_le_bytes());
+        bytes[10..12]
+            .copy_from_slice(&VERSIONED_TWO_VCPU_TWO_DEVICE_CHECKPOINT_ARCH_X86_64.to_le_bytes());
+        bytes[12..16]
+            .copy_from_slice(&(TWO_VCPU_TWO_DEVICE_CHECKPOINT_HEADER_LEN as u32).to_le_bytes());
+        bytes[16..24].copy_from_slice(&(total_len as u64).to_le_bytes());
+        bytes[24..32].copy_from_slice(&(controller_len as u64).to_le_bytes());
+        bytes[32..40].copy_from_slice(&(VIRTIO_BLK_STATE_LEN as u64).to_le_bytes());
+        bytes[40..44].copy_from_slice(&TWO_VCPU_TWO_DEVICE_CHECKPOINT_DEVICE_COUNT.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn two_device_checkpoint_header_fails_closed_before_nested_decode() {
+        let base = two_device_checkpoint_header_fixture();
+
+        let mut bad_magic = base.clone();
+        bad_magic[0] ^= 0xff;
+        assert_eq!(
+            VersionedTwoVcpuTwoDeviceCheckpointV1::decode(&bad_magic),
+            Err(VersionedTwoVcpuTwoDeviceCheckpointError::InvalidMagic)
+        );
+
+        let mut bad_version = base.clone();
+        bad_version[8..10].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuTwoDeviceCheckpointV1::decode(&bad_version),
+            Err(VersionedTwoVcpuTwoDeviceCheckpointError::UnsupportedVersion(2))
+        );
+
+        let mut bad_architecture = base.clone();
+        bad_architecture[10..12].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuTwoDeviceCheckpointV1::decode(&bad_architecture),
+            Err(
+                VersionedTwoVcpuTwoDeviceCheckpointError::UnsupportedArchitecture(2)
+            )
+        );
+
+        let mut bad_header_len = base.clone();
+        bad_header_len[12..16].copy_from_slice(&55_u32.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuTwoDeviceCheckpointV1::decode(&bad_header_len),
+            Err(VersionedTwoVcpuTwoDeviceCheckpointError::InvalidHeaderLength(55))
+        );
+
+        let mut bad_device_len = base.clone();
+        bad_device_len[32..40]
+            .copy_from_slice(&((VIRTIO_BLK_STATE_LEN as u64) - 1).to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuTwoDeviceCheckpointV1::decode(&bad_device_len),
+            Err(VersionedTwoVcpuTwoDeviceCheckpointError::InvalidDeviceLength(
+                (VIRTIO_BLK_STATE_LEN as u64) - 1
+            ))
+        );
+
+        let mut bad_count = base.clone();
+        bad_count[40..44].copy_from_slice(&1_u32.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuTwoDeviceCheckpointV1::decode(&bad_count),
+            Err(VersionedTwoVcpuTwoDeviceCheckpointError::InvalidDeviceCount(1))
+        );
+
+        let mut bad_flags = base.clone();
+        bad_flags[44..48].copy_from_slice(&1_u32.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuTwoDeviceCheckpointV1::decode(&bad_flags),
+            Err(VersionedTwoVcpuTwoDeviceCheckpointError::NonZeroFlags(1))
+        );
+
+        let mut bad_reserved = base.clone();
+        bad_reserved[48..56].copy_from_slice(&1_u64.to_le_bytes());
+        assert_eq!(
+            VersionedTwoVcpuTwoDeviceCheckpointV1::decode(&bad_reserved),
+            Err(VersionedTwoVcpuTwoDeviceCheckpointError::NonZeroReserved(1))
+        );
+
+        let mut truncated = base;
+        truncated.pop();
+        assert!(matches!(
+            VersionedTwoVcpuTwoDeviceCheckpointV1::decode(&truncated),
+            Err(VersionedTwoVcpuTwoDeviceCheckpointError::InvalidTotalLength { .. })
+        ));
+    }
+
+    #[test]
+    fn two_device_checkpoint_bars_must_remain_canonical() {
+        assert!(validate_versioned_two_device_bars([0x1000_0000, 0x1000_1000]).is_ok());
+        assert_eq!(
+            validate_versioned_two_device_bars([0x1000_1000, 0x1000_0000]),
+            Err(VersionedTwoVcpuTwoDeviceCheckpointError::NonCanonicalBars {
+                first: 0x1000_1000,
+                second: 0x1000_0000,
+            })
+        );
+        assert!(matches!(
+            validate_versioned_two_device_bars([0x1000_0001, 0x1000_1000]),
+            Err(VersionedTwoVcpuTwoDeviceCheckpointError::NonCanonicalBars { .. })
+        ));
+    }
+
     #[test]
     fn registration_binding_is_revalidated_at_the_wire_boundary() {
         let bars = [
