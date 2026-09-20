@@ -1,7 +1,7 @@
 use mini_hypervisor::state_snapshot::{
-    run_restored_multi_producer_data_plane_replay_guest,
-    RESTORED_MULTI_PRODUCER_FIRST_PROOF, RESTORED_MULTI_PRODUCER_SECOND_PROOF,
-    TRANSACTION_COUPLED_FIRST_PAGE, TRANSACTION_COUPLED_SECOND_PAGE,
+    run_restored_multi_producer_data_plane_replay_guest, RESTORED_MULTI_PRODUCER_FIRST_PROOF,
+    RESTORED_MULTI_PRODUCER_SECOND_PROOF, TRANSACTION_COUPLED_FIRST_PAGE,
+    TRANSACTION_COUPLED_SECOND_PAGE,
 };
 use std::process::ExitCode;
 
@@ -77,7 +77,10 @@ fn main() -> ExitCode {
                 result.completion_rips()[0],
                 result.completion_rips()[1]
             );
-            assert_eq!(result.producer_proofs()[0], RESTORED_MULTI_PRODUCER_FIRST_PROOF);
+            assert_eq!(
+                result.producer_proofs()[0],
+                RESTORED_MULTI_PRODUCER_FIRST_PROOF
+            );
             assert_eq!(
                 result.producer_proofs()[1],
                 RESTORED_MULTI_PRODUCER_SECOND_PROOF
