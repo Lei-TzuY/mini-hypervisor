@@ -339,12 +339,22 @@ pub fn run_two_vcpu_two_device_transaction_guest(
             ),
         );
     }
-    let restored_statuses = [
-        mmio.virtio_blk_status_at(TWO_HOST_REGISTRATION_FIRST_BAR)
-            .ok_or_else(|| page_set_error("two-vCPU transaction status", "first device disappeared"))?,
-        mmio.virtio_blk_status_at(TWO_HOST_REGISTRATION_SECOND_BAR)
-            .ok_or_else(|| page_set_error("two-vCPU transaction status", "second device disappeared"))?,
-    ];
+    let restored_statuses = match (
+        mmio.virtio_blk_status_at(TWO_HOST_REGISTRATION_FIRST_BAR),
+        mmio.virtio_blk_status_at(TWO_HOST_REGISTRATION_SECOND_BAR),
+    ) {
+        (Some(first_status), Some(second_status)) => [first_status, second_status],
+        _ => {
+            return two_vcpu_two_device_cleanup_error(
+                reconstructed,
+                &vm,
+                page_set_error(
+                    "two-vCPU two-device transaction status",
+                    "one or both restored devices disappeared",
+                ),
+            )
+        }
+    };
     if restored_statuses != captured_statuses {
         return two_vcpu_two_device_cleanup_error(
             reconstructed,
@@ -357,7 +367,12 @@ pub fn run_two_vcpu_two_device_transaction_guest(
             ),
         );
     }
-    let reconstructed_pending = reconstructed.pending_doorbells()?;
+    let reconstructed_pending = match reconstructed.pending_doorbells() {
+        Ok(pending) => pending,
+        Err(error) => {
+            return two_vcpu_two_device_cleanup_error(reconstructed, &vm, error)
+        }
+    };
     if reconstructed_pending != [false, false] {
         return two_vcpu_two_device_cleanup_error(
             reconstructed,
