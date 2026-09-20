@@ -272,7 +272,7 @@ mod vcpu_state_schema_tests {
         let registers = VcpuRegisterSnapshot::from_kvm_regs(sys::KvmRegs::default());
         let special_registers =
             VcpuSpecialRegisterSnapshot::from_kvm_sregs(sys::KvmSregs::default());
-        let host = HostMsrIndexList::from_validated_raw(&[]);
+        let host = HostMsrIndexList::from_validated_raw(&[0x0000_008b]);
         let policy = GuestMsrAccessPolicy::from_host(&host, &[]).unwrap();
         let values = GuestMsrValueSet::from_policy(&policy, &[]).unwrap();
         let msrs = GuestMsrSnapshot::from_capture(&policy, &values).unwrap();
