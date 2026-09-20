@@ -12,7 +12,9 @@ mod file_backed;
 #[path = "virtio_blk_write_readback.rs"]
 mod write_readback;
 
-pub use file_backed::{run_file_backed_reopen_proof, VirtioBlkFileBackedProof};
+pub use file_backed::{
+    run_file_backed_reopen_proof, VirtioBlkFileBackedProof, FILE_BACKED_VIRTIO_BLK_PROOF,
+};
 pub use virtio_blk_backing::{VIRTIO_BLK_BACKING_SIZE, VIRTIO_BLK_CAPACITY_SECTORS};
 pub use write_readback::VIRTIO_BLK_T_OUT;
 
