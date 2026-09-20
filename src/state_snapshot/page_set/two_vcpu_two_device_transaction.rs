@@ -34,11 +34,11 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
         let first_device = capture_required_device(mmio, bars[0], "first two-vCPU transaction")?;
         let second_device = capture_required_device(mmio, bars[1], "second two-vCPU transaction")?;
         let controller = BoundedTwoVcpuFullControllerCheckpoint::capture(
-            context.first,
-            context.second,
-            context.vm,
-            context.msr_policy,
-            context.page_addresses,
+            first,
+            second,
+            vm,
+            msr_policy,
+            page_addresses,
         )?;
         Ok(Self {
             controller,
@@ -93,11 +93,11 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
         };
 
         let controller = BoundedTwoVcpuFullControllerCheckpoint::capture(
-            first,
-            second,
-            vm,
-            msr_policy,
-            page_addresses,
+            context.first,
+            context.second,
+            context.vm,
+            context.msr_policy,
+            context.page_addresses,
         )?;
         Ok((
             Self {
