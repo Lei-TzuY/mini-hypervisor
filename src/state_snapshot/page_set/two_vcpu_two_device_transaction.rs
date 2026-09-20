@@ -46,7 +46,7 @@ impl BoundedTwoVcpuFullControllerTwoVirtioBlkCheckpoint {
         })
     }
 
-    pub(crate) fn capture_with_pending_completion(
+    fn capture_with_pending_completion(
         context: TwoVcpuTwoDeviceCaptureContext<'_>,
         pending_bar: u64,
     ) -> Result<(Self, VirtioBlkPendingCompletionToken), Error> {
