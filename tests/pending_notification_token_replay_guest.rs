@@ -28,9 +28,7 @@ fn pending_notification_token_replays_drained_doorbell_before_queue_service() {
         }
         Err(Error::HostEnvironment(HostEnvironmentError::KvmUnavailable { .. }))
         | Err(Error::HostEnvironment(HostEnvironmentError::PermissionDenied { .. })) => {
-            eprintln!(
-                "skipping pending-notification token replay assertion: /dev/kvm unavailable"
-            );
+            eprintln!("skipping pending-notification token replay assertion: /dev/kvm unavailable");
         }
         Err(error) => panic!("pending-notification token replay failed unexpectedly: {error}"),
     }
