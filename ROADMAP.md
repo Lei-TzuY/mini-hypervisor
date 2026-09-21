@@ -4,37 +4,36 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `edfc2d8208aa7f23901b15ea1cde6bd3fae2ca6a` through PR #158 (`Own drained virtio-blk notifications before queue service`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; bounded SYSCALL/SYSRET and usercopy; isolated ring3 address spaces; dirty-page tracking; bounded scheduling/wait ownership; versioned single-vCPU/controller/device checkpoints; two-device acceleration reconstruction; transaction-coupled mutable replay; acceleration-aware checkpoint quiescence; exact two-vCPU controller/MP/LAPIC ownership; one runtime transaction owning both vCPUs, both devices and the fd-free registration pair; restored multi-producer mutable data-plane replay; a v2 serviced-completion token; and a v3 drained-notification token.
+`main` is `c48df7e785f484b158a30fe462d976991792f339` through PR #159 (`Add synced file-backed virtio-blk storage`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; bounded SYSCALL/SYSRET and usercopy; isolated ring3 address spaces; dirty-page tracking; bounded scheduling/wait ownership; versioned single- and two-vCPU checkpoint transactions; transaction-coupled multi-producer virtio-blk replay; fd-free pending notification/completion ownership; and a bounded file-backed virtio-blk mode with synchronized writes and drop/reopen readback.
 
-PR #158 sealed the in-memory notification/completion ownership chain. Its executable proof drains one real ioeventfd request, materializes `notify_pending=true` without queue service, captures a canonical fd-free v3 token at queues `[[0,0],[0,0]]`, discards encoder ownership, restores exact state from decoded bytes, services the restored request without a duplicate write doorbell, delivers the reconstructed irqfd, and completes ordinary readback with proof `W0aMR0aXD`. Exact merged-main commit `edfc2d8208aa7f23901b15ea1cde6bd3fae2ca6a` completed all 58 push-triggered workflows successfully. Queue service itself is atomic in the current model, so do not manufacture partially-serviced token variants.
+PR #159 sealed the basic external-storage persistence boundary. Its executable proof performs a real sector-0 `T_OUT`, calls `sync_all` before guest completion becomes visible, inspects the raw host file, drops the device, opens a fresh device from the same file and performs a real `T_IN` readback. Current checkpoint schemas continue to fail closed for external storage identity. Exact merged-main commit `c48df7e785f484b158a30fe462d976991792f339` completed all 58 push-triggered workflows successfully. Do not farm more path/reopen variants.
 
-## Selected milestone — synced file-backed virtio-blk storage boundary
+## Selected milestone — pin runtime file-backend identity
 
-The next architectural gap is storage ownership. The current virtio-blk implementation embeds a deterministic four-sector byte array directly in each device and serializes that array into checkpoint state. There is no host-file backend, no persistence boundary and no evidence that a completed guest write survives device reconstruction.
+The next correctness boundary is more fundamental than checkpoint serialization. The file-backed device currently remembers only a `PathBuf` and reopens that pathname for every guest write. A pathname is a lookup instruction, not a stable storage identity: after rename/unlink/replacement, a later `open(path)` may resolve to a different host file than the one whose bytes were loaded when the device was created.
 
-Implementation continues on `milestone/file-backed-virtio-blk` from exact green `main=edfc2d8208aa7f23901b15ea1cde6bd3fae2ca6a`.
+Implementation continues on `milestone/pinned-file-backend-identity` from exact green `main=c48df7e785f484b158a30fe462d976991792f339`.
 
 Acceptance contract:
 
-- preserve Rust 1.74 shipped-target MSRV, all existing in-memory virtio-blk behavior, checkpoint/transaction regressions and permanent workflows;
-- keep the existing four-sector in-memory backing as the default path;
-- add one concrete file-backed mode backed by an exact `VIRTIO_BLK_BACKING_SIZE` host file; creation initializes deterministic contents and synchronizes them before the device is returned;
-- opening an existing file-backed device must reject a backing whose size is not exactly the bounded capacity and must load the current bytes as the device cache;
-- a file-backed `VIRTIO_BLK_T_OUT` must finish all guest/input/output preflight first, write the requested host-file range, and successfully call `sync_all` before guest status/used-ring/ISR completion becomes visible;
-- if host backing write or sync fails, queue indices, ISR and guest completion must not be advanced;
-- only after host sync succeeds may the in-memory cache and virtqueue completion be committed;
-- executable evidence must write a deterministic sector-0 payload through the real atomic virtio-blk queue path, inspect the raw host file, drop the device, reopen a new device from that file, and read the same sector through a real `T_IN` queue request;
-- final persisted sector and guest readback must match exactly, with write completion length 1 and read completion length 513;
-- current checkpoint schemas must fail closed for file-backed devices because they do not encode external storage identity; no checkpoint may silently downgrade a file-backed device into an in-memory device;
-- malformed file length must fail before the device is opened for guest service;
-- add focused backend/unit coverage, an independent integration test, proof binary and permanent workflow.
+- preserve Rust 1.74 shipped-target MSRV, all in-memory/file-backed virtio-blk regressions, checkpoint fail-closed behavior and permanent workflows;
+- retain the already-open host file object for the lifetime of a file-backed device instead of reopening its origin pathname on each `T_OUT`;
+- record the same-host runtime identity as Linux `st_dev + st_ino`; this identity is diagnostic/runtime evidence only and is not a cross-host or cryptographic identifier;
+- cloning a runtime file-backed device must retain the same pinned file object/identity rather than resolving the pathname again;
+- guest write persistence must use offset writes on the pinned handle followed by `sync_all` before status/used-ring/ISR completion becomes visible;
+- preserve the #159 invariant that real host backing write failure leaves queue indices, ISR, guest status/used ring and in-memory cache uncommitted;
+- executable proof must create a file-backed device, record its open-file identity, rename the original pathname, create a different valid backing at the original pathname, then submit a real sector-0 `T_OUT` through the normal atomic queue path;
+- the renamed original inode must receive and synchronize the guest payload while the replacement pathname file remains at deterministic initial contents;
+- the replacement file must have a distinct `st_dev/st_ino` identity from the pinned device and the device's identity must remain unchanged;
+- existing checkpoint capture must still reject the pinned external backend because raw file handles and host-local inode identity remain outside current checkpoint schemas;
+- add focused unit coverage, independent integration test, proof binary and permanent workflow.
 
 ## Scope boundary
 
-This milestone proves a bounded **write + `sync_all` + drop/reopen + readback** contract on a normal host file. It does not claim power-loss atomicity, filesystem crash consistency, ordered metadata persistence, direct I/O, sparse-file semantics, concurrent external writers, cross-host migration, snapshotting of external storage identity, or production-grade storage performance.
+This milestone pins one normal host-file object on Linux. It does not serialize file descriptors, pathname strings, inode numbers or mount identity into checkpoint bytes; does not claim identity survives host reboot/cross-host migration; does not add concurrent external-writer coherence, file locking, direct I/O, crash consistency or production storage performance.
 
-The file path remains host-local runtime configuration and is deliberately excluded from the existing checkpoint byte formats. External mutation while a device is open is outside this milestone.
+Path rename/replacement is used only as executable evidence that runtime I/O is attached to the opened file object rather than repeated pathname lookup.
 
 ## Promotion rule
 
-After the synced file-backed path is integrated and exact merged-`main` CI is green, seal the basic external-storage boundary. The next audit should choose between explicit checkpoint/storage identity coordination (only if a stable backend identity contract can be defined without serializing host-specific raw handles), bounded write-failure recovery/fault injection, or another cross-layer storage capability. Do not claim crash consistency without controlled failure evidence.
+After pinned runtime identity is integrated and exact merged-`main` CI is green, seal the runtime file-identity phase. Only then evaluate external-storage checkpoint coordination. A future checkpoint binding must use an explicit host-supplied storage identity/rebind contract and verify the rebound object before materialization; it must not serialize raw fds or silently trust a pathname. If that contract cannot be made explicit and testable, promote instead to bounded storage failure/recovery semantics rather than inventing migration claims.

@@ -1,13 +1,16 @@
 use super::*;
 use crate::error::{Error, HostEnvironmentError};
 use crate::memory::{GuestMemory, GuestPhysAddr};
-use std::fs::{self, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::ops::Range;
+use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const FILE_BACKED_VIRTIO_BLK_PROOF: &[u8; 5] = b"FWSDR";
+pub const FILE_BACKED_IDENTITY_PIN_PROOF: &[u8; 5] = b"FPINW";
 
 const PROOF_BAR: u64 = 0x1000_0000;
 const PROOF_DESC: u64 = 0x18000;
@@ -17,6 +20,154 @@ const PROOF_HEADER: u64 = 0x18300;
 const PROOF_DATA: u64 = 0x18400;
 const PROOF_STATUS: u64 = 0x18600;
 const PROOF_MEMORY_SIZE: u64 = 0x20_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VirtioBlkFileIdentity {
+    device_id: u64,
+    inode: u64,
+}
+
+impl VirtioBlkFileIdentity {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        Self {
+            device_id: metadata.dev(),
+            inode: metadata.ino(),
+        }
+    }
+
+    #[must_use]
+    pub const fn device_id(self) -> u64 {
+        self.device_id
+    }
+
+    #[must_use]
+    pub const fn inode(self) -> u64 {
+        self.inode
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct PersistentFileBacking {
+    origin_path: PathBuf,
+    file: Arc<File>,
+    identity: VirtioBlkFileIdentity,
+}
+
+impl PersistentFileBacking {
+    fn from_open_file(origin_path: PathBuf, file: File) -> Result<Self, Error> {
+        let metadata = file
+            .metadata()
+            .map_err(|source| backing_io_error("stat pinned virtio-blk file backing", source))?;
+        Ok(Self {
+            origin_path,
+            file: Arc::new(file),
+            identity: VirtioBlkFileIdentity::from_metadata(&metadata),
+        })
+    }
+
+    fn write_all_at_and_sync(&self, offset: u64, bytes: &[u8]) -> Result<(), Error> {
+        let mut written = 0_usize;
+        while written < bytes.len() {
+            match self.file.write_at(
+                &bytes[written..],
+                offset + u64::try_from(written).expect("bounded backing offset fits u64"),
+            ) {
+                Ok(0) => {
+                    return Err(backing_io_error(
+                        "write pinned virtio-blk file backing",
+                        std::io::Error::new(
+                            std::io::ErrorKind::WriteZero,
+                            "host file accepted zero bytes before the range was complete",
+                        ),
+                    ))
+                }
+                Ok(count) => written += count,
+                Err(source) if source.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(source) => {
+                    return Err(backing_io_error(
+                        "write pinned virtio-blk file backing",
+                        source,
+                    ))
+                }
+            }
+        }
+        self.file
+            .sync_all()
+            .map_err(|source| backing_io_error("sync pinned virtio-blk file backing write", source))
+    }
+}
+
+impl std::fmt::Debug for PersistentFileBacking {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PersistentFileBacking")
+            .field("origin_path", &self.origin_path)
+            .field("identity", &self.identity)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for PersistentFileBacking {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity
+    }
+}
+
+impl Eq for PersistentFileBacking {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtioBlkFileIdentityPinProof {
+    write_completion: VirtioBlkQueueCompletion,
+    payload: [u8; VIRTIO_BLK_SECTOR_SIZE],
+    original_identity: VirtioBlkFileIdentity,
+    replacement_identity: VirtioBlkFileIdentity,
+    pinned_sector: [u8; VIRTIO_BLK_SECTOR_SIZE],
+    replacement_sector: [u8; VIRTIO_BLK_SECTOR_SIZE],
+    checkpoint_rejected: bool,
+    proof: Vec<u8>,
+}
+
+impl VirtioBlkFileIdentityPinProof {
+    #[must_use]
+    pub const fn write_completion(&self) -> VirtioBlkQueueCompletion {
+        self.write_completion
+    }
+
+    #[must_use]
+    pub const fn payload(&self) -> &[u8; VIRTIO_BLK_SECTOR_SIZE] {
+        &self.payload
+    }
+
+    #[must_use]
+    pub const fn original_identity(&self) -> VirtioBlkFileIdentity {
+        self.original_identity
+    }
+
+    #[must_use]
+    pub const fn replacement_identity(&self) -> VirtioBlkFileIdentity {
+        self.replacement_identity
+    }
+
+    #[must_use]
+    pub const fn pinned_sector(&self) -> &[u8; VIRTIO_BLK_SECTOR_SIZE] {
+        &self.pinned_sector
+    }
+
+    #[must_use]
+    pub const fn replacement_sector(&self) -> &[u8; VIRTIO_BLK_SECTOR_SIZE] {
+        &self.replacement_sector
+    }
+
+    #[must_use]
+    pub const fn checkpoint_rejected(&self) -> bool {
+        self.checkpoint_rejected
+    }
+
+    #[must_use]
+    pub fn proof(&self) -> &[u8] {
+        &self.proof
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VirtioBlkFileBackedProof {
@@ -75,7 +226,12 @@ impl VirtioBlkDevice {
             .map_err(|source| backing_io_error("initialize virtio-blk file backing", source))?;
         file.sync_all()
             .map_err(|source| backing_io_error("sync initial virtio-blk file backing", source))?;
-        Ok(Self::with_backing(bar0, backing, Some(path)))
+        let persistent_backing = PersistentFileBacking::from_open_file(path, file)?;
+        Ok(Self::with_backing(
+            bar0,
+            backing,
+            Some(persistent_backing),
+        ))
     }
 
     pub fn open_file_backed(bar0: u64, path: impl AsRef<Path>) -> Result<Self, Error> {
@@ -104,13 +260,18 @@ impl VirtioBlkDevice {
         let mut backing = [0_u8; VIRTIO_BLK_BACKING_SIZE];
         file.read_exact(&mut backing)
             .map_err(|source| backing_io_error("read virtio-blk file backing", source))?;
-        Ok(Self::with_backing(bar0, backing, Some(path)))
+        let persistent_backing = PersistentFileBacking::from_open_file(path, file)?;
+        Ok(Self::with_backing(
+            bar0,
+            backing,
+            Some(persistent_backing),
+        ))
     }
 
     fn with_backing(
         bar0: u64,
         backing: [u8; VIRTIO_BLK_BACKING_SIZE],
-        persistent_backing: Option<PathBuf>,
+        persistent_backing: Option<PersistentFileBacking>,
     ) -> Self {
         let mut device = Self::new(bar0);
         device.backing = backing;
@@ -123,12 +284,19 @@ impl VirtioBlkDevice {
         self.persistent_backing.is_some()
     }
 
+    #[must_use]
+    pub fn file_backing_identity(&self) -> Option<VirtioBlkFileIdentity> {
+        self.persistent_backing
+            .as_ref()
+            .map(|backing| backing.identity)
+    }
+
     pub(super) fn persist_backing_range(
         &self,
         range: Range<usize>,
         bytes: &[u8],
     ) -> Result<(), Error> {
-        let Some(path) = self.persistent_backing.as_ref() else {
+        let Some(backing) = self.persistent_backing.as_ref() else {
             return Ok(());
         };
         if range.end > VIRTIO_BLK_BACKING_SIZE || range.len() != bytes.len() {
@@ -145,23 +313,115 @@ impl VirtioBlkDevice {
                 ),
             ));
         }
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(|source| backing_io_error("open virtio-blk file backing for write", source))?;
-        file.seek(SeekFrom::Start(range.start as u64))
-            .map_err(|source| backing_io_error("seek virtio-blk file backing", source))?;
-        file.write_all(bytes)
-            .map_err(|source| backing_io_error("write virtio-blk file backing", source))?;
-        file.sync_all()
-            .map_err(|source| backing_io_error("sync virtio-blk file backing write", source))
+        backing.write_all_at_and_sync(range.start as u64, bytes)
     }
 
     #[must_use]
     pub(crate) const fn checkpoint_backing_portable(&self) -> bool {
         self.persistent_backing.is_none()
     }
+}
+
+pub fn run_file_backed_identity_pin_proof() -> Result<VirtioBlkFileIdentityPinProof, Error> {
+    let path = temporary_backing_path();
+    let pinned_path = path.with_extension("pinned.img");
+    let _path_cleanup = BackingCleanup(path.clone());
+    let _pinned_cleanup = BackingCleanup(pinned_path.clone());
+
+    let payload = deterministic_identity_payload();
+    let mut memory = GuestMemory::new(GuestPhysAddr::new(0), PROOF_MEMORY_SIZE)?;
+    let mut device = VirtioBlkDevice::create_file_backed(PROOF_BAR, &path)?;
+    prepare_ready_device(&mut device);
+    let original_identity = device
+        .file_backing_identity()
+        .ok_or_else(|| proof_error("file-backed device lost its pinned host-file identity"))?;
+
+    fs::rename(&path, &pinned_path)
+        .map_err(|source| backing_io_error("rename pinned virtio-blk backing", source))?;
+    let pinned_identity = file_identity_at_path(&pinned_path)?;
+    if pinned_identity != original_identity {
+        return Err(proof_error(format!(
+            "renamed backing identity changed from {original_identity:?} to {pinned_identity:?}"
+        )));
+    }
+
+    let replacement = VirtioBlkDevice::create_file_backed(PROOF_BAR + 0x1000, &path)?;
+    let replacement_identity = replacement
+        .file_backing_identity()
+        .ok_or_else(|| proof_error("replacement file-backed device lost host-file identity"))?;
+    drop(replacement);
+    if replacement_identity == original_identity {
+        return Err(proof_error(
+            "replacement path unexpectedly resolved to the already-open backing identity",
+        ));
+    }
+
+    prepare_request(
+        &mut memory,
+        &mut device,
+        VIRTIO_BLK_T_OUT,
+        VIRTQ_DESC_F_NEXT,
+        1,
+        &payload,
+    )?;
+    let write_completion = device
+        .process_notified_queue_atomic(&mut memory)
+        .map_err(process_error)?;
+
+    if device.file_backing_identity() != Some(original_identity) {
+        return Err(proof_error(
+            "device changed pinned host-file identity after origin path replacement",
+        ));
+    }
+
+    let pinned_raw = fs::read(&pinned_path)
+        .map_err(|source| backing_io_error("read renamed pinned virtio-blk backing", source))?;
+    let replacement_raw = fs::read(&path)
+        .map_err(|source| backing_io_error("read replacement virtio-blk backing", source))?;
+    if pinned_raw.len() != VIRTIO_BLK_BACKING_SIZE
+        || replacement_raw.len() != VIRTIO_BLK_BACKING_SIZE
+    {
+        return Err(proof_error(
+            "pinned or replacement file changed bounded backing length",
+        ));
+    }
+
+    let mut pinned_sector = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
+    pinned_sector.copy_from_slice(&pinned_raw[..VIRTIO_BLK_SECTOR_SIZE]);
+    let mut replacement_sector = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
+    replacement_sector.copy_from_slice(&replacement_raw[..VIRTIO_BLK_SECTOR_SIZE]);
+    let initial_sector = virtio_blk_backing::deterministic_backing();
+    if pinned_sector != payload {
+        return Err(proof_error(
+            "guest T_OUT did not update the originally opened backing after path replacement",
+        ));
+    }
+    if replacement_sector != initial_sector[..VIRTIO_BLK_SECTOR_SIZE] {
+        return Err(proof_error(
+            "guest T_OUT was redirected into the replacement pathname backing",
+        ));
+    }
+
+    let checkpoint_rejected = matches!(
+        VirtioBlkCheckpointState::capture(&device),
+        Err(VirtioBlkCheckpointStateError::ExternalBackingUnsupported)
+    );
+    if !checkpoint_rejected {
+        return Err(proof_error(
+            "pinned file-backed device checkpoint did not fail closed",
+        ));
+    }
+
+    Ok(VirtioBlkFileIdentityPinProof {
+        write_completion,
+        payload,
+        original_identity,
+        replacement_identity,
+        pinned_sector,
+        replacement_sector,
+        checkpoint_rejected,
+        proof: FILE_BACKED_IDENTITY_PIN_PROOF.to_vec(),
+    })
 }
 
 pub fn run_file_backed_reopen_proof() -> Result<VirtioBlkFileBackedProof, Error> {
@@ -321,6 +581,22 @@ fn deterministic_file_payload() -> [u8; VIRTIO_BLK_SECTOR_SIZE] {
     bytes
 }
 
+fn deterministic_identity_payload() -> [u8; VIRTIO_BLK_SECTOR_SIZE] {
+    let mut bytes = [0_u8; VIRTIO_BLK_SECTOR_SIZE];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = (index as u8).wrapping_mul(29).wrapping_add(0x31);
+    }
+    bytes[..16].copy_from_slice(b"FILE-PIN-000000!");
+    bytes[VIRTIO_BLK_SECTOR_SIZE - 8..].copy_from_slice(b"PINNED!!");
+    bytes
+}
+
+fn file_identity_at_path(path: &Path) -> Result<VirtioBlkFileIdentity, Error> {
+    let metadata = fs::metadata(path)
+        .map_err(|source| backing_io_error("stat virtio-blk backing identity", source))?;
+    Ok(VirtioBlkFileIdentity::from_metadata(&metadata))
+}
+
 fn temporary_backing_path() -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -371,12 +647,19 @@ mod tests {
     }
 
     #[test]
-    fn backing_open_failure_does_not_publish_queue_completion() {
+    fn pinned_backing_write_failure_does_not_publish_queue_completion() {
         let path = temporary_backing_path();
+        let _cleanup = BackingCleanup(path.clone());
+        let backing = virtio_blk_backing::deterministic_backing();
+        fs::write(&path, backing).unwrap();
+
+        let read_only = OpenOptions::new().read(true).open(&path).unwrap();
+        let persistent = PersistentFileBacking::from_open_file(path, read_only).unwrap();
+        let mut device = VirtioBlkDevice::with_backing(PROOF_BAR, backing, Some(persistent));
+        prepare_ready_device(&mut device);
+
         let payload = deterministic_file_payload();
         let mut memory = GuestMemory::new(GuestPhysAddr::new(0), PROOF_MEMORY_SIZE).unwrap();
-        let mut device = VirtioBlkDevice::create_file_backed(PROOF_BAR, &path).unwrap();
-        prepare_ready_device(&mut device);
         prepare_request(
             &mut memory,
             &mut device,
@@ -387,7 +670,6 @@ mod tests {
         )
         .unwrap();
 
-        fs::remove_file(&path).unwrap();
         let error = device
             .process_notified_queue_atomic(&mut memory)
             .unwrap_err();
@@ -395,6 +677,7 @@ mod tests {
         assert_eq!(device.last_avail_idx, 0);
         assert_eq!(device.last_used_idx, 0);
         assert_eq!(device.isr_status, 0);
+        assert!(device.notify_pending);
         assert_ne!(device.sector0(), &payload);
 
         let mut status = [0_u8; 1];
@@ -407,6 +690,16 @@ mod tests {
             .read(GuestPhysAddr::new(PROOF_USED + 2), &mut used_idx)
             .unwrap();
         assert_eq!(u16::from_le_bytes(used_idx), 0);
+    }
+
+    #[test]
+    fn replacement_path_does_not_redirect_pinned_backend() {
+        let proof = run_file_backed_identity_pin_proof().unwrap();
+        assert_ne!(proof.original_identity(), proof.replacement_identity());
+        assert_eq!(proof.pinned_sector(), proof.payload());
+        assert_ne!(proof.replacement_sector(), proof.payload());
+        assert!(proof.checkpoint_rejected());
+        assert_eq!(proof.proof(), FILE_BACKED_IDENTITY_PIN_PROOF);
     }
 
     #[test]

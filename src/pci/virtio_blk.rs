@@ -13,7 +13,9 @@ mod virtio_blk_backing;
 mod write_readback;
 
 pub use file_backed::{
-    run_file_backed_reopen_proof, VirtioBlkFileBackedProof, FILE_BACKED_VIRTIO_BLK_PROOF,
+    run_file_backed_identity_pin_proof, run_file_backed_reopen_proof, VirtioBlkFileBackedProof,
+    VirtioBlkFileIdentity, VirtioBlkFileIdentityPinProof, FILE_BACKED_IDENTITY_PIN_PROOF,
+    FILE_BACKED_VIRTIO_BLK_PROOF,
 };
 pub use virtio_blk_backing::{VIRTIO_BLK_BACKING_SIZE, VIRTIO_BLK_CAPACITY_SECTORS};
 pub use write_readback::VIRTIO_BLK_T_OUT;
@@ -29,7 +31,6 @@ use super::virtio::{
 use crate::error::Error;
 use crate::memory::{GuestMemory, GuestPhysAddr};
 use std::fmt;
-use std::path::PathBuf;
 
 pub const VIRTIO_BLK_DEVICE_TYPE: u16 = 2;
 pub const VIRTIO_BLK_PCI_DEVICE_ID: u16 = 0x1040 + VIRTIO_BLK_DEVICE_TYPE;
@@ -336,7 +337,7 @@ pub struct VirtioBlkDevice {
     last_used_idx: u16,
     isr_status: u8,
     backing: [u8; VIRTIO_BLK_BACKING_SIZE],
-    persistent_backing: Option<PathBuf>,
+    persistent_backing: Option<file_backed::PersistentFileBacking>,
 }
 
 impl VirtioBlkDevice {
