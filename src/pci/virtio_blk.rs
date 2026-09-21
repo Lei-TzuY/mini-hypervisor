@@ -6,10 +6,15 @@ pub use checkpoint::VirtioBlkCheckpointStateError;
 pub(crate) use checkpoint::{
     VirtioBlkCheckpointState, VirtioBlkPendingCompletionToken, VirtioBlkPendingNotificationToken,
 };
+#[path = "virtio_blk_file_backed.rs"]
+mod file_backed;
 mod virtio_blk_backing;
 #[path = "virtio_blk_write_readback.rs"]
 mod write_readback;
 
+pub use file_backed::{
+    run_file_backed_reopen_proof, VirtioBlkFileBackedProof, FILE_BACKED_VIRTIO_BLK_PROOF,
+};
 pub use virtio_blk_backing::{VIRTIO_BLK_BACKING_SIZE, VIRTIO_BLK_CAPACITY_SECTORS};
 pub use write_readback::VIRTIO_BLK_T_OUT;
 
@@ -24,6 +29,7 @@ use super::virtio::{
 use crate::error::Error;
 use crate::memory::{GuestMemory, GuestPhysAddr};
 use std::fmt;
+use std::path::PathBuf;
 
 pub const VIRTIO_BLK_DEVICE_TYPE: u16 = 2;
 pub const VIRTIO_BLK_PCI_DEVICE_ID: u16 = 0x1040 + VIRTIO_BLK_DEVICE_TYPE;
@@ -206,12 +212,13 @@ impl std::error::Error for VirtioBlkError {}
 pub enum VirtioBlkProcessError {
     Device(VirtioBlkError),
     Memory(Error),
+    Backing(Error),
 }
 impl fmt::Display for VirtioBlkProcessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Device(error) => error.fmt(f),
-            Self::Memory(error) => error.fmt(f),
+            Self::Memory(error) | Self::Backing(error) => error.fmt(f),
         }
     }
 }
@@ -219,7 +226,7 @@ impl std::error::Error for VirtioBlkProcessError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Device(error) => Some(error),
-            Self::Memory(error) => Some(error),
+            Self::Memory(error) | Self::Backing(error) => Some(error),
         }
     }
 }
@@ -329,6 +336,7 @@ pub struct VirtioBlkDevice {
     last_used_idx: u16,
     isr_status: u8,
     backing: [u8; VIRTIO_BLK_BACKING_SIZE],
+    persistent_backing: Option<PathBuf>,
 }
 
 impl VirtioBlkDevice {
@@ -351,6 +359,7 @@ impl VirtioBlkDevice {
             last_used_idx: 0,
             isr_status: 0,
             backing: virtio_blk_backing::deterministic_backing(),
+            persistent_backing: None,
         }
     }
     #[must_use]

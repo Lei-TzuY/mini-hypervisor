@@ -1,0 +1,50 @@
+name: Strict file-backed virtio-blk reopen proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_backing.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/pci/virtio_blk_file_backed.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/bin/file-backed-virtio-blk.rs'
+      - 'tests/file_backed_virtio_blk.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/file-backed-virtio-blk.yml'
+  pull_request:
+    paths:
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_backing.rs'
+      - 'src/pci/virtio_blk_checkpoint.rs'
+      - 'src/pci/virtio_blk_file_backed.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/mmio/multi_device/virtio_blk_atomic_bus.rs'
+      - 'src/bin/file-backed-virtio-blk.rs'
+      - 'tests/file_backed_virtio_blk.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/file-backed-virtio-blk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-file-backed-virtio-blk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build file-backed virtio-blk proof
+        run: cargo build --quiet --bin file-backed-virtio-blk
+      - name: Execute file-backed reopen proof
+        shell: bash
+        run: |
+          output="$(target/debug/file-backed-virtio-blk)"
+          printf '%s\n' "$output"
+          grep -F 'file-backed write completion: id=0 len=1 sector=0' <<<"$output"
+          grep -F 'file-backed read completion: id=0 len=513 sector=0' <<<"$output"
+          grep -F 'file-backed persisted/readback exact: true' <<<"$output"
+          grep -F 'file-backed checkpoint rejected: true' <<<"$output"
+          grep -F 'file-backed proof: [70, 87, 83, 68, 82]' <<<"$output"

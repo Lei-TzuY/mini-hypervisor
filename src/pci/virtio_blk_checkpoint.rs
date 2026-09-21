@@ -3,6 +3,7 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VirtioBlkCheckpointStateError {
+    ExternalBackingUnsupported,
     NotQuiescent,
     PendingCompletionWithoutToken {
         isr_status: u8,
@@ -41,6 +42,10 @@ pub enum VirtioBlkCheckpointStateError {
 impl fmt::Display for VirtioBlkCheckpointStateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ExternalBackingUnsupported => write!(
+                f,
+                "virtio-blk checkpoint does not serialize external file-backed storage identity"
+            ),
             Self::NotQuiescent => write!(f, "virtio-blk checkpoint state is not quiescent"),
             Self::PendingCompletionWithoutToken { isr_status } => write!(
                 f,
@@ -318,6 +323,9 @@ pub(crate) struct VirtioBlkCheckpointState {
 
 impl VirtioBlkCheckpointState {
     pub(crate) fn capture(device: &VirtioBlkDevice) -> Result<Self, VirtioBlkCheckpointStateError> {
+        if !device.checkpoint_backing_portable() {
+            return Err(VirtioBlkCheckpointStateError::ExternalBackingUnsupported);
+        }
         if !device.checkpoint_quiescent() {
             return Err(VirtioBlkCheckpointStateError::NotQuiescent);
         }
@@ -334,6 +342,9 @@ impl VirtioBlkCheckpointState {
     pub(crate) fn capture_with_pending_completion(
         device: &VirtioBlkDevice,
     ) -> Result<(Self, VirtioBlkPendingCompletionToken), VirtioBlkCheckpointStateError> {
+        if !device.checkpoint_backing_portable() {
+            return Err(VirtioBlkCheckpointStateError::ExternalBackingUnsupported);
+        }
         let token = VirtioBlkPendingCompletionToken::capture(device)?;
         let state = Self::capture_semantic(device)?;
         token.validate_state(&state)?;
@@ -343,6 +354,9 @@ impl VirtioBlkCheckpointState {
     pub(crate) fn capture_with_pending_notification(
         device: &VirtioBlkDevice,
     ) -> Result<(Self, VirtioBlkPendingNotificationToken), VirtioBlkCheckpointStateError> {
+        if !device.checkpoint_backing_portable() {
+            return Err(VirtioBlkCheckpointStateError::ExternalBackingUnsupported);
+        }
         let token = VirtioBlkPendingNotificationToken::capture(device)?;
         let state = Self::capture_semantic(device)?;
         token.validate_state(&state)?;
@@ -350,6 +364,9 @@ impl VirtioBlkCheckpointState {
     }
 
     fn capture_semantic(device: &VirtioBlkDevice) -> Result<Self, VirtioBlkCheckpointStateError> {
+        if !device.checkpoint_backing_portable() {
+            return Err(VirtioBlkCheckpointStateError::ExternalBackingUnsupported);
+        }
         let state = Self {
             bar0: device.bar0,
             device_feature_select: device.device_feature_select,
@@ -401,6 +418,7 @@ impl VirtioBlkCheckpointState {
             last_used_idx: self.last_used_idx,
             isr_status: self.isr_status,
             backing: self.backing,
+            persistent_backing: None,
         })
     }
 

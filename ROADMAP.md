@@ -4,44 +4,37 @@ This file is the authoritative live roadmap for bounded implementation slices. A
 
 ## Current integrated state
 
-`main` is `57693edbed9489a48e8d3e591136a09e77739509` through PR #157 (`Own serviced virtio-blk completions until irqfd delivery`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; bounded SYSCALL/SYSRET and usercopy; isolated ring3 address spaces; dirty-page tracking; bounded scheduling/wait ownership; versioned single-vCPU/controller/device checkpoints; two-device acceleration reconstruction; transaction-coupled dual-device mutable write/readback replay; acceleration-aware checkpoint quiescence; exact two-vCPU controller ownership including MP states and both LAPICs; one runtime transaction owning both vCPUs, both devices and the fd-free registration pair; a canonical fully-quiescent v1 byte format; restored multi-producer mutable data-plane replay; and a v2 token that owns one serviced virtio-blk completion until irqfd delivery.
+`main` is `edfc2d8208aa7f23901b15ea1cde6bd3fae2ca6a` through PR #158 (`Own drained virtio-blk notifications before queue service`). The repository integrates the Phase 73 foundation; x86-64 and bounded ELF64 execution; userspace MMIO and controller-backed interrupts; direct, irqfd and eventfd asynchronous delivery; PCI/virtio execution; bounded SMP/IPI/timer/TLB-shootdown behavior; ring3/TSS transitions; bounded SYSCALL/SYSRET and usercopy; isolated ring3 address spaces; dirty-page tracking; bounded scheduling/wait ownership; versioned single-vCPU/controller/device checkpoints; two-device acceleration reconstruction; transaction-coupled mutable replay; acceleration-aware checkpoint quiescence; exact two-vCPU controller/MP/LAPIC ownership; one runtime transaction owning both vCPUs, both devices and the fd-free registration pair; restored multi-producer mutable data-plane replay; a v2 serviced-completion token; and a v3 drained-notification token.
 
-PR #157 sealed the first bounded in-flight completion phase. Its executable proof lets producer 0 submit a real accelerated sector-0 write, drains the ioeventfd and fully services the queue, but deliberately withholds irqfd delivery. At that boundary queue 0 is `1/1`, backing/status/used-ring mutation is committed, ISR is pending, both host eventfds are quiescent, ordinary v1 capture fails closed, and v2 captures one linear fd-free completion token. The encoded owner is discarded, decoded/re-encoded canonically, exact state is restored, fresh host registrations are reconstructed, and only the materialized token authorizes the missing irqfd signal before the producer completes its readback. Exact merged-main commit `57693edbed9489a48e8d3e591136a09e77739509` completed all 57 push-triggered workflows successfully. Do not farm additional serviced-completion BAR permutations.
+PR #158 sealed the in-memory notification/completion ownership chain. Its executable proof drains one real ioeventfd request, materializes `notify_pending=true` without queue service, captures a canonical fd-free v3 token at queues `[[0,0],[0,0]]`, discards encoder ownership, restores exact state from decoded bytes, services the restored request without a duplicate write doorbell, delivers the reconstructed irqfd, and completes ordinary readback with proof `W0aMR0aXD`. Exact merged-main commit `edfc2d8208aa7f23901b15ea1cde6bd3fae2ca6a` completed all 58 push-triggered workflows successfully. Queue service itself is atomic in the current model, so do not manufacture partially-serviced token variants.
 
-## Selected milestone — drained notification ownership before queue service
+## Selected milestone — synced file-backed virtio-blk storage boundary
 
-The next bounded in-flight state is earlier in the same lifecycle and is still representable exactly by the current model: KVM_IOEVENTFD has consumed the guest MMIO notify and userspace has drained that eventfd count, then the host notification has been materialized into the semantic virtio-blk device as `notify_pending=true`, but queue service has not begun. No raw fd remains pending, the queue's descriptor/data/status bytes live in the already-owned guest pages, queue indices and backing are still unchanged, and ISR remains clear.
+The next architectural gap is storage ownership. The current virtio-blk implementation embeds a deterministic four-sector byte array directly in each device and serializes that array into checkpoint state. There is no host-file backend, no persistence boundary and no evidence that a completed guest write survives device reconstruction.
 
-Implementation continues on `milestone/pending-notification-token` from exact green `main=57693edbed9489a48e8d3e591136a09e77739509`.
+Implementation continues on `milestone/file-backed-virtio-blk` from exact green `main=edfc2d8208aa7f23901b15ea1cde6bd3fae2ca6a`.
 
 Acceptance contract:
 
-- preserve Rust 1.74 shipped-target MSRV, ordinary CI, #151–#157 regressions and every applicable permanent hosted-KVM workflow;
-- ordinary fully-quiescent virtio-blk and transaction capture must continue to reject `notify_pending=true`;
-- introduce exactly one linear fd-free pending-notification token bound to a BAR, queue 0 and the current equal `last_avail_idx/last_used_idx`; no raw eventfd state may be serialized;
-- token capture is valid only when `notify_pending=true`, ISR is zero and the device has not advanced queue indices since the prior completion boundary;
-- the other device must remain fully quiescent, and reconstructed/live devices must be fully quiescent before token-aware restore;
-- token-aware semantic materialization must restore `notify_pending=true` only for the bound device and must fail closed if BAR/queue/index/ISR binding is inconsistent;
-- version 3 of the existing outer transaction magic must carry the existing canonical two-vCPU/two-device checkpoint, registration-pair spec and exactly one pending-notification token; v1 remains fully quiescent and v2 remains serviced-completion ownership;
-- v3 encode/decode must be canonical and reject malformed token length, reserved fields, BAR/index mismatch or token/state inconsistency;
-- executable proof must have producer 0 submit a real accelerated sector-0 `T_OUT`; host waits exactly one ioeventfd doorbell, drains it, applies the host notification, and deliberately stops before queue processing;
-- at that capture boundary both host eventfds must be non-readable, both device queue indices remain `0/0`, first backing remains the deterministic pre-write value, first ISR is clear, and only first device reports token-owned pending notification;
-- ordinary transaction capture must fail closed at that exact state; token-aware v3 capture must succeed over the existing five-page multi-producer ownership set;
-- encoder-side ownership must be discarded, v3 decoded/re-encoded canonically, then materialized only from decoded bytes;
-- deliberately corrupt all five pages, both architectural/MP states, PIC/IOAPIC, both LAPICs and both devices; require real mismatch before restore;
-- token-aware restore must reproduce both queues at `0/0`, the pending semantic notification, exact controller/vCPU/device state, and fresh host registrations whose eventfds are quiescent;
-- queue service after restore must consume the materialized semantic notification without requiring a second write-doorbell event, mutate first backing and used ring exactly once, then one reconstructed irqfd signal must deliver that completion;
-- producer 0 must continue into its ordinary `T_IN` readback, receive the second normal accelerated completion and finish with proof `W0aMR0aXD`;
-- final queues must be `[[2,2],[0,0]]`, total doorbell counts `[2,0]` (one pre-capture write notify plus one post-restore read notify), irqfd signals `[2,0]`, and final readback/backing must equal producer 0's original payload;
-- producer 1/device 1 remain quiescent throughout; reconstructed registrations must be deassigned on success and failure;
-- add focused token/schema unit coverage, proof binary, independent KVM integration test and permanent hosted-KVM workflow with compilation outside the 30-second execution timeout.
+- preserve Rust 1.74 shipped-target MSRV, all existing in-memory virtio-blk behavior, checkpoint/transaction regressions and permanent workflows;
+- keep the existing four-sector in-memory backing as the default path;
+- add one concrete file-backed mode backed by an exact `VIRTIO_BLK_BACKING_SIZE` host file; creation initializes deterministic contents and synchronizes them before the device is returned;
+- opening an existing file-backed device must reject a backing whose size is not exactly the bounded capacity and must load the current bytes as the device cache;
+- a file-backed `VIRTIO_BLK_T_OUT` must finish all guest/input/output preflight first, write the requested host-file range, and successfully call `sync_all` before guest status/used-ring/ISR completion becomes visible;
+- if host backing write or sync fails, queue indices, ISR and guest completion must not be advanced;
+- only after host sync succeeds may the in-memory cache and virtqueue completion be committed;
+- executable evidence must write a deterministic sector-0 payload through the real atomic virtio-blk queue path, inspect the raw host file, drop the device, reopen a new device from that file, and read the same sector through a real `T_IN` queue request;
+- final persisted sector and guest readback must match exactly, with write completion length 1 and read completion length 513;
+- current checkpoint schemas must fail closed for file-backed devices because they do not encode external storage identity; no checkpoint may silently downgrade a file-backed device into an in-memory device;
+- malformed file length must fail before the device is opened for guest service;
+- add focused backend/unit coverage, an independent integration test, proof binary and permanent workflow.
 
 ## Scope boundary
 
-This milestone owns exactly one **drained and semantically materialized notification before queue service**. It does not serialize an eventfd counter, raw fd, partially serviced descriptor chain, already-signaled irqfd event, two simultaneous pending notifications, a third device, concurrent running-vCPU capture, external-storage durability or cross-host live migration.
+This milestone proves a bounded **write + `sync_all` + drop/reopen + readback** contract on a normal host file. It does not claim power-loss atomicity, filesystem crash consistency, ordered metadata persistence, direct I/O, sparse-file semantics, concurrent external writers, cross-host migration, snapshotting of external storage identity, or production-grade storage performance.
 
-The current virtio-blk backing is still a bounded in-memory four-sector array. Therefore this milestone makes no persistence, crash-consistency, fsync or external-storage durability claim.
+The file path remains host-local runtime configuration and is deliberately excluded from the existing checkpoint byte formats. External mutation while a device is open is outside this milestone.
 
 ## Promotion rule
 
-After pending-notification ownership is integrated and exact merged-`main` CI is green, seal the in-memory notification/completion ownership chain. The next architecture audit should not farm more token permutations. Because queue service is atomic in the current implementation, there is no honest partially-serviced descriptor state to migrate. Promote instead to an explicit storage-backend boundary if the project is ready to add a real backend abstraction and externally verifiable persistence semantics; otherwise choose another cross-layer capability with concrete implementation evidence rather than manufacturing durability claims.
+After the synced file-backed path is integrated and exact merged-`main` CI is green, seal the basic external-storage boundary. The next audit should choose between explicit checkpoint/storage identity coordination (only if a stable backend identity contract can be defined without serializing host-specific raw handles), bounded write-failure recovery/fault injection, or another cross-layer storage capability. Do not claim crash consistency without controlled failure evidence.

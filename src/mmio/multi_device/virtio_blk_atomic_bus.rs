@@ -67,6 +67,12 @@ impl super::MmioBus {
         else {
             return Ok(None);
         };
+        if !device.checkpoint_backing_portable() {
+            return Err(virtio_blk_checkpoint_error(
+                "capture virtio-blk checkpoint state",
+                "external file-backed storage identity is outside the current checkpoint schema",
+            ));
+        }
         if !device.checkpoint_fully_quiescent() {
             let detail = if device.checkpoint_notification_pending() {
                 "device has a serviced host notification awaiting queue processing; pending notification requires an explicit service token"
@@ -94,6 +100,12 @@ impl super::MmioBus {
         else {
             return Ok(None);
         };
+        if !device.checkpoint_backing_portable() {
+            return Err(virtio_blk_checkpoint_error(
+                "capture virtio-blk pending completion",
+                "external file-backed storage identity is outside the current checkpoint schema",
+            ));
+        }
         let token = VirtioBlkPendingCompletionToken::capture(device).map_err(|error| {
             virtio_blk_checkpoint_error("capture virtio-blk pending completion", error.to_string())
         })?;
@@ -111,6 +123,12 @@ impl super::MmioBus {
         else {
             return Ok(None);
         };
+        if !device.checkpoint_backing_portable() {
+            return Err(virtio_blk_checkpoint_error(
+                "capture virtio-blk pending notification",
+                "external file-backed storage identity is outside the current checkpoint schema",
+            ));
+        }
         let token = VirtioBlkPendingNotificationToken::capture(device).map_err(|error| {
             virtio_blk_checkpoint_error(
                 "capture virtio-blk pending notification",
@@ -146,7 +164,10 @@ impl super::MmioBus {
         address: u64,
         snapshot: &VirtioBlkDevice,
     ) -> Result<Option<()>, Error> {
-        if snapshot.bar0() != address || !snapshot.checkpoint_fully_quiescent() {
+        if snapshot.bar0() != address
+            || !snapshot.checkpoint_backing_portable()
+            || !snapshot.checkpoint_fully_quiescent()
+        {
             return Err(virtio_blk_checkpoint_error(
                 "restore virtio-blk checkpoint state",
                 "snapshot BAR identity or quiescence contract is invalid",
@@ -159,10 +180,10 @@ impl super::MmioBus {
         else {
             return Ok(None);
         };
-        if !device.checkpoint_fully_quiescent() {
+        if !device.checkpoint_backing_portable() || !device.checkpoint_fully_quiescent() {
             return Err(virtio_blk_checkpoint_error(
                 "restore virtio-blk checkpoint state",
-                "live device is not fully quiescent",
+                "live device must be memory-backed and fully quiescent",
             ));
         }
         *device = snapshot.clone();
@@ -185,7 +206,10 @@ impl super::MmioBus {
             (first_address, first_snapshot),
             (second_address, second_snapshot),
         ] {
-            if snapshot.bar0() != address || !snapshot.checkpoint_fully_quiescent() {
+            if snapshot.bar0() != address
+                || !snapshot.checkpoint_backing_portable()
+                || !snapshot.checkpoint_fully_quiescent()
+            {
                 return Err(virtio_blk_checkpoint_error(
                     "restore two virtio-blk checkpoint states",
                     format!(
@@ -221,7 +245,9 @@ impl super::MmioBus {
                 "two checkpoint BARs resolved to the same live device",
             ));
         }
-        if !self.virtio_blk_devices[first_index].checkpoint_fully_quiescent()
+        if !self.virtio_blk_devices[first_index].checkpoint_backing_portable()
+            || !self.virtio_blk_devices[second_index].checkpoint_backing_portable()
+            || !self.virtio_blk_devices[first_index].checkpoint_fully_quiescent()
             || !self.virtio_blk_devices[second_index].checkpoint_fully_quiescent()
         {
             return Err(virtio_blk_checkpoint_error(
@@ -279,6 +305,12 @@ impl super::MmioBus {
                 ));
             }
             if address == token.bar0() {
+                if !snapshot.checkpoint_backing_portable() {
+                    return Err(virtio_blk_checkpoint_error(
+                        "restore token-owned virtio-blk checkpoint state",
+                        "external file-backed storage identity is outside the current checkpoint schema",
+                    ));
+                }
                 token.validate_device(snapshot).map_err(|error| {
                     virtio_blk_checkpoint_error(
                         "restore pending virtio-blk completion",
@@ -319,7 +351,9 @@ impl super::MmioBus {
                 "two checkpoint BARs resolved to the same live device",
             ));
         }
-        if !self.virtio_blk_devices[first_index].checkpoint_fully_quiescent()
+        if !self.virtio_blk_devices[first_index].checkpoint_backing_portable()
+            || !self.virtio_blk_devices[second_index].checkpoint_backing_portable()
+            || !self.virtio_blk_devices[first_index].checkpoint_fully_quiescent()
             || !self.virtio_blk_devices[second_index].checkpoint_fully_quiescent()
         {
             return Err(virtio_blk_checkpoint_error(
@@ -377,6 +411,12 @@ impl super::MmioBus {
                 ));
             }
             if address == token.bar0() {
+                if !snapshot.checkpoint_backing_portable() {
+                    return Err(virtio_blk_checkpoint_error(
+                        "restore token-owned virtio-blk checkpoint state",
+                        "external file-backed storage identity is outside the current checkpoint schema",
+                    ));
+                }
                 token.validate_device(snapshot).map_err(|error| {
                     virtio_blk_checkpoint_error(
                         "restore pending virtio-blk notification",
@@ -417,7 +457,9 @@ impl super::MmioBus {
                 "two checkpoint BARs resolved to the same live device",
             ));
         }
-        if !self.virtio_blk_devices[first_index].checkpoint_fully_quiescent()
+        if !self.virtio_blk_devices[first_index].checkpoint_backing_portable()
+            || !self.virtio_blk_devices[second_index].checkpoint_backing_portable()
+            || !self.virtio_blk_devices[first_index].checkpoint_fully_quiescent()
             || !self.virtio_blk_devices[second_index].checkpoint_fully_quiescent()
         {
             return Err(virtio_blk_checkpoint_error(
