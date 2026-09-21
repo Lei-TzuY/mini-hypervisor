@@ -647,6 +647,52 @@ mod tests {
     }
 
     #[test]
+    fn pinned_backing_write_failure_does_not_publish_queue_completion() {
+        let path = temporary_backing_path();
+        let _cleanup = BackingCleanup(path.clone());
+        let backing = virtio_blk_backing::deterministic_backing();
+        fs::write(&path, backing).unwrap();
+
+        let read_only = OpenOptions::new().read(true).open(&path).unwrap();
+        let persistent = PersistentFileBacking::from_open_file(path, read_only).unwrap();
+        let mut device = VirtioBlkDevice::with_backing(PROOF_BAR, backing, Some(persistent));
+        prepare_ready_device(&mut device);
+
+        let payload = deterministic_file_payload();
+        let mut memory = GuestMemory::new(GuestPhysAddr::new(0), PROOF_MEMORY_SIZE).unwrap();
+        prepare_request(
+            &mut memory,
+            &mut device,
+            VIRTIO_BLK_T_OUT,
+            VIRTQ_DESC_F_NEXT,
+            1,
+            &payload,
+        )
+        .unwrap();
+
+        let error = device
+            .process_notified_queue_atomic(&mut memory)
+            .unwrap_err();
+        assert!(matches!(error, VirtioBlkProcessError::Backing(_)));
+        assert_eq!(device.last_avail_idx, 0);
+        assert_eq!(device.last_used_idx, 0);
+        assert_eq!(device.isr_status, 0);
+        assert!(device.notify_pending);
+        assert_ne!(device.sector0(), &payload);
+
+        let mut status = [0_u8; 1];
+        memory
+            .read(GuestPhysAddr::new(PROOF_STATUS), &mut status)
+            .unwrap();
+        assert_eq!(status, [0xff]);
+        let mut used_idx = [0_u8; 2];
+        memory
+            .read(GuestPhysAddr::new(PROOF_USED + 2), &mut used_idx)
+            .unwrap();
+        assert_eq!(u16::from_le_bytes(used_idx), 0);
+    }
+
+    #[test]
     fn replacement_path_does_not_redirect_pinned_backend() {
         let proof = run_file_backed_identity_pin_proof().unwrap();
         assert_ne!(proof.original_identity(), proof.replacement_identity());
