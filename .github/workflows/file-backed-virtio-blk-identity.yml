@@ -1,0 +1,45 @@
+name: Strict pinned file-backed virtio-blk identity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_file_backed.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/bin/file-backed-virtio-blk-identity.rs'
+      - 'tests/file_backed_virtio_blk_identity.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/file-backed-virtio-blk-identity.yml'
+  pull_request:
+    paths:
+      - 'src/pci/virtio_blk.rs'
+      - 'src/pci/virtio_blk_file_backed.rs'
+      - 'src/pci/virtio_blk_write_readback.rs'
+      - 'src/bin/file-backed-virtio-blk-identity.rs'
+      - 'tests/file_backed_virtio_blk_identity.rs'
+      - 'ROADMAP.md'
+      - '.github/workflows/file-backed-virtio-blk-identity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-pinned-file-backed-virtio-blk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build pinned file-backed identity proof
+        run: cargo build --quiet --bin file-backed-virtio-blk-identity
+      - name: Execute pinned file-backed identity proof
+        shell: bash
+        run: |
+          output="$(target/debug/file-backed-virtio-blk-identity)"
+          printf '%s\n' "$output"
+          grep -F 'file-backed pinned write completion: id=0 len=1 sector=0' <<<"$output"
+          grep -F 'file-backed identity distinct: true' <<<"$output"
+          grep -F 'file-backed pinned payload exact: true' <<<"$output"
+          grep -F 'file-backed replacement untouched: true' <<<"$output"
+          grep -F 'file-backed checkpoint rejected: true' <<<"$output"
+          grep -F 'file-backed identity proof: [70, 80, 73, 78, 87]' <<<"$output"
