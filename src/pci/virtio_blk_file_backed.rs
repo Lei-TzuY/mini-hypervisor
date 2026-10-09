@@ -227,11 +227,7 @@ impl VirtioBlkDevice {
         file.sync_all()
             .map_err(|source| backing_io_error("sync initial virtio-blk file backing", source))?;
         let persistent_backing = PersistentFileBacking::from_open_file(path, file)?;
-        Ok(Self::with_backing(
-            bar0,
-            backing,
-            Some(persistent_backing),
-        ))
+        Ok(Self::with_backing(bar0, backing, Some(persistent_backing)))
     }
 
     pub fn open_file_backed(bar0: u64, path: impl AsRef<Path>) -> Result<Self, Error> {
@@ -261,11 +257,7 @@ impl VirtioBlkDevice {
         file.read_exact(&mut backing)
             .map_err(|source| backing_io_error("read virtio-blk file backing", source))?;
         let persistent_backing = PersistentFileBacking::from_open_file(path, file)?;
-        Ok(Self::with_backing(
-            bar0,
-            backing,
-            Some(persistent_backing),
-        ))
+        Ok(Self::with_backing(bar0, backing, Some(persistent_backing)))
     }
 
     fn with_backing(
